@@ -342,7 +342,6 @@ export function getReportKpis(token, startDate, endDate) {
  * @returns {Promise<Array>} Un tableau d'objets d'actualité.
  */
 export function getMarketNews(token) {
-    // La route renvoie maintenant du JSON, plus besoin de 'text/html'
     return apiRequest('/api/news', {
         token,
     });

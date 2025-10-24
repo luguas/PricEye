@@ -1,14 +1,17 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { getProperties, deleteProperty } from '../services/api';
-import PropertyModal from '../components/PropertyModal';
-import GroupsManager from '../components/GroupsManager';
-import StrategyModal from '../components/StrategyModal';
-import RulesModal from '../components/RulesModal';
-import NewsFeed from '../components/NewsFeed.jsx'; // CORRECTION: Ajout de l'extension .jsx
+import { getProperties, deleteProperty, getReportKpis, getUserProfile } from '../services/api.js'; // Importer getReportKpis et getUserProfile
+import PropertyModal from '../components/PropertyModal.jsx';
+import GroupsManager from '../components/GroupsManager.jsx';
+import StrategyModal from '../components/StrategyModal.jsx';
+import RulesModal from '../components/RulesModal.jsx';
+import NewsFeed from '../components/NewsFeed.jsx';
+import { getDatesFromRange } from '../utils/dateUtils.js'; // Importer l'utilitaire de dates
 
-function DashboardPage({ token, onLogout }) {
+function DashboardPage({ token }) { // onLogout est géré par App.jsx
   const [properties, setProperties] = useState([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const [userProfile, setUserProfile] = useState(null); // État pour le profil
+  const [isLoading, setIsLoading] = useState(true); // Loader pour les propriétés
+  const [isKpiLoading, setIsKpiLoading] = useState(true); // Loader séparé pour les KPIs
   const [error, setError] = useState('');
   
   // State pour les modales
@@ -21,47 +24,54 @@ function DashboardPage({ token, onLogout }) {
   const [configuringRulesProperty, setConfiguringRulesProperty] = useState(null);
   const [isRulesModalOpen, setIsRulesModalOpen] = useState(false);
 
-  // KPIs simulés pour le dashboard
+  // KPIs réels pour le dashboard
   const [kpis, setKpis] = useState({
     totalRevenue: 0,
     avgOccupancy: 0,
     adr: 0,
   });
 
-  const fetchProperties = useCallback(async () => {
+  const fetchInitialData = useCallback(async () => {
+    // Ne pas rafraîchir si une modale est ouverte
     if (isPropertyModalOpen || isStrategyModalOpen || isRulesModalOpen) return;
     setIsLoading(true);
+    setIsKpiLoading(true); // Démarrer les deux chargements
     try {
-      const data = await getProperties(token);
-      setProperties(data);
-      setError('');
+      // Récupérer le profil et les propriétés en parallèle
+      const [profileData, propertiesData] = await Promise.all([
+        getUserProfile(token),
+        getProperties(token)
+      ]);
       
-      // Calculer les KPIs simulés à partir des propriétés
-      if (data.length > 0) {
-        let totalRevenue = 0;
-        let totalOccupancy = 0;
-        data.forEach(p => {
-            totalRevenue += (p.daily_revenue || 0) * 30 * (p.occupancy || 0.7); // Simulation
-            totalOccupancy += (p.occupancy || 0.7);
-        });
-        const avgOccupancy = (totalOccupancy / data.length) * 100;
-        const totalNights = data.length * 30 * (avgOccupancy / 100);
-        const adr = totalNights > 0 ? totalRevenue / totalNights : 0;
-        
-        setKpis({ totalRevenue, avgOccupancy, adr });
-      }
+      setUserProfile(profileData);
+      setProperties(propertiesData);
+      setError('');
+
+      // Une fois le profil chargé, lancer le calcul des KPIs réels
+      const { startDate, endDate } = getDatesFromRange('1m', profileData.timezone); // '1m' = 30 derniers jours
+      const kpiData = await getReportKpis(token, startDate, endDate);
+      setKpis({
+          totalRevenue: kpiData.totalRevenue || 0,
+          avgOccupancy: kpiData.occupancy || 0,
+          adr: kpiData.adr || 0,
+      });
 
     } catch (err) {
       setError(err.message);
+      // Réinitialiser en cas d'erreur
+      setProperties([]);
+      setKpis({ totalRevenue: 0, avgOccupancy: 0, adr: 0 });
     } finally {
       setIsLoading(false);
+      setIsKpiLoading(false);
     }
-  }, [token, isPropertyModalOpen, isStrategyModalOpen, isRulesModalOpen]);
+  }, [token, isPropertyModalOpen, isStrategyModalOpen, isRulesModalOpen]); // Dépendances
 
   useEffect(() => {
-    fetchProperties();
-  }, [fetchProperties]);
+    fetchInitialData();
+  }, [fetchInitialData]); // Appelé une seule fois au montage (ou si le token change)
 
+  // ... (Fonctions de gestion des modales : handleOpenAddModal, handleOpenEditModal, etc.)
   const handleOpenAddModal = () => {
     setEditingProperty(null);
     setIsPropertyModalOpen(true);
@@ -86,7 +96,7 @@ function DashboardPage({ token, onLogout }) {
     if (window.confirm("Êtes-vous sûr de vouloir supprimer cette propriété ?")) {
       try {
         await deleteProperty(propertyId, token);
-        fetchProperties();
+        fetchInitialData(); // Recharger toutes les données (propriétés et KPIs)
       } catch (err) {
         setError(err.message);
       }
@@ -97,7 +107,7 @@ function DashboardPage({ token, onLogout }) {
     setIsPropertyModalOpen(false);
     setIsStrategyModalOpen(false);
     setIsRulesModalOpen(false);
-    fetchProperties();
+    fetchInitialData(); // Recharger toutes les données
   };
   
   const handleModalClose = () => {
@@ -105,6 +115,23 @@ function DashboardPage({ token, onLogout }) {
     setIsStrategyModalOpen(false);
     setIsRulesModalOpen(false);
   }
+  
+  // Formatter pour la devise
+  const formatCurrency = (amount) => {
+      return (amount || 0).toLocaleString('fr-FR', { 
+          style: 'currency', 
+          currency: userProfile?.currency || 'EUR', // Utiliser la devise du profil
+          minimumFractionDigits: 0, 
+          maximumFractionDigits: 0 
+      });
+  };
+   const formatCurrencyAdr = (amount) => {
+      return (amount || 0).toLocaleString('fr-FR', { 
+          style: 'currency', 
+          currency: userProfile?.currency || 'EUR', // Utiliser la devise du profil
+          minimumFractionDigits: 2 
+      });
+  };
 
   const renderPropertyCards = () => {
     if (isLoading) {
@@ -160,11 +187,23 @@ function DashboardPage({ token, onLogout }) {
         </div>
       </div>
       
-      {/* Section des KPIs Simulés */}
+       {error && <p className="bg-red-900/50 text-red-300 p-3 rounded-md text-sm mb-6">{error}</p>}
+      
+      {/* Section des KPIs Réels */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-          <div className="bg-gray-800 p-5 rounded-xl"><p className="text-sm text-gray-400">Revenu Total (30j Estimé)</p><p className="text-2xl font-bold">{kpis.totalRevenue.toLocaleString('fr-FR', { style: 'currency', currency: 'EUR', minimumFractionDigits: 0, maximumFractionDigits: 0 })}</p></div>
-          <div className="bg-gray-800 p-5 rounded-xl"><p className="text-sm text-gray-400">Taux d'occupation (Estimé)</p><p className="text-2xl font-bold">{kpis.avgOccupancy.toFixed(0)}%</p></div>
-          <div className="bg-gray-800 p-5 rounded-xl"><p className="text-sm text-gray-400">ADR (Estimé)</p><p className="text-2xl font-bold">{kpis.adr.toLocaleString('fr-FR', { style: 'currency', currency: 'EUR', minimumFractionDigits: 2 })}</p></div>
+          {isKpiLoading ? (
+            <>
+              <div className="bg-gray-800 p-5 rounded-xl"><p className="text-sm text-gray-400">Revenu Total (30j)</p><p className="text-2xl font-bold text-gray-600">Chargement...</p></div>
+              <div className="bg-gray-800 p-5 rounded-xl"><p className="text-sm text-gray-400">Taux d'occupation</p><p className="text-2xl font-bold text-gray-600">Chargement...</p></div>
+              <div className="bg-gray-800 p-5 rounded-xl"><p className="text-sm text-gray-400">ADR</p><p className="text-2xl font-bold text-gray-600">Chargement...</p></div>
+            </>
+          ) : (
+             <>
+              <div className="bg-gray-800 p-5 rounded-xl"><p className="text-sm text-gray-400">Revenu Total (30j Réel)</p><p className="text-2xl font-bold">{formatCurrency(kpis.totalRevenue)}</p></div>
+              <div className="bg-gray-800 p-5 rounded-xl"><p className="text-sm text-gray-400">Taux d'occupation (Réel)</p><p className="text-2xl font-bold">{kpis.avgOccupancy.toFixed(1)}%</p></div>
+              <div className="bg-gray-800 p-5 rounded-xl"><p className="text-sm text-gray-400">ADR (Réel)</p><p className="text-2xl font-bold">{formatCurrencyAdr(kpis.adr)}</p></div>
+            </>
+          )}
       </div>
 
       {/* Contenu principal (groupes + propriétés) */}

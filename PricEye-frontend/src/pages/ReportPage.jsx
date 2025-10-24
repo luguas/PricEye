@@ -1,52 +1,13 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { getProperties, getReportKpis } from '../services/api';
-import { exportToExcel } from '../utils/exportUtils';
+import { getProperties, getReportKpis, getUserProfile } from '../services/api.js'; // Importer getUserProfile
+import { exportToExcel } from '../utils/exportUtils.js';
 import Chart from 'chart.js/auto'; 
-
-// Fonction utilitaire pour formater les dates en YYYY-MM-DD
-const formatDate = (date) => date.toISOString().split('T')[0];
-
-/**
- * Calcule les dates de début et de fin en fonction du sélecteur de plage.
- * @param {string} range - "7d", "1m", "6m", "ytd", "1y", "all"
- * @returns {{startDate: string, endDate: string}}
- */
-const getDatesFromRange = (range) => {
-  const endDate = new Date();
-  let startDate = new Date();
-
-  switch (range) {
-    case '7d':
-      startDate.setDate(endDate.getDate() - 7);
-      break;
-    case '1m':
-      startDate.setMonth(endDate.getMonth() - 1);
-      break;
-    case '6m':
-      startDate.setMonth(endDate.getMonth() - 6);
-      break;
-    case 'ytd': // Year To Date
-      startDate = new Date(endDate.getFullYear(), 0, 1);
-      break;
-    case '1y':
-      startDate.setFullYear(endDate.getFullYear() - 1);
-      break;
-    case 'all':
-      startDate.setFullYear(endDate.getFullYear() - 5); // Simuler "Tout" comme 5 ans
-      break;
-    default:
-      startDate.setMonth(endDate.getMonth() - 1);
-  }
-  return {
-    startDate: formatDate(startDate),
-    endDate: formatDate(endDate),
-  };
-};
-
+import { getDatesFromRange } from '../utils/dateUtils.js'; 
 
 function ReportPage({ token }) {
   const [allProperties, setAllProperties] = useState([]);
   const [filteredProperties, setFilteredProperties] = useState([]);
+  const [userProfile, setUserProfile] = useState(null); // État pour le profil utilisateur
   const [isLoading, setIsLoading] = useState(true);
   const [isKpiLoading, setIsKpiLoading] = useState(true);
   const [error, setError] = useState('');
@@ -62,10 +23,10 @@ function ReportPage({ token }) {
   // KPIs State
   const [kpis, setKpis] = useState({
     totalRevenue: 0,
-    iaGain: 0, // Toujours simulé
+    iaGain: 0, 
     avgOccupancy: 0,
     adr: 0,
-    iaScore: 0, // Toujours simulé
+    iaScore: 0, 
   });
 
   // Chart instances refs
@@ -74,58 +35,65 @@ function ReportPage({ token }) {
   const revenueChartInstance = useRef(null);
   const marketChartInstance = useRef(null);
 
-  // Fetch all properties (pour les filtres)
-  const fetchAllProperties = useCallback(async () => {
+  // Fonction unifiée pour charger les données initiales
+  const fetchInitialData = useCallback(async () => {
     setIsLoading(true);
     try {
-      const data = await getProperties(token);
-      setAllProperties(data);
+      // Récupérer le profil et les propriétés en parallèle
+      const [profileData, propertiesData] = await Promise.all([
+        getUserProfile(token),
+        getProperties(token)
+      ]);
+      
+      setUserProfile(profileData);
+      setAllProperties(propertiesData);
       setError('');
+
     } catch (err) {
-      setError(`Erreur de chargement des propriétés: ${err.message}`);
+      setError(`Erreur de chargement des données: ${err.message}`);
     } finally {
       setIsLoading(false);
     }
   }, [token]);
 
   useEffect(() => {
-    fetchAllProperties();
-  }, [fetchAllProperties]);
+    fetchInitialData();
+  }, [fetchInitialData]);
 
   // Fetch KPIs (Données Réelles)
   const fetchKpis = useCallback(async () => {
+      // Attendre que le profil utilisateur soit chargé pour avoir le fuseau horaire
+      if (!userProfile) return;
+
       setIsKpiLoading(true);
       setError('');
       try {
-          const { startDate, endDate } = getDatesFromRange(dateRange);
-          // Appeler la nouvelle route API pour les KPIs réels
+          // Utiliser le fuseau horaire du profil pour calculer les dates
+          const { startDate, endDate } = getDatesFromRange(dateRange, userProfile.timezone);
           const kpiData = await getReportKpis(token, startDate, endDate);
           
-          // Mettre à jour les KPIs avec les données réelles
           setKpis({
               totalRevenue: kpiData.totalRevenue || 0,
               avgOccupancy: kpiData.occupancy || 0,
               adr: kpiData.adr || 0,
-              // Garder les simulations pour les gains IA et le score IA
-              iaGain: (kpiData.totalRevenue || 0) * (0.05 + Math.random() * 0.10), // Simulé 5-15% du revenu réel
-              iaScore: 70 + Math.random() * 25, // Simulé 70-95
+              iaGain: (kpiData.totalRevenue || 0) * (0.05 + Math.random() * 0.10), 
+              iaScore: 70 + Math.random() * 25, 
           });
           
       } catch (err) {
           setError(`Erreur de chargement des KPIs: ${err.message}`);
-          // Réinitialiser les KPIs en cas d'erreur
           setKpis({ totalRevenue: 0, iaGain: 0, avgOccupancy: 0, adr: 0, iaScore: 0 });
       } finally {
           setIsKpiLoading(false);
       }
-  }, [token, dateRange]); // Se déclenche si le token ou la période change
+  }, [token, dateRange, userProfile]); // Se déclenche si le profil ou la période change
 
   useEffect(() => {
     fetchKpis();
   }, [fetchKpis]);
 
 
-  // Apply filters (pour la liste des propriétés, l'export, et les graphiques simulés)
+  // Apply filters
   useEffect(() => {
     let filtered = allProperties;
 
@@ -142,22 +110,18 @@ function ReportPage({ token }) {
 
     setFilteredProperties(filtered);
     
-    // NOTE: Les KPIs principaux ne sont PAS recalculés ici, car ils viennent du backend.
-    // Les filtres ici n'affecteront que les graphiques (simulés) et l'export.
-
   }, [allProperties, propertyType, channel, status, location, occupancyThreshold]);
 
 
-  // --- Chart Rendering (Toujours Simulé pour l'instant) ---
+  // --- Chart Rendering ---
   useEffect(() => {
     if (revenueChartInstance.current) { revenueChartInstance.current.destroy(); }
     if (marketChartInstance.current) { marketChartInstance.current.destroy(); }
 
-    // Render Revenue Chart
     if (revenueChartRef.current) {
         const ctxRevenue = revenueChartRef.current.getContext('2d');
         const labels = Array.from({length: 30}, (_, i) => `J-${30-i}`); 
-        const revenueData = labels.map(() => kpis.totalRevenue * (0.8 + Math.random() * 0.4) / 30); // Basé sur le KPI réel
+        const revenueData = labels.map(() => kpis.totalRevenue * (0.8 + Math.random() * 0.4) / 30); 
         
         revenueChartInstance.current = new Chart(ctxRevenue, { 
             type: 'line', 
@@ -182,7 +146,6 @@ function ReportPage({ token }) {
         });
     }
 
-    // Render Market Trend Chart
     if (marketChartRef.current) {
       const ctxMarket = marketChartRef.current.getContext('2d');
       const labelsMarket = ['-30j', '-15j', 'Auj.', '+15j', '+30j'];
@@ -209,7 +172,7 @@ function ReportPage({ token }) {
          if (marketChartInstance.current) { marketChartInstance.current.destroy(); }
      };
 
-  }, [kpis.totalRevenue]); // Re-render charts when real KPIs change
+  }, [kpis.totalRevenue]); 
 
   const handleExport = () => {
     if (filteredProperties.length === 0) {
@@ -218,10 +181,27 @@ function ReportPage({ token }) {
     }
     exportToExcel(filteredProperties, `Rapport_Proprietes_${dateRange}`);
   };
+  
+  // Formatter pour la devise
+  const formatCurrency = (amount) => {
+      return (amount || 0).toLocaleString('fr-FR', { 
+          style: 'currency', 
+          currency: userProfile?.currency || 'EUR', // Utiliser la devise du profil
+          minimumFractionDigits: 0, 
+          maximumFractionDigits: 0 
+      });
+  };
+   const formatCurrencyAdr = (amount) => {
+      return (amount || 0).toLocaleString('fr-FR', { 
+          style: 'currency', 
+          currency: userProfile?.currency || 'EUR', // Utiliser la devise du profil
+          minimumFractionDigits: 2 
+      });
+  };
+
 
   return (
     <div className="space-y-8">
-      {/* Header and Date Range */}
       <div className="flex flex-wrap justify-between items-center gap-4">
         <h2 className="text-3xl font-bold text-white">Rapport d'Activité</h2>
         <div className="flex items-center gap-4">
@@ -242,9 +222,8 @@ function ReportPage({ token }) {
         </div>
       </div>
 
-      {/* Advanced Filters Section */}
       <div className="bg-gray-800 p-4 rounded-lg">
-         <h3 className="font-semibold mb-3 text-lg">Filtres (pour la liste et l'export)</h3>
+         <h3 className="font-semibold mb-3 text-lg">Filtres (pour l'export)</h3>
          {isLoading && <p className="text-xs text-gray-400">Chargement des filtres...</p>}
          {!isLoading && 
             <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4 text-sm">
@@ -260,22 +239,20 @@ function ReportPage({ token }) {
          }
       </div>
 
-      {/* KPIs */}
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-6">
-        {isKpiLoading ? (
+        {isKpiLoading || isLoading ? (
             <div className="col-span-full text-center text-gray-400">Chargement des KPIs réels...</div>
         ) : (
             <>
-                <div className="bg-gray-800 p-5 rounded-xl"><p className="text-sm text-gray-400">Revenu Total (Réel)</p><p className="text-2xl font-bold">{kpis.totalRevenue.toLocaleString('fr-FR', { style: 'currency', currency: 'EUR', minimumFractionDigits: 0, maximumFractionDigits: 0 })}</p></div>
-                <div className="bg-gray-800 p-5 rounded-xl"><p className="text-sm text-gray-400">Gains par l'IA (Simulé)</p><p className="text-2xl font-bold">{kpis.iaGain.toLocaleString('fr-FR', { style: 'currency', currency: 'EUR', minimumFractionDigits: 0, maximumFractionDigits: 0 })}</p></div>
+                <div className="bg-gray-800 p-5 rounded-xl"><p className="text-sm text-gray-400">Revenu Total (Réel)</p><p className="text-2xl font-bold">{formatCurrency(kpis.totalRevenue)}</p></div>
+                <div className="bg-gray-800 p-5 rounded-xl"><p className="text-sm text-gray-400">Gains par l'IA (Simulé)</p><p className="text-2xl font-bold">{formatCurrency(kpis.iaGain)}</p></div>
                 <div className="bg-gray-800 p-5 rounded-xl"><p className="text-sm text-gray-400">Taux d'occupation (Réel)</p><p className="text-2xl font-bold">{kpis.avgOccupancy.toFixed(1)}%</p></div>
-                <div className="bg-gray-800 p-5 rounded-xl"><p className="text-sm text-gray-400">Prix Moyen / Nuit (ADR Réel)</p><p className="text-2xl font-bold">{kpis.adr.toLocaleString('fr-FR', { style: 'currency', currency: 'EUR', minimumFractionDigits: 2 })}</p></div>
+                <div className="bg-gray-800 p-5 rounded-xl"><p className="text-sm text-gray-400">Prix Moyen / Nuit (ADR Réel)</p><p className="text-2xl font-bold">{formatCurrencyAdr(kpis.adr)}</p></div>
                 <div className="bg-gray-800 p-5 rounded-xl"><p className="text-sm text-gray-400">Score IA (Simulé)</p><p className="text-2xl font-bold">{kpis.iaScore.toFixed(0)} / 100</p></div>
             </>
         )}
       </div>
 
-      {/* Charts */}
       {error && <p className="text-red-400 text-center">{error}</p>}
       {!error && (isLoading || filteredProperties.length > 0) && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
