@@ -4,13 +4,13 @@ import PropertyModal from '../components/PropertyModal';
 import GroupsManager from '../components/GroupsManager';
 import StrategyModal from '../components/StrategyModal';
 import RulesModal from '../components/RulesModal';
-import { exportToExcel } from '../utils/exportUtils'; // Importer la fonction d'export
+import NewsFeed from '../components/NewsFeed.jsx'; // CORRECTION: Ajout de l'extension .jsx
 
 function DashboardPage({ token, onLogout }) {
   const [properties, setProperties] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState('');
-
+  
   // State pour les modales
   const [editingProperty, setEditingProperty] = useState(null);
   const [isPropertyModalOpen, setIsPropertyModalOpen] = useState(false);
@@ -21,6 +21,13 @@ function DashboardPage({ token, onLogout }) {
   const [configuringRulesProperty, setConfiguringRulesProperty] = useState(null);
   const [isRulesModalOpen, setIsRulesModalOpen] = useState(false);
 
+  // KPIs simulés pour le dashboard
+  const [kpis, setKpis] = useState({
+    totalRevenue: 0,
+    avgOccupancy: 0,
+    adr: 0,
+  });
+
   const fetchProperties = useCallback(async () => {
     if (isPropertyModalOpen || isStrategyModalOpen || isRulesModalOpen) return;
     setIsLoading(true);
@@ -28,6 +35,22 @@ function DashboardPage({ token, onLogout }) {
       const data = await getProperties(token);
       setProperties(data);
       setError('');
+      
+      // Calculer les KPIs simulés à partir des propriétés
+      if (data.length > 0) {
+        let totalRevenue = 0;
+        let totalOccupancy = 0;
+        data.forEach(p => {
+            totalRevenue += (p.daily_revenue || 0) * 30 * (p.occupancy || 0.7); // Simulation
+            totalOccupancy += (p.occupancy || 0.7);
+        });
+        const avgOccupancy = (totalOccupancy / data.length) * 100;
+        const totalNights = data.length * 30 * (avgOccupancy / 100);
+        const adr = totalNights > 0 ? totalRevenue / totalNights : 0;
+        
+        setKpis({ totalRevenue, avgOccupancy, adr });
+      }
+
     } catch (err) {
       setError(err.message);
     } finally {
@@ -83,24 +106,12 @@ function DashboardPage({ token, onLogout }) {
     setIsRulesModalOpen(false);
   }
 
-  // Fonction pour gérer l'export Excel
-  const handleExport = () => {
-    if (properties.length === 0) {
-      alert("Aucune donnée à exporter.");
-      return;
-    }
-    // Pour l'instant, on exporte la liste brute des propriétés.
-    // On pourrait ajouter plus de données calculées plus tard.
-    exportToExcel(properties, 'Rapport_Proprietes');
-  };
-
-
   const renderPropertyCards = () => {
     if (isLoading) {
       return <p className="text-center text-gray-400 col-span-full">Chargement des propriétés...</p>;
     }
 
-    if (error) {
+    if (error && properties.length === 0) { // Afficher l'erreur seulement si on n'a pas de propriétés
       return <p className="text-center text-red-400 col-span-full">Erreur : {error}</p>;
     }
 
@@ -123,7 +134,7 @@ function DashboardPage({ token, onLogout }) {
              | Min Stay: <span className="font-semibold text-gray-300">{prop.min_stay != null ? prop.min_stay : 'N/A'}</span>
           </div>
         </div>
-        <div className="mt-4 pt-4 border-t border-gray-700 flex justify-end gap-2">
+        <div className="mt-4 pt-4 border-t border-gray-700 flex flex-wrap justify-end gap-2">
           <button onClick={() => handleOpenStrategyModal(prop)} className="text-xs px-3 py-1 bg-indigo-600 hover:bg-indigo-500 rounded-md">Stratégie IA</button>
           <button onClick={() => handleOpenRulesModal(prop)} className="text-xs px-3 py-1 bg-purple-600 hover:bg-purple-500 rounded-md">Règles Perso.</button>
           <button onClick={() => handleOpenEditModal(prop)} className="text-xs px-3 py-1 bg-gray-600 hover:bg-gray-500 rounded-md">Modifier</button>
@@ -145,28 +156,31 @@ function DashboardPage({ token, onLogout }) {
           >
             Ajouter une propriété
           </button>
-          {/* Bouton d'export */}
-          <button
-            onClick={handleExport}
-            className="px-4 py-2 font-semibold text-white bg-green-600 rounded-md hover:bg-green-700"
-          >
-            Exporter (.xlsx)
-          </button>
-          <button
-            onClick={onLogout}
-            className="px-4 py-2 font-semibold text-white bg-red-600 rounded-md hover:bg-red-700"
-          >
-            Déconnexion
-          </button>
+          {/* Le bouton d'export est maintenant sur la page Rapport */}
         </div>
       </div>
       
-      {/* Contenu principal (groupes + propriétés) */}
-      <div className="my-8"><GroupsManager token={token} properties={properties} /></div>
-      <h2 className="text-2xl font-bold mb-4">Mes Propriétés</h2>
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {renderPropertyCards()}
+      {/* Section des KPIs Simulés */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+          <div className="bg-gray-800 p-5 rounded-xl"><p className="text-sm text-gray-400">Revenu Total (30j Estimé)</p><p className="text-2xl font-bold">{kpis.totalRevenue.toLocaleString('fr-FR', { style: 'currency', currency: 'EUR', minimumFractionDigits: 0, maximumFractionDigits: 0 })}</p></div>
+          <div className="bg-gray-800 p-5 rounded-xl"><p className="text-sm text-gray-400">Taux d'occupation (Estimé)</p><p className="text-2xl font-bold">{kpis.avgOccupancy.toFixed(0)}%</p></div>
+          <div className="bg-gray-800 p-5 rounded-xl"><p className="text-sm text-gray-400">ADR (Estimé)</p><p className="text-2xl font-bold">{kpis.adr.toLocaleString('fr-FR', { style: 'currency', currency: 'EUR', minimumFractionDigits: 2 })}</p></div>
       </div>
+
+      {/* Contenu principal (groupes + propriétés) */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+          <div className="lg:col-span-2 space-y-6">
+              <GroupsManager token={token} properties={properties} />
+              <h2 className="text-2xl font-bold mb-4">Mes Propriétés</h2>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                {renderPropertyCards()}
+              </div>
+          </div>
+          <div className="lg:col-span-1">
+              <NewsFeed token={token} />
+          </div>
+      </div>
+
 
       {/* Modales */}
       {isPropertyModalOpen && (

@@ -7,5 +7,9 @@ export default {
   theme: {
     extend: {},
   },
-  plugins: [],
+  plugins: [
+    require('@tailwindcss/forms'), // Plugin pour les formulaires
+    require('@tailwindcss/typography'), // AJOUTÉ : Plugin pour les classes 'prose'
+  ],
 }
+

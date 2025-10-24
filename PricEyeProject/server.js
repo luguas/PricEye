@@ -3,6 +3,7 @@ const express = require('express');
 const admin = require('firebase-admin');
 const cors = require('cors');
 require('dotenv').config();
+const cron = require('node-cron'); // Assurez-vous que cet import est présent
 
 // Configuration Firebase (nécessaire pour la clé API web)
 const firebaseConfig = {
@@ -216,17 +217,17 @@ app.get('/api/properties', authenticateToken, async (req, res) => {
         const db = admin.firestore();
         const userId = req.user.uid;
 
-        // --- CORRECTION (Rétablissement de la logique 'ownerId' temporaire) ---
-        // const userProfileRef = db.collection('users').doc(userId);
-        // const userProfileDoc = await userProfileRef.get();
-        // if (!userProfileDoc.exists || !userProfileDoc.data().teamId) {
-        //     return res.status(404).send({ error: 'Impossible de trouver votre équipe.' });
-        // }
-        // const teamId = userProfileDoc.data().teamId;
-        // const propertiesSnapshot = await db.collection('properties').where('teamId', '==', teamId).get();
+        const userProfileRef = db.collection('users').doc(userId);
+        const userProfileDoc = await userProfileRef.get();
+        if (!userProfileDoc.exists || !userProfileDoc.data().teamId) {
+            console.warn(`Utilisateur ${userId} n'a pas de teamId, fallback sur ownerId.`);
+            const propertiesSnapshot = await db.collection('properties').where('ownerId', '==', userId).get();
+            const properties = propertiesSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            return res.status(200).json(properties);
+        }
+        const teamId = userProfileDoc.data().teamId;
 
-        // Récupérer toutes les propriétés où l'utilisateur est le créateur
-        const propertiesSnapshot = await db.collection('properties').where('ownerId', '==', userId).get();
+        const propertiesSnapshot = await db.collection('properties').where('teamId', '==', teamId).get();
 
         const properties = propertiesSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
         res.status(200).json(properties);
@@ -905,7 +906,7 @@ app.delete('/api/teams/members/:memberId', authenticateToken, async (req, res) =
 });
 
 
-// --- NOUVELLE ROUTE POUR LES RAPPORTS ---
+// --- ROUTES POUR LES RAPPORTS (SÉCURISÉES) ---
 app.get('/api/reports/kpis', authenticateToken, async (req, res) => {
     try {
         const db = admin.firestore();
@@ -959,15 +960,15 @@ app.get('/api/reports/kpis', authenticateToken, async (req, res) => {
             const bookingStart = new Date(booking.startDate);
             const bookingEnd = new Date(booking.endDate);
 
-            // Trouver les dates qui sont *à la fois* dans la réservation ET dans la période de rapport
             const effectiveStart = new Date(Math.max(bookingStart.getTime(), start.getTime()));
             const effectiveEnd = new Date(Math.min(bookingEnd.getTime(), end.getTime()));
 
-            // +1ms pour s'assurer que le calcul des nuits est correct même si ça finit à 00:00
-            effectiveEnd.setMilliseconds(effectiveEnd.getMilliseconds() + 1);
-
-            // Calculer le nombre de nuits *dans la période*
-            const nightsInPeriod = Math.max(0, Math.round((effectiveEnd - effectiveStart) / (1000 * 60 * 60 * 24)));
+            let nightsInPeriod = 0;
+            let currentDate = new Date(effectiveStart);
+            while (currentDate < effectiveEnd && currentDate <= end) { // s'arrête à la fin de la période
+                nightsInPeriod++;
+                currentDate.setDate(currentDate.getDate() + 1);
+            }
 
             totalNightsBooked += nightsInPeriod;
             totalRevenue += (booking.pricePerNight || 0) * nightsInPeriod;
@@ -1062,6 +1063,73 @@ async function callGeminiAPI(prompt, maxRetries = 3) {
         }
     }
     throw new Error(`Échec de l'appel à l'API Gemini après ${maxRetries} tentatives.`);
+}
+
+/**
+ * Fonction helper pour appeler l'API Gemini avec l'outil de recherche
+ */
+async function callGeminiWithSearch(prompt, maxRetries = 3) {
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+        throw new Error("Clé API Gemini non configurée sur le serveur.");
+    }
+    const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent?key=${apiKey}`;
+
+    const payload = {
+        contents: [{ parts: [{ text: prompt }] }],
+        tools: [{ "google_search": {} }],
+    };
+
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+            const response = await fetch(API_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+
+            if (response.status === 429) {
+                console.warn(`Tentative ${attempt}/${maxRetries}: API Gemini (Search) surchargée. Nouvel essai...`);
+                await delay(attempt * 1000);
+                continue;
+            }
+            if (!response.ok) {
+                const errorBody = await response.json();
+                console.error(`Erreur API Gemini (Search) (Tentative ${attempt}):`, errorBody);
+                throw new Error(`Erreur de l'API Gemini (Search): ${errorBody.error?.message || response.statusText}`);
+            }
+
+            const result = await response.json();
+            const candidate = result.candidates?.[0];
+            const textPart = candidate?.content?.parts?.[0]?.text;
+
+            if (textPart) {
+                try {
+                    const cleanText = textPart.replace(/^```json\n?/, '').replace(/\n?```$/, '');
+                    return JSON.parse(cleanText);
+                } catch (parseError) {
+                    console.error("Erreur de parsing JSON de la réponse Gemini (Search):", textPart);
+                    throw new Error("Réponse de l'API Gemini (Search) reçue mais n'est pas un JSON valide.");
+                }
+            } else {
+                console.error("Réponse Gemini (Search) inattendue:", result);
+                if (candidate?.finishReason === 'SAFETY') {
+                    throw new Error("La réponse de l'IA a été bloquée pour des raisons de sécurité.");
+                } else if (candidate?.finishReason === 'OTHER') {
+                    throw new Error("L'API Gemini n'a pas pu terminer la recherche.");
+                }
+                throw new Error("Réponse de l'API Gemini (Search) malformée ou vide.");
+            }
+        } catch (error) {
+            if (attempt === maxRetries) {
+                throw new Error(`Échec de l'appel à l'API Gemini (Search) après ${maxRetries} tentatives. ${error.message}`);
+            }
+            console.error(`Erreur (Search) Tentative ${attempt}:`, error.message);
+            if (!error.message.includes('429')) {
+                await delay(attempt * 1000);
+            }
+        }
+    }
 }
 
 // POST /api/properties/:id/pricing-strategy - Générer une stratégie de prix
@@ -1169,6 +1237,94 @@ app.post('/api/properties/:id/pricing-strategy', authenticateToken, async (req, 
         }
     }
 });
+
+// GET /api/news - Récupérer les actualités du marché (depuis le cache)
+app.get('/api/news', authenticateToken, async (req, res) => {
+    try {
+        const db = admin.firestore();
+        const newsRef = db.collection('system').doc('marketNews');
+        const newsDoc = await newsRef.get();
+
+        if (!newsDoc.exists) {
+            return res.status(404).send({ error: 'Cache d\'actualités non encore généré. Veuillez patienter.' });
+        }
+
+        // Renvoyer les données JSON mises en cache
+        res.status(200).json(newsDoc.data().data);
+
+    } catch (error) {
+        console.error('Erreur lors de la récupération des actualités depuis le cache:', error);
+        res.status(500).send({ error: `Erreur serveur lors de la récupération des actualités: ${error.message}` });
+    }
+});
+
+
+// --- TÂCHES PLANIFIÉES (CRON JOBS) ---
+/**
+ * Met à jour le cache des actualités du marché dans Firestore.
+ */
+async function updateMarketNewsCache() {
+    console.log('Tâche planifiée : Démarrage de la mise à jour des actualités...');
+    try {
+        const prompt = `
+            Tu es un analyste de marché expert pour la location saisonnière en France.
+            Utilise l'outil de recherche pour trouver les 3-4 actualités ou tendances 
+            les plus récentes et pertinentes (moins de 7 jours) qui impactent 
+            le marché de la location (type Airbnb, Booking) en France.
+            Recherche aussi des événements majeurs (concerts, festivals, salons) 
+            annoncés récemment en France pour les 6 prochains mois.
+
+            Pour chaque actualité:
+            1. Fournis un titre concis.
+            2. Fais un résumé d'une phrase.
+            3. Estime l'impact sur les prix en pourcentage (ex: 15 pour +15%, -5 pour -5%).
+            4. Catégorise cet impact comme "élevé", "modéré", ou "faible".
+
+            Réponds UNIQUEMENT avec un tableau JSON valide. 
+            N'inclus aucun texte avant ou après le tableau, même pas \`\`\`json.
+            Le format doit être:
+            [
+                {
+                    "title": "Titre de l'actualité",
+                    "summary": "Résumé de l'actualité.",
+                    "source": "Nom de la source (ex: 'Le Monde')",
+                    "impact_percentage": 15,
+                    "impact_category": "élevé"
+                }
+            ]
+        `;
+
+        const newsData = await callGeminiWithSearch(prompt); // Appelle la fonction avec retry
+
+        if (!newsData || !Array.isArray(newsData)) {
+            throw new Error("Données d'actualités invalides reçues de Gemini.");
+        }
+
+        const db = admin.firestore();
+        const newsRef = db.collection('system').doc('marketNews');
+        await newsRef.set({
+            data: newsData,
+            updatedAt: admin.firestore.FieldValue.serverTimestamp()
+        });
+        console.log('Mise à jour du cache des actualités terminée avec succès.');
+
+    } catch (error) {
+        console.error('Erreur lors de la mise à jour du cache des actualités:', error.message);
+    }
+}
+
+// Planifier la tâche pour s'exécuter tous les jours à 3h00 du matin
+console.log("Mise en place de la tâche planifiée pour les actualités (tous les jours à 3h00).");
+cron.schedule('0 3 * * *', () => {
+    updateMarketNewsCache();
+}, {
+    scheduled: true,
+    timezone: "Europe/Paris"
+});
+
+// Lancer une mise à jour au démarrage du serveur (pour avoir des données fraîches)
+// Délai de 10s pour laisser Firebase s'initialiser complètement
+setTimeout(updateMarketNewsCache, 10000);
 
 
 // --- DÉMARRAGE DU SERVEUR ---

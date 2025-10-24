@@ -31,7 +31,6 @@ async function apiRequest(endpoint, options = {}) {
   
   // Vérifier si la réponse a un corps avant d'essayer de la parser en JSON
   const contentType = response.headers.get('content-type');
-  const contentLength = response.headers.get('content-length');
 
   if (!response.ok) {
     // Essayer de lire l'erreur JSON si possible, sinon utiliser le statut
@@ -51,20 +50,28 @@ async function apiRequest(endpoint, options = {}) {
     throw new Error(errorData.error);
   }
 
-  // Si la réponse est OK mais n'a pas de contenu JSON (ou longueur 0)
-  if (response.status === 204 || (response.status === 200 && (!contentType?.includes('application/json') || contentLength === '0'))) {
-    // Renvoyer un objet de succès standard pour ces cas (DELETE, PUT sans retour)
-    return { message: 'Opération réussie.' };
+  // --- CORRECTION DE LA LOGIQUE ---
+  
+  // 1. Si la réponse est OK et de type JSON (cas le plus courant)
+  if (contentType && contentType.includes('application/json')) {
+       try {
+          const data = await response.json();
+          return data;
+      } catch (e) {
+           console.error("Erreur de parsing JSON pour une réponse OK:", e);
+           throw new Error("Réponse du serveur reçue mais invalide (pas un JSON).");
+      }
   }
+  
+  // 2. Si la réponse est OK et de type HTML (ANCIENNE LOGIQUE - n'est plus utilisée)
+   if (contentType && contentType.includes('text/html')) {
+       const text = await response.text();
+       return { message: text }; // Renvoyé comme objet pour la cohérence
+   }
 
-  // Si c'est une réponse OK avec du JSON, le parser
-  try {
-      const data = await response.json();
-      return data;
-  } catch (e) {
-       console.error("Erreur de parsing JSON pour une réponse OK:", e);
-       throw new Error("Réponse du serveur reçue mais invalide (pas un JSON).");
-  }
+  // 3. Si la réponse est OK mais n'a pas de contenu (ex: 204 No Content, ou un DELETE)
+  // C'est le fallback pour les requêtes de succès sans corps de réponse.
+  return { message: 'Opération réussie.' };
 }
 
 
@@ -322,17 +329,21 @@ export function removeMember(memberId, token) {
 /**
  * Fonctions pour les Rapports
  */
-
-/**
- * Récupère les KPIs calculés (Revenu, ADR, Occupation) pour une période donnée.
- * @param {string} token - Le jeton d'authentification.
- * @param {string} startDate - Date de début (YYYY-MM-DD).
- * @param {string} endDate - Date de fin (YYYY-MM-DD).
- * @returns {Promise<object>} Un objet contenant les KPIs.
- */
 export function getReportKpis(token, startDate, endDate) {
     const params = new URLSearchParams({ startDate, endDate });
     return apiRequest(`/api/reports/kpis?${params.toString()}`, {
+        token,
+    });
+}
+
+/**
+ * Récupère les actualités du marché via le backend.
+ * @param {string} token - Le jeton d'authentification.
+ * @returns {Promise<Array>} Un tableau d'objets d'actualité.
+ */
+export function getMarketNews(token) {
+    // La route renvoie maintenant du JSON, plus besoin de 'text/html'
+    return apiRequest('/api/news', {
         token,
     });
 }
