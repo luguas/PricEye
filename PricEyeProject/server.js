@@ -3,7 +3,7 @@ const express = require('express');
 const admin = require('firebase-admin');
 const cors = require('cors');
 require('dotenv').config();
-const cron = require('node-cron'); // Assurez-vous que cet import est présent
+const cron = require('node-cron');
 
 // Configuration Firebase (nécessaire pour la clé API web)
 const firebaseConfig = {
@@ -253,6 +253,7 @@ app.post('/api/properties', authenticateToken, async (req, res) => {
             ...newPropertyData,
             ownerId: userId,
             teamId: teamId,
+            amenities: newPropertyData.amenities || [],
             strategy: newPropertyData.strategy || 'Équilibré',
             floor_price: newPropertyData.floor_price || 0,
             base_price: newPropertyData.base_price || 100,
@@ -576,6 +577,7 @@ app.post('/api/groups', authenticateToken, async (req, res) => {
             ownerId: userId,
             properties: [],
             createdAt: admin.firestore.FieldValue.serverTimestamp(),
+            syncPrices: false // Ajout du champ pour la synchro
         };
         const docRef = await db.collection('groups').add(newGroup);
         res.status(201).send({ message: 'Groupe créé avec succès', id: docRef.id });
@@ -602,20 +604,43 @@ app.put('/api/groups/:id', authenticateToken, async (req, res) => {
     try {
         const db = admin.firestore();
         const { id } = req.params;
-        const { name } = req.body;
+        const { name, syncPrices, mainPropertyId } = req.body; // Accepter 'name', 'syncPrices', 'mainPropertyId'
         const userId = req.user.uid;
-        if (!name) {
-            return res.status(400).send({ error: 'Le nom du groupe est requis.' });
-        }
+
         const groupRef = db.collection('groups').doc(id);
         const doc = await groupRef.get();
+
         if (!doc.exists) {
             return res.status(404).send({ error: 'Groupe non trouvé.' });
         }
+
         if (doc.data().ownerId !== userId) {
             return res.status(403).send({ error: 'Action non autorisée sur ce groupe.' });
         }
-        await groupRef.update({ name });
+
+        // Préparer les données à mettre à jour
+        const dataToUpdate = {};
+        if (name) {
+            dataToUpdate.name = name;
+        }
+        if (syncPrices != null && typeof syncPrices === 'boolean') {
+            dataToUpdate.syncPrices = syncPrices;
+        }
+        if (mainPropertyId) {
+            // Vérifier que la propriété est bien dans le groupe
+            if (doc.data().properties && doc.data().properties.includes(mainPropertyId)) {
+                dataToUpdate.mainPropertyId = mainPropertyId;
+            } else {
+                return res.status(400).send({ error: 'La propriété principale doit faire partie du groupe.' });
+            }
+        }
+
+        if (Object.keys(dataToUpdate).length === 0) {
+            return res.status(400).send({ error: 'Aucune donnée valide à mettre à jour (name, syncPrices ou mainPropertyId requis).' });
+        }
+
+        await groupRef.update(dataToUpdate);
+
         res.status(200).send({ message: 'Groupe mis à jour avec succès', id });
     } catch (error) {
         console.error('Erreur lors de la mise à jour du groupe:', error);
@@ -703,16 +728,30 @@ app.delete('/api/groups/:id/properties', authenticateToken, async (req, res) => 
         }
         const currentPropertiesInGroup = groupDoc.data().properties || [];
         const propertiesToRemove = propertyIds.filter(propId => currentPropertiesInGroup.includes(propId));
+
+        // Si on retire la propriété principale, on réinitialise mainPropertyId
+        const mainPropertyId = groupDoc.data().mainPropertyId;
+        let needsMainPropReset = false;
+        if (mainPropertyId && propertiesToRemove.includes(mainPropertyId)) {
+            needsMainPropReset = true;
+        }
+
         if (propertiesToRemove.length === 0) {
             return res.status(404).send({ error: 'Aucune des propriétés spécifiées n\'a été trouvée dans ce groupe.' });
         }
-        await groupRef.update({
+
+        const updateData = {
             properties: admin.firestore.FieldValue.arrayRemove(...propertiesToRemove)
-        });
+        };
+        if (needsMainPropReset) {
+            updateData.mainPropertyId = null; // Réinitialiser la propriété principale
+        }
+
+        await groupRef.update(updateData);
         res.status(200).send({ message: 'Propriétés retirées du groupe avec succès.' });
     } catch (error) {
         console.error('Erreur lors du retrait de propriétés du groupe:', error);
-        res.status(500).send({ error: 'Erreur lors du retrait de propriétés du groupe.' });
+        res.status(500).send({ error: 'Erreur lors de la mise à jour des règles.' });
     }
 });
 
@@ -1167,6 +1206,7 @@ app.post('/api/properties/:id/pricing-strategy', authenticateToken, async (req, 
             property_type: property.property_type,
             capacity: property.capacity,
             surface: property.surface,
+            amenities: property.amenities || []
         })}
 
             RÈGLES UTILISATEUR À RESPECTER IMPÉRATIVEMENT:
@@ -1186,6 +1226,7 @@ app.post('/api/properties/:id/pricing-strategy', authenticateToken, async (req, 
                 * **Effet Week-end:** Majoration si définie.
                 * **Jours Fériés & Vacances Scolaires (France Zone A, B, C):** Impact sur la demande.
                 * **Événements Locaux:** Recherche simulée (festivals, conférences, etc.).
+                * **Qualité du bien:** Prendre en compte les équipements fournis.
 
             2.  **Génération des Prix Journaliers (180 jours):**
                 * Pour CHAQUE jour, calcule un prix optimal.
@@ -1206,8 +1247,10 @@ app.post('/api/properties/:id/pricing-strategy', authenticateToken, async (req, 
         if (!strategyResult || !Array.isArray(strategyResult.daily_prices) || strategyResult.daily_prices.length === 0) {
             throw new Error("La réponse de l'IA est invalide ou ne contient pas de prix journaliers.");
         }
+        const batch = db.batch();
         const floor = property.floor_price;
         const ceiling = property.ceiling_price;
+
         for (const day of strategyResult.daily_prices) {
             const priceNum = Number(day.price);
             if (isNaN(priceNum)) {
@@ -1216,15 +1259,26 @@ app.post('/api/properties/:id/pricing-strategy', authenticateToken, async (req, 
                 continue;
             }
 
+            let finalPrice = priceNum;
             if (priceNum < floor) {
                 console.warn(`Prix ${priceNum}€ pour ${day.date} inférieur au plancher ${floor}€. Ajustement.`);
-                day.price = floor;
+                finalPrice = floor;
             }
             if (ceiling != null && priceNum > ceiling) {
                 console.warn(`Prix ${priceNum}€ pour ${day.date} supérieur au plafond ${ceiling}€. Ajustement.`);
-                day.price = ceiling;
+                finalPrice = ceiling;
             }
+
+            const dayRef = db.collection('properties').doc(id).collection('price_overrides').doc(day.date);
+            batch.set(dayRef, {
+                date: day.date,
+                price: finalPrice,
+                reason: day.reason || "Stratégie IA"
+            });
         }
+
+        await batch.commit();
+        console.log(`Stratégie IA sauvegardée pour ${id} avec ${strategyResult.daily_prices.length} jours.`);
 
         res.status(200).json(strategyResult);
 
@@ -1249,7 +1303,6 @@ app.get('/api/news', authenticateToken, async (req, res) => {
             return res.status(404).send({ error: 'Cache d\'actualités non encore généré. Veuillez patienter.' });
         }
 
-        // Renvoyer les données JSON mises en cache
         res.status(200).json(newsDoc.data().data);
 
     } catch (error) {
@@ -1323,8 +1376,7 @@ cron.schedule('0 3 * * *', () => {
 });
 
 // Lancer une mise à jour au démarrage du serveur (pour avoir des données fraîches)
-// Délai de 10s pour laisser Firebase s'initialiser complètement
-setTimeout(updateMarketNewsCache, 10000);
+setTimeout(updateMarketNewsCache, 10000); // Délai de 10s
 
 
 // --- DÉMARRAGE DU SERVEUR ---

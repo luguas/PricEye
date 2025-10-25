@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { getGroups, createGroup, updateGroup, deleteGroup, addPropertiesToGroup, removePropertiesFromGroup } from '../services/api';
+import { getGroups, createGroup, updateGroup, deleteGroup, addPropertiesToGroup, removePropertiesFromGroup } from '../services/api.js';
 
 function GroupsManager({ token, properties }) {
   const [groups, setGroups] = useState([]);
@@ -36,6 +36,7 @@ function GroupsManager({ token, properties }) {
     e.preventDefault();
     if (!newGroupName.trim()) return; // Check if name is not just whitespace
     try {
+      // 'syncPrices: false' est maintenant défini par défaut dans le backend
       await createGroup({ name: newGroupName.trim() }, token);
       setNewGroupName(''); // Clear input after creation
       fetchGroups(); // Refresh the list
@@ -100,6 +101,26 @@ function GroupsManager({ token, properties }) {
       setError(err.message);
     }
   };
+  
+  // Fonction pour définir la propriété principale
+  const handleSetMainProperty = async (groupId, propertyId) => {
+    try {
+      await updateGroup(groupId, { mainPropertyId: propertyId }, token);
+      fetchGroups(); // Rafraîchir pour voir le changement
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  // Fonction pour basculer la synchronisation des prix
+  const handleToggleSync = async (group) => {
+    try {
+      await updateGroup(group.id, { syncPrices: !group.syncPrices }, token);
+      fetchGroups(); // Rafraîchir
+    } catch (err) {
+      setError(err.message);
+    }
+  };
 
 
   const renderGroupList = () => {
@@ -130,9 +151,9 @@ function GroupsManager({ token, properties }) {
                       type="text"
                       value={editingGroupName}
                       onChange={(e) => setEditingGroupName(e.target.value)}
-                      className="flex-grow bg-gray-600 p-1 rounded-md text-white mr-2" // Added margin
+                      className="flex-grow bg-gray-600 p-1 rounded-md text-white mr-2"
                     />
-                    <div className="flex gap-2 flex-shrink-0"> {/* Added flex-shrink-0 */}
+                    <div className="flex gap-2 flex-shrink-0">
                       <button onClick={() => handleSaveEdit(group.id)} className="text-xs px-3 py-1 bg-green-600 hover:bg-green-500 rounded-md">OK</button>
                       <button onClick={handleCancelEdit} className="text-xs px-3 py-1 bg-gray-500 hover:bg-gray-400 rounded-md">X</button>
                     </div>
@@ -141,7 +162,7 @@ function GroupsManager({ token, properties }) {
                   // Display mode
                   <>
                     <span className="font-semibold">{group.name}</span>
-                    <div className="flex gap-2 flex-shrink-0"> {/* Added flex-shrink-0 */}
+                    <div className="flex gap-2 flex-shrink-0">
                       <button onClick={() => handleStartEdit(group)} className="text-xs px-3 py-1 bg-gray-600 hover:bg-gray-500 rounded-md">Modifier</button>
                       <button onClick={() => handleDeleteGroup(group.id)} className="text-xs px-3 py-1 bg-red-800 hover:bg-red-700 rounded-md">Supprimer</button>
                       <button onClick={() => handleToggleExpand(group.id)} className="p-1">{expandedGroupId === group.id ? '▲' : '▼'}</button>
@@ -153,6 +174,18 @@ function GroupsManager({ token, properties }) {
               {/* Expanded content */}
               {expandedGroupId === group.id && (
                 <div className="mt-4 pt-4 border-t border-gray-600 space-y-4">
+                  
+                  {/* Case à cocher pour la synchronisation */}
+                  <label className="flex items-center gap-2 text-sm text-white">
+                      <input
+                          type="checkbox"
+                          checked={!!group.syncPrices}
+                          onChange={() => handleToggleSync(group)}
+                      />
+                      Synchroniser les prix de l'IA pour ce groupe
+                  </label>
+                  
+                  {/* Liste des propriétés dans le groupe */}
                   <div>
                     <h4 className="font-semibold text-sm mb-2">Propriétés dans ce groupe ({propertiesInGroup.length})</h4>
                     {propertiesInGroup.length > 0 ? (
@@ -160,12 +193,22 @@ function GroupsManager({ token, properties }) {
                         {propertiesInGroup.map(prop => (
                           <li key={prop.id} className="flex justify-between items-center bg-gray-600 p-2 rounded text-xs">
                             <span>{prop.address}</span>
-                            <button onClick={() => handleRemoveProperty(group.id, prop.id)} className="px-2 py-1 bg-red-800 rounded">Retirer</button>
+                            <div className="flex items-center gap-2">
+                              {/* Logique pour la propriété principale */}
+                              {group.mainPropertyId === prop.id ? (
+                                <span className="px-2 py-0.5 bg-blue-600 text-white rounded-full text-[10px] font-bold">Principal</span>
+                              ) : (
+                                <button onClick={() => handleSetMainProperty(group.id, prop.id)} className="px-2 py-1 bg-gray-500 hover:bg-blue-600 rounded text-[10px]">Définir principal</button>
+                              )}
+                              <button onClick={() => handleRemoveProperty(group.id, prop.id)} className="px-2 py-1 bg-red-800 rounded">Retirer</button>
+                            </div>
                           </li>
                         ))}
                       </ul>
                     ) : <p className="text-xs text-gray-400">Aucune propriété assignée.</p>}
                   </div>
+
+                  {/* Section pour ajouter des propriétés */}
                   {availableProperties.length > 0 && (
                     <div>
                       <h4 className="font-semibold text-sm mb-2">Ajouter des propriétés disponibles</h4>

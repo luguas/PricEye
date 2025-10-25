@@ -221,11 +221,18 @@ export function createGroup(groupData, token) {
     });
 }
 
+/**
+ * Fonction pour mettre à jour un groupe existant.
+ * @param {string} groupId - L'ID du groupe à modifier.
+ * @param {object} groupData - Les nouvelles données du groupe (ex: { name: 'Nouveau Nom', syncPrices: true, mainPropertyId: '...' }).
+ * @param {string} token - Le jeton d'authentification.
+ * @returns {Promise<object>} La réponse de l'API.
+ */
 export function updateGroup(groupId, groupData, token) {
     return apiRequest(`/api/groups/${groupId}`, {
         method: 'PUT',
         token,
-        body: JSON.stringify(groupData),
+        body: JSON.stringify(groupData), // Envoie l'objet groupData complet
     });
 }
 
