@@ -1,19 +1,52 @@
 // L'URL de base de notre serveur backend
 const API_BASE_URL = 'http://localhost:5000';
 
+// Importer Firebase (client) pour l'authentification
+import { initializeApp } from "firebase/app";
+import { 
+    getAuth, 
+    EmailAuthProvider, 
+    reauthenticateWithCredential, 
+    updatePassword,
+    signInWithEmailAndPassword 
+} from "firebase/auth";
+
+// Configuration Firebase (côté client)
+const firebaseConfig = {
+    apiKey: "AIzaSyCqdbT96st3gc9bQ9A4Yk7uxU-Dfuzyiuc",
+    authDomain: "priceye-6f81a.firebaseapp.com",
+    databaseURL: "https://priceye-6f81a-default-rtdb.europe-west1.firebasedatabase.app",
+    projectId: "priceye-6f81a",
+    storageBucket: "priceye-6f81a.appspot.com",
+    messagingSenderId: "244431363759",
+    appId: "1:244431363759:web:c2f600581f341fbca63e5a",
+    measurementId: "G-QC6JW8HXBE"
+};
+
+// Initialiser l'Auth de Firebase (côté client)
+let auth;
+try {
+    const app = initializeApp(firebaseConfig);
+    auth = getAuth(app);
+} catch (error) {
+    console.error("Erreur d'initialisation Firebase (client) dans api.js:", error);
+    if (error.code === 'duplicate-app') {
+         const existingApp = initializeApp(firebaseConfig, "default"); 
+         auth = getAuth(existingApp);
+    } else {
+         console.error("Firebase n'a pas pu s'initialiser. L'authentification client échouera.");
+    }
+}
+
+
 /**
- * Fonction générique pour gérer les requêtes fetch.
- * @param {string} endpoint - Le chemin de l'API (ex: '/api/auth/login').
- * @param {object} options - Les options de la requête fetch (method, headers, body).
- * @returns {Promise<object>} Les données JSON de la réponse ou un objet de succès.
+ * Fonction générique pour gérer les requêtes fetch vers NOTRE backend.
  */
 async function apiRequest(endpoint, options = {}) {
-  // Ajouter le token d'authentification s'il est fourni dans les options
   const token = options.token;
   const headers = {
-    // Par défaut 'Content-Type': 'application/json' sauf si spécifié autrement
     'Content-Type': options.headers?.['Content-Type'] ?? 'application/json', 
-    ...options.headers, // Garder les headers existants
+    ...options.headers, 
   };
   if (token) {
     headers['Authorization'] = `Bearer ${token}`;
@@ -23,76 +56,67 @@ async function apiRequest(endpoint, options = {}) {
       ...options,
       headers,
   };
-  // Supprimer la clé 'token' des options avant l'appel fetch
   delete finalOptions.token;
-
 
   const response = await fetch(`${API_BASE_URL}${endpoint}`, finalOptions);
   
-  // Vérifier si la réponse a un corps avant d'essayer de la parser en JSON
   const contentType = response.headers.get('content-type');
 
   if (!response.ok) {
-    // Essayer de lire l'erreur JSON si possible, sinon utiliser le statut
     let errorData = { error: `Erreur ${response.status} sur l'endpoint ${endpoint}`};
     if (contentType && contentType.includes('application/json')) {
       try {
         errorData = await response.json();
-      } catch (e) { /* Ignorer l'erreur de parsing si le JSON est invalide */ }
+      } catch (e) { /* Ignorer */ }
     } else {
-        // Essayer de lire comme texte si ce n'est pas du JSON
         const textError = await response.text();
         if (textError) {
              errorData.error = textError;
         }
     }
-    console.error(`Erreur API (${response.status}):`, errorData.error); // Log détaillé
+    console.error(`Erreur API (${response.status}):`, errorData.error); 
     throw new Error(errorData.error);
   }
 
-  // --- CORRECTION DE LA LOGIQUE ---
-  
-  // 1. Si la réponse est OK et de type JSON (cas le plus courant)
-  if (contentType && contentType.includes('application/json')) {
-       try {
-          const data = await response.json();
-          return data;
-      } catch (e) {
-           console.error("Erreur de parsing JSON pour une réponse OK:", e);
-           throw new Error("Réponse du serveur reçue mais invalide (pas un JSON).");
-      }
+  if (response.status === 204 || (response.status === 200 && (!contentType?.includes('application/json') || response.headers.get('content-length') === '0'))) {
+    return { message: 'Opération réussie.' };
   }
   
-  // 2. Si la réponse est OK et de type HTML (ANCIENNE LOGIQUE - n'est plus utilisée)
-   if (contentType && contentType.includes('text/html')) {
+   if (contentType && (contentType.includes('text/html') || contentType.includes('text/plain'))) {
        const text = await response.text();
-       return { message: text }; // Renvoyé comme objet pour la cohérence
+       return { message: text }; 
    }
 
-  // 3. Si la réponse est OK mais n'a pas de contenu (ex: 204 No Content, ou un DELETE)
-  // C'est le fallback pour les requêtes de succès sans corps de réponse.
-  return { message: 'Opération réussie.' };
+  try {
+      const data = await response.json();
+      return data;
+  } catch (e) {
+       console.error("Erreur de parsing JSON pour une réponse OK:", e, "Réponse:", await response.text());
+       throw new Error("Réponse du serveur reçue mais invalide (pas un JSON).");
+  }
 }
 
 
 /**
- * Fonction pour se connecter à l'API.
- * @param {string} email 
- * @param {string} password 
- * @returns {Promise<object>} Les données de la réponse (contenant idToken).
+ * Fonctions d'authentification
  */
-export function login(email, password) {
-  return apiRequest('/api/auth/login', {
-    method: 'POST',
-    body: JSON.stringify({ email, password }),
-  });
+export async function login(email, password) {
+  if (!auth) {
+    throw new Error("Service d'authentification Firebase non initialisé.");
+  }
+  try {
+    const userCredential = await signInWithEmailAndPassword(auth, email, password);
+    const idToken = await userCredential.user.getIdToken();
+    return { idToken: idToken, message: "Connexion réussie" };
+  } catch (error) {
+    console.error("Erreur de connexion (SDK client):", error.code);
+    if (error.code === 'auth/user-not-found' || error.code === 'auth/wrong-password' || error.code === 'auth/invalid-credential') {
+        throw new Error("Email ou mot de passe invalide.");
+    }
+    throw new Error(error.message);
+  }
 }
 
-/**
- * Fonction pour inscrire un nouvel utilisateur.
- * @param {object} userData - Contient name, email, password
- * @returns {Promise<object>} Les données de la réponse de succès.
- */
 export function register(userData) {
   return apiRequest('/api/auth/register', {
     method: 'POST',
@@ -100,21 +124,38 @@ export function register(userData) {
   });
 }
 
+export async function changeUserPassword(oldPassword, newPassword) {
+    if (!auth || !auth.currentUser) {
+        console.error("changeUserPassword: auth.currentUser est nul.");
+        throw new Error("Utilisateur non connecté ou session invalide. Veuillez vous reconnecter.");
+    }
+    
+    const user = auth.currentUser;
+    const credential = EmailAuthProvider.credential(user.email, oldPassword);
+    
+    try {
+        await reauthenticateWithCredential(user, credential);
+        await updatePassword(user, newPassword);
+        
+    } catch (error) {
+        console.error("Erreur lors du changement de mot de passe:", error.code);
+        if (error.code === 'auth/wrong-password' || error.code === 'auth/invalid-credential') {
+            throw new Error("L'ancien mot de passe est incorrect.");
+        } else if (error.code === 'auth/weak-password') {
+             throw new Error("Le nouveau mot de passe est trop faible (6 caractères min).");
+        }
+        throw new Error(error.message);
+    }
+}
+
+
 /**
- * Fonction pour récupérer le profil de l'utilisateur connecté.
- * @param {string} token - Le jeton d'authentification.
- * @returns {Promise<object>} Les données du profil utilisateur.
+ * Fonctions de profil (utilisent NOTRE backend)
  */
 export function getUserProfile(token) {
   return apiRequest('/api/users/profile', { token });
 }
 
-/**
- * Fonction pour mettre à jour le profil de l'utilisateur connecté.
- * @param {object} profileData - Les données à mettre à jour.
- * @param {string} token - Le jeton d'authentification.
- * @returns {Promise<object>} La réponse de l'API.
- */
 export function updateUserProfile(profileData, token) {
   return apiRequest('/api/users/profile', {
     method: 'PUT',
@@ -123,22 +164,89 @@ export function updateUserProfile(profileData, token) {
   });
 }
 
+// --- Fonctions d'intégration PMS ---
 
 /**
- * Fonction pour récupérer les propriétés de l'utilisateur connecté.
- * @param {string} token - Le jeton d'authentification de l'utilisateur.
- * @returns {Promise<Array>} Un tableau des propriétés de l'utilisateur.
+ * Récupère l'intégration PMS active de l'utilisateur.
+ * @param {string} token - Jeton d'authentification Priceye
  */
-export function getProperties(token) {
-  return apiRequest('/api/properties', { token }); // Passer le token ici
+export function getIntegrations(token) {
+    return apiRequest('/api/integrations', {
+        token: token,
+    });
 }
 
 /**
- * Fonction pour ajouter une nouvelle propriété.
- * @param {object} propertyData - Les données de la nouvelle propriété.
- * @param {string} token - Le jeton d'authentification de l'utilisateur.
- * @returns {Promise<object>} La réponse de l'API.
+ * Teste une connexion PMS avant de la sauvegarder.
+ * @param {string} type - 'smoobu', 'beds24', etc.
+ * @param {object} credentials - Les clés API
+ * @param {string} token - Jeton d'authentification Priceye
  */
+export function testConnection(type, credentials, token) {
+    return apiRequest('/api/integrations/test-connection', {
+        method: 'POST',
+        token: token,
+        body: JSON.stringify({ type: type, credentials: credentials }),
+    });
+}
+
+/**
+ * Sauvegarde les identifiants PMS après un test réussi.
+ * @param {string} type - 'smoobu', 'beds24', etc.
+ * @param {object} credentials - Les clés API
+ * @param {string} token - Jeton d'authentification Priceye
+ */
+export function connectPMS(type, credentials, token) {
+    return apiRequest('/api/integrations/connect', {
+        method: 'POST',
+        token: token,
+        body: JSON.stringify({ type: type, credentials: credentials }),
+    });
+}
+
+/**
+ * Demande au backend de synchroniser les propriétés du PMS connecté.
+ * @param {string} token - Jeton d'authentification Priceye
+ */
+export function syncProperties(token) {
+     return apiRequest('/api/integrations/sync-properties', {
+        method: 'POST',
+        token: token,
+    });
+}
+
+export function disconnectPMS(type, token) {
+    return apiRequest(`/api/integrations/${type}`, {
+        method: 'DELETE',
+        token: token,
+    });
+}
+
+/**
+ * (NOUVEAU) Importe les propriétés sélectionnées du PMS dans la base de données Priceye.
+ * @param {Array<object>} propertiesToImport - Liste des propriétés normalisées à importer.
+ * @param {string} pmsType - Le type de PMS (ex: 'smoobu')
+ * @param {string} token - Jeton d'authentification Priceye
+ */
+export function importPmsProperties(propertiesToImport, pmsType, token) {
+     return apiRequest('/api/integrations/import-properties', {
+        method: 'POST',
+        token: token,
+        body: JSON.stringify({ 
+            propertiesToImport: propertiesToImport,
+            pmsType: pmsType 
+        }),
+    });
+}
+
+
+/**
+ * Fonctions des Propriétés
+ */
+export function getProperties(token) {
+  return apiRequest('/api/properties', { token }); 
+}
+
 export function addProperty(propertyData, token) {
   return apiRequest('/api/properties', {
     method: 'POST',
@@ -147,13 +255,6 @@ export function addProperty(propertyData, token) {
   });
 }
 
-/**
- * Fonction pour mettre à jour une propriété existante.
- * @param {string} id - L'ID de la propriété à mettre à jour.
- * @param {object} propertyData - Les nouvelles données de la propriété.
- * @param {string} token - Le jeton d'authentification.
- * @returns {Promise<object>} La réponse de l'API.
- */
 export function updateProperty(id, propertyData, token) {
   return apiRequest(`/api/properties/${id}`, {
     method: 'PUT',
@@ -162,12 +263,6 @@ export function updateProperty(id, propertyData, token) {
   });
 }
 
-/**
- * Fonction pour supprimer une propriété.
- * @param {string} id - L'ID de la propriété à supprimer.
- * @param {string} token - Le jeton d'authentification.
- * @returns {Promise<object>} La réponse de l'API.
- */
 export function deleteProperty(id, token) {
   return apiRequest(`/api/properties/${id}`, {
     method: 'DELETE',
@@ -175,13 +270,13 @@ export function deleteProperty(id, token) {
   });
 }
 
-/**
- * Fonction pour sauvegarder la stratégie de prix d'une propriété.
- * @param {string} propertyId - L'ID de la propriété.
- * @param {object} strategyData - Les données de la stratégie.
- * @param {string} token - Le jeton d'authentification.
- * @returns {Promise<object>} La réponse de l'API.
- */
+export function syncPropertyData(id, token) {
+  return apiRequest(`/api/properties/${id}/sync`, {
+    method: 'POST',
+    token,
+  });
+}
+
 export function updatePropertyStrategy(propertyId, strategyData, token) {
   return apiRequest(`/api/properties/${propertyId}/strategy`, {
     method: 'PUT',
@@ -190,19 +285,20 @@ export function updatePropertyStrategy(propertyId, strategyData, token) {
   });
 }
 
-/**
- * Fonction pour sauvegarder les règles personnalisées d'une propriété.
- * @param {string} propertyId - L'ID de la propriété.
- * @param {object} rulesData - Les données des règles.
- * @param {string} token - Le jeton d'authentification.
- * @returns {Promise<object>} La réponse de l'API.
- */
 export function updatePropertyRules(propertyId, rulesData, token) {
     return apiRequest(`/api/properties/${propertyId}/rules`, {
         method: 'PUT',
         token,
         body: JSON.stringify(rulesData),
     });
+}
+
+export function updatePropertyStatus(id, status, token) {
+  return apiRequest(`/api/properties/${id}/status`, {
+    method: 'PUT',
+    token,
+    body: JSON.stringify({ status: status }),
+  });
 }
 
 
@@ -221,18 +317,11 @@ export function createGroup(groupData, token) {
     });
 }
 
-/**
- * Fonction pour mettre à jour un groupe existant.
- * @param {string} groupId - L'ID du groupe à modifier.
- * @param {object} groupData - Les nouvelles données du groupe (ex: { name: 'Nouveau Nom', syncPrices: true, mainPropertyId: '...' }).
- * @param {string} token - Le jeton d'authentification.
- * @returns {Promise<object>} La réponse de l'API.
- */
 export function updateGroup(groupId, groupData, token) {
     return apiRequest(`/api/groups/${groupId}`, {
         method: 'PUT',
         token,
-        body: JSON.stringify(groupData), // Envoie l'objet groupData complet
+        body: JSON.stringify(groupData), 
     });
 }
 
@@ -259,11 +348,25 @@ export function removePropertiesFromGroup(groupId, propertyIds, token) {
     });
 }
 
+export function updateGroupStrategy(groupId, strategyData, token) {
+  return apiRequest(`/api/groups/${groupId}/strategy`, {
+    method: 'PUT',
+    token,
+    body: JSON.stringify(strategyData),
+  });
+}
+
+export function updateGroupRules(groupId, rulesData, token) {
+    return apiRequest(`/api/groups/${groupId}/rules`, {
+        method: 'PUT',
+        token,
+        body: JSON.stringify(rulesData),
+    });
+}
+
+
 /**
- * Fonction pour générer la stratégie de prix via l'IA.
- * @param {string} propertyId - L'ID de la propriété.
- * @param {string} token - Le jeton d'authentification.
- * @returns {Promise<object>} La stratégie générée par l'IA.
+ * Fonctions de Pricing & Réservations
  */
 export function generatePricingStrategy(propertyId, token) {
   return apiRequest(`/api/properties/${propertyId}/pricing-strategy`, {
@@ -272,13 +375,6 @@ export function generatePricingStrategy(propertyId, token) {
   });
 }
 
-/**
- * Fonction pour ajouter une réservation à une propriété.
- * @param {string} propertyId - L'ID de la propriété.
- * @param {object} bookingData - Les données de la réservation { startDate, endDate, pricePerNight, channel, etc. }.
- * @param {string} token - Le jeton d'authentification.
- * @returns {Promise<object>} La réponse de l'API.
- */
 export function addBooking(propertyId, bookingData, token) {
   return apiRequest(`/api/properties/${propertyId}/bookings`, {
     method: 'POST',
@@ -287,14 +383,6 @@ export function addBooking(propertyId, bookingData, token) {
   });
 }
 
-/**
- * Fonction pour récupérer les réservations d'un mois donné pour une propriété.
- * @param {string} propertyId - L'ID de la propriété.
- * @param {number} year - L'année.
- * @param {number} month - Le mois (0-11).
- * @param {string} token - Le jeton d'authentification.
- * @returns {Promise<Array>} Un tableau des réservations pour ce mois.
- */
 export function getBookingsForMonth(propertyId, year, month, token) {
   const monthApi = month + 1; 
   return apiRequest(`/api/properties/${propertyId}/bookings?year=${year}&month=${monthApi}`, {
@@ -302,9 +390,16 @@ export function getBookingsForMonth(propertyId, year, month, token) {
   });
 }
 
+export function getTeamBookings(token, startDate, endDate) {
+    const params = new URLSearchParams({ startDate, endDate });
+    return apiRequest(`/api/bookings?${params.toString()}`, {
+        token,
+    });
+}
+
 
 /**
- * Fonctions pour la gestion d'équipe
+ * Fonctions de Gestion d'Équipe
  */
 export function inviteMember(inviteData, token) {
     return apiRequest('/api/teams/invites', {
@@ -334,7 +429,7 @@ export function removeMember(memberId, token) {
 }
 
 /**
- * Fonctions pour les Rapports
+ * Fonctions des Rapports et Actualités
  */
 export function getReportKpis(token, startDate, endDate) {
     const params = new URLSearchParams({ startDate, endDate });
@@ -343,13 +438,42 @@ export function getReportKpis(token, startDate, endDate) {
     });
 }
 
-/**
- * Récupère les actualités du marché via le backend.
- * @param {string} token - Le jeton d'authentification.
- * @returns {Promise<Array>} Un tableau d'objets d'actualité.
- */
+export function getRevenueOverTime(token, startDate, endDate) {
+    const params = new URLSearchParams({ startDate, endDate });
+    return apiRequest(`/api/reports/revenue-over-time?${params.toString()}`, {
+        token,
+    });
+}
+
+export function getPerformanceOverTime(token, startDate, endDate) {
+    const params = new URLSearchParams({ startDate, endDate });
+    return apiRequest(`/api/reports/performance-over-time?${params.toString()}`, {
+        token,
+    });
+}
+
+export function getDateAnalysis(propertyId, date, token) {
+    return apiRequest(`/api/reports/analyze-date`, {
+        method: 'POST',
+        token,
+        body: JSON.stringify({ propertyId: propertyId, date: date }),
+    });
+}
+
+export function getGroupRecommendations(token) {
+    return apiRequest('/api/recommendations/group-candidates', {
+        token,
+    });
+}
+
 export function getMarketNews(token) {
     return apiRequest('/api/news', {
+        token,
+    });
+}
+
+export function getPropertySpecificNews(propertyId, token) {
+    return apiRequest(`/api/properties/${propertyId}/news`, {
         token,
     });
 }

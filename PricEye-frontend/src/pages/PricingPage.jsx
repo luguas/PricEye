@@ -1,7 +1,9 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { getProperties, generatePricingStrategy, addBooking, getBookingsForMonth, getGroups, updateGroup, getUserProfile } from '../services/api.js';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { getProperties, generatePricingStrategy, addBooking, getBookingsForMonth, getGroups, updateGroup, getUserProfile, getPropertySpecificNews } from '../services/api.js';
 import { getFirestore, doc, setDoc, writeBatch, collection, query, where, getDocs, addDoc } from "firebase/firestore"; 
 import { initializeApp } from "firebase/app"; 
+import PropertyNewsFeed from '../components/PropertyNewsFeed.jsx';
+import DateAnalysis from '../components/DateAnalysis.jsx'; 
 
 // Assurez-vous que la configuration Firebase est accessible ici
 const firebaseConfig = {
@@ -27,17 +29,16 @@ try {
 }
 
 
-function PricingPage({ token }) {
+function PricingPage({ token, userProfile }) {
   const [properties, setProperties] = useState([]);
   const [allGroups, setAllGroups] = useState([]);
-  const [userProfile, setUserProfile] = useState(null); // État pour le profil utilisateur
   const [selectedView, setSelectedView] = useState('property'); 
   const [selectedId, setSelectedId] = useState(''); 
 
   const [currentCalendarDate, setCurrentCalendarDate] = useState(new Date());
   const [priceOverrides, setPriceOverrides] = useState({});
   const [bookings, setBookings] = useState({}); 
-  const [isLoading, setIsLoading] = useState(true); // Loader unique pour les données initiales
+  const [isLoading, setIsLoading] = useState(true); 
   const [error, setError] = useState('');
   const [iaLoading, setIaLoading] = useState(false); 
 
@@ -45,8 +46,20 @@ function PricingPage({ token }) {
   const [selectionEnd, setSelectionEnd] = useState(null);
   const [isSelecting, setIsSelecting] = useState(false);
   
+  const [selectionMode, setSelectionMode] = useState('booking'); 
+  
+  // States pour les formulaires
   const [bookingPrice, setBookingPrice] = useState('');
   const [bookingChannel, setBookingChannel] = useState('Direct');
+  const [manualPrice, setManualPrice] = useState('');
+  const [isPriceLocked, setIsPriceLocked] = useState(true); 
+
+  // State pour les actualités spécifiques
+  const [propertyNews, setPropertyNews] = useState([]);
+  const [isNewsLoading, setIsNewsLoading] = useState(false);
+  const [newsError, setNewsError] = useState('');
+
+  const [selectedDateForAnalysis, setSelectedDateForAnalysis] = useState(null);
 
 
   useEffect(() => {
@@ -62,17 +75,14 @@ function PricingPage({ token }) {
     setIsLoading(true);
     setError(''); 
     try {
-      const [profileData, propertiesData, groupsData] = await Promise.all([
-          getUserProfile(token),
+      const [propertiesData, groupsData] = await Promise.all([
           getProperties(token),
           getGroups(token)
       ]);
       
-      setUserProfile(profileData);
       setProperties(propertiesData);
       setAllGroups(groupsData);
       
-      // Sélectionner la première propriété par défaut si elle existe
       if (propertiesData.length > 0) {
         setSelectedView('property');
         setSelectedId(propertiesData[0].id);
@@ -86,7 +96,7 @@ function PricingPage({ token }) {
     } finally {
       setIsLoading(false);
     }
-  }, [token]);
+  }, [token, userProfile]); 
 
   useEffect(() => {
     fetchInitialData();
@@ -94,7 +104,7 @@ function PricingPage({ token }) {
 
 
   const fetchCalendarData = useCallback(async () => {
-    if (!selectedId || !db || isLoading) return; // Ne pas fetcher si on charge déjà les données initiales
+    if (!selectedId || !db || isLoading) return; 
     
     let propertyIdToFetch;
     let currentProperty; 
@@ -114,6 +124,9 @@ function PricingPage({ token }) {
          setBookings({});
          return; 
     }
+
+    // Lancer le fetch des actualités spécifiques en parallèle
+    fetchSpecificNews(propertyIdToFetch);
 
     try {
       const year = currentCalendarDate.getFullYear();
@@ -153,7 +166,25 @@ function PricingPage({ token }) {
 
    useEffect(() => {
       fetchCalendarData();
-  }, [fetchCalendarData]); // Déclenché par les changements dans ses dépendances
+  }, [fetchCalendarData]); 
+
+  // Nouvelle fonction pour charger les actualités spécifiques
+  const fetchSpecificNews = useCallback(async (propertyId) => {
+    if (!propertyId || !token) {
+        setPropertyNews([]); // Vider si pas d'ID
+        return;
+    }
+    setIsNewsLoading(true);
+    setNewsError('');
+    try {
+        const data = await getPropertySpecificNews(propertyId, token);
+        setPropertyNews(data);
+    } catch (err) {
+        setNewsError(`Erreur actus: ${err.message}`);
+    } finally {
+        setIsNewsLoading(false);
+    }
+  }, [token]);
 
 
   const handleGenerateStrategy = async () => {
@@ -169,15 +200,22 @@ function PricingPage({ token }) {
              return;
         }
         if (!group.syncPrices) {
-             alert("La synchronisation des prix n'est pas activée pour ce groupe. Veuillez l'activer dans l'onglet Dashboard.");
-             return;
+             alert("La synchronisation des prix n'est pas activée pour ce groupe. La stratégie ne sera appliquée qu'à la propriété principale.");
+             if (!group.mainPropertyId) {
+                 alert("Veuillez définir une propriété principale pour ce groupe avant de générer une stratégie.");
+                 return;
+             }
+             propertyIdToAnalyze = group.mainPropertyId;
+             groupToSync = null; // Ne pas synchroniser si la case n'est pas cochée
+        } else {
+            // Synchro activée
+             if (!group.mainPropertyId) {
+                 alert("Veuillez définir une propriété principale pour ce groupe (dans l'onglet Dashboard) avant de générer une stratégie.");
+                 return;
+             }
+            propertyIdToAnalyze = group.mainPropertyId;
+            groupToSync = group; // Passer le groupe pour la synchro
         }
-        if (!group.mainPropertyId) {
-             alert("Veuillez définir une propriété principale pour ce groupe (dans l'onglet Dashboard) avant de générer une stratégie.");
-             return;
-        }
-        propertyIdToAnalyze = group.mainPropertyId;
-        groupToSync = group;
     }
     
     if (!propertyIdToAnalyze) {
@@ -210,17 +248,36 @@ function PricingPage({ token }) {
           });
       }
 
+      // Pré-charger les prix verrouillés pour toutes les propriétés concernées
+      const lockedPricesMap = new Map();
+      for (const propId of propertyIdsToUpdate) {
+           const overridesCol = collection(db, `properties/${propId}/price_overrides`);
+           const lockedSnapshot = await getDocs(query(overridesCol, where('isLocked', '==', true)));
+           lockedSnapshot.forEach(doc => {
+               // Clé = "propertyId-YYYY-MM-DD"
+               lockedPricesMap.set(`${propId}-${doc.id}`, doc.data().price); 
+           });
+      }
+      
+      console.log(`Trouvé ${lockedPricesMap.size} prix verrouillés pour ${propertyIdsToUpdate.length} propriétés.`);
+
       strategy.daily_prices.forEach(dayPrice => {
         if (!/^\d{4}-\d{2}-\d{2}$/.test(dayPrice.date)) return; 
         if (typeof dayPrice.price !== 'number' || isNaN(dayPrice.price)) return;
         
-        const dataToSet = { 
-            date: dayPrice.date, 
-            price: dayPrice.price, 
-            reason: dayPrice.reason || "Stratégie IA Groupe" 
-        };
-        
         propertyIdsToUpdate.forEach(propId => {
+            // Vérifier si cette date spécifique est verrouillée pour CETTE propriété
+            if (lockedPricesMap.has(`${propId}-${dayPrice.date}`)) {
+                 console.log(`Ignoré ${dayPrice.date} pour ${propId}: prix verrouillé.`);
+                 return; // Ne pas écraser
+            }
+
+            const dataToSet = { 
+                date: dayPrice.date, 
+                price: dayPrice.price, 
+                reason: dayPrice.reason || "Stratégie IA Groupe",
+                isLocked: false // Les prix de l'IA ne sont pas verrouillés
+            };
             const docRef = doc(db, `properties/${propId}/price_overrides`, dayPrice.date);
             batch.set(docRef, dataToSet);
         });
@@ -243,7 +300,14 @@ function PricingPage({ token }) {
     setIsSelecting(true);
     setSelectionStart(dateStr);
     setSelectionEnd(dateStr);
-    setSelectionMode('booking'); 
+    
+    // Mettre à jour la date pour l'analyse, quel que soit le mode
+    setSelectedDateForAnalysis(dateStr); 
+    
+    // Réinitialiser les formulaires
+    setBookingPrice('');
+    setManualPrice('');
+    setIsPriceLocked(true);
   };
 
   const handleMouseOver = (dateStr) => {
@@ -252,18 +316,20 @@ function PricingPage({ token }) {
         const hoverDate = new Date(dateStr);
         let currentDateCheck = new Date(Math.min(startDate, hoverDate));
         const endDateCheck = new Date(Math.max(startDate, hoverDate));
-        let hasBookingInRange = false;
-        while(currentDateCheck <= endDateCheck){
-            const checkDateStr = currentDateCheck.toISOString().split('T')[0];
-            if(bookings[checkDateStr]){
-                hasBookingInRange = true;
-                break;
+        
+        if (selectionMode === 'booking') {
+            let hasBookingInRange = false;
+            while(currentDateCheck <= endDateCheck){
+                const checkDateStr = currentDateCheck.toISOString().split('T')[0];
+                if(bookings[checkDateStr]){
+                    hasBookingInRange = true;
+                    break;
+                }
+                currentDateCheck.setDate(currentDateCheck.getDate() + 1);
             }
-            currentDateCheck.setDate(currentDateCheck.getDate() + 1);
-        }
-
-        if(hasBookingInRange){
-             console.warn("La sélection traverse une date réservée.");
+            if(hasBookingInRange){
+                 console.warn("La sélection traverse une date réservée.");
+            }
         }
 
         if(hoverDate < startDate) {
@@ -290,7 +356,10 @@ function PricingPage({ token }) {
       setSelectionEnd(null);
       setBookingPrice(''); 
       setBookingChannel('Direct');
+      setManualPrice(''); 
+      setIsPriceLocked(true); 
       setError(''); 
+      // Ne pas réinitialiser selectedDateForAnalysis ici
   };
 
   // --- Sauvegarde de la Réservation ---
@@ -360,6 +429,106 @@ function PricingPage({ token }) {
       }
   };
 
+  // --- Sauvegarde du PRIX MANUEL ---
+  const handleSavePriceOverride = async (e) => {
+      e.preventDefault();
+      
+      let propertyIdsToUpdate = [];
+      if (selectedView === 'property') {
+          propertyIdsToUpdate = [selectedId];
+      } else { 
+          const group = allGroups.find(g => g.id === selectedId);
+          if (!group) {
+              setError("Groupe non trouvé.");
+              return;
+          }
+          if (!group.syncPrices) {
+              alert("La synchronisation des prix n'est pas activée pour ce groupe. Le prix ne sera appliqué qu'à la propriété principale.");
+              propertyIdsToUpdate = [group.mainPropertyId].filter(Boolean); 
+          } else {
+              propertyIdsToUpdate = group.properties || []; 
+          }
+      }
+
+      if (!selectionStart || !selectionEnd || !manualPrice || propertyIdsToUpdate.length === 0 || !db) {
+          setError("Sélection de dates, prix, et propriété/groupe valide requis.");
+          return;
+      }
+      
+      const priceNum = parseInt(manualPrice, 10);
+      if (isNaN(priceNum) || priceNum < 0) {
+          setError("Veuillez entrer un prix valide (0 ou plus).");
+          return;
+      }
+
+      setIsLoading(true);
+      setError('');
+      try {
+          const batch = writeBatch(db);
+          let currentDate = new Date(selectionStart);
+          const endDate = new Date(selectionEnd);
+          
+          while(currentDate <= endDate) {
+              const dateStr = currentDate.toISOString().split('T')[0];
+              const dataToSet = { 
+                  date: dateStr, 
+                  price: priceNum, 
+                  reason: "Manuel",
+                  isLocked: isPriceLocked 
+              };
+              
+              propertyIdsToUpdate.forEach(propId => {
+                  const docRef = doc(db, `properties/${propId}/price_overrides`, dateStr);
+                  batch.set(docRef, dataToSet);
+              });
+              
+              currentDate.setDate(currentDate.getDate() + 1);
+          }
+          
+          await batch.commit();
+          alert(`Prix manuels appliqués à ${propertyIdsToUpdate.length} propriété(s) !`);
+          clearSelection();
+          fetchCalendarData(); 
+      } catch (err) {
+          setError(`Erreur lors de la sauvegarde des prix: ${err.message}`);
+      } finally {
+          setIsLoading(false);
+      }
+  };
+
+  // NOUVEAU: Logique pour obtenir la propriété/groupe actuellement affiché
+  const currentItem = useMemo(() => {
+     if (selectedView === 'property') {
+        return properties.find(p => p.id === selectedId);
+     } else {
+        const group = allGroups.find(g => g.id === selectedId);
+        if (!group) return null;
+        // Pour un groupe, on utilise les infos de la prop principale (ou de la 1ère)
+        return properties.find(p => p.id === group.mainPropertyId) ||
+               properties.find(p => p.id === group.properties?.[0]);
+     }
+  }, [selectedId, selectedView, properties, allGroups]);
+  
+  // NOUVEAU: Logique pour obtenir l'ID de la propriété à analyser
+  const propertyIdForAnalysis = useMemo(() => {
+     if (selectedView === 'property') {
+        return selectedId;
+     } else {
+        const group = allGroups.find(g => g.id === selectedId);
+        return group?.mainPropertyId || group?.properties?.[0];
+     }
+  }, [selectedId, selectedView, allGroups]);
+
+  // NOUVEAU: Calculer le prix actuel pour la date d'analyse
+  const currentPriceForAnalysis = useMemo(() => {
+    if (!selectedDateForAnalysis || !currentItem) {
+      return null;
+    }
+    // L'ordre de priorité est : prix override, PUIS prix de base de la propriété
+    return priceOverrides[selectedDateForAnalysis] ?? currentItem.daily_revenue;
+  }, [selectedDateForAnalysis, currentItem, priceOverrides]);
+
+
   // Formatter pour la devise (basé sur le profil utilisateur)
   const formatCurrency = (amount) => {
       const currency = userProfile?.currency || 'EUR'; // EUR par défaut
@@ -372,19 +541,10 @@ function PricingPage({ token }) {
   };
 
   const renderCalendar = () => {
-    let currentProperty;
-    if (selectedView === 'property') {
-        currentProperty = properties.find(p => p.id === selectedId);
-    } else {
-        const group = allGroups.find(g => g.id === selectedId);
-        if (group) {
-            currentProperty = properties.find(p => p.id === group.mainPropertyId) || 
-                              properties.find(p => p.id === group.properties?.[0]);
-        }
-    }
+    const currentProperty = currentItem; // Utiliser le useMemo
     
     if (isLoading || !selectedId || !currentProperty) {
-         return <div className="grid grid-cols-7 gap-1"><p className="text-center p-4 text-gray-500 col-span-7">Chargement ou sélection requise...</p></div>;
+         return <div className="grid grid-cols-7 gap-1"><p className="text-center p-4 text-text-muted col-span-7">Chargement ou sélection requise...</p></div>;
     }
     
     const year = currentCalendarDate.getFullYear();
@@ -392,7 +552,7 @@ function PricingPage({ token }) {
     const grid = [];
 
     ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'].forEach(day => {
-        grid.push(<div key={day} className="text-center font-semibold text-xs text-gray-500">{day}</div>);
+        grid.push(<div key={day} className="text-center font-semibold text-xs text-text-muted">{day}</div>);
     });
 
     const firstDayOfMonth = new Date(year, month, 1);
@@ -407,8 +567,8 @@ function PricingPage({ token }) {
         const isBooked = !!bookings[dateStr];
         const price = isBooked ? bookings[dateStr].pricePerNight : (priceOverrides[dateStr] ?? currentProperty.daily_revenue); 
         
-        let bgColor = 'bg-gray-800'; 
-        let textColor = 'text-gray-200';
+        let bgColor = 'bg-bg-secondary hover:bg-bg-muted'; 
+        let textColor = 'text-text-primary';
         let borderColor = 'border-transparent';
         let isDisabled = isBooked; 
         
@@ -417,32 +577,38 @@ function PricingPage({ token }) {
             textColor = 'text-red-300';
         }
         
+        // Surlignage de la sélection (booking ou price)
         if (selectionStart && selectionEnd) {
              const dayTime = new Date(dateStr).getTime();
              const startTime = new Date(selectionStart).getTime();
              const endTime = new Date(selectionEnd).getTime();
              
              if (!isNaN(startTime) && !isNaN(endTime) && dayTime >= startTime && dayTime <= endTime) {
-                  bgColor = 'bg-yellow-700'; 
+                  bgColor = selectionMode === 'booking' ? 'bg-yellow-700' : 'bg-blue-700'; 
                   textColor = 'text-white';
                   isDisabled = true; 
              }
              if (dateStr === selectionStart || dateStr === selectionEnd) {
-                  bgColor = 'bg-yellow-600';
-                  borderColor = 'border-yellow-400';
+                  bgColor = selectionMode === 'booking' ? 'bg-yellow-600' : 'bg-blue-600'; 
+                  borderColor = selectionMode === 'booking' ? 'border-yellow-400' : 'border-blue-400'; 
              }
         }
+        
+        // Surlignage de la date d'analyse (si pas déjà en sélection)
+        if (dateStr === selectedDateForAnalysis && !isDisabled) {
+            borderColor = 'border-blue-500';
+        }
+
 
         grid.push(
             <div 
                 key={dateStr} 
                 data-date={dateStr} 
-                className={`calendar-day p-2 rounded-md text-center border ${borderColor} ${bgColor} ${textColor} ${isDisabled ? 'cursor-not-allowed' : 'cursor-pointer hover:opacity-80'}`}
+                className={`calendar-day p-2 rounded-md text-center border ${borderColor} ${bgColor} ${textColor} ${isDisabled ? 'cursor-not-allowed' : 'cursor-pointer'}`}
                 onMouseDown={!isDisabled ? () => handleMouseDown(dateStr) : undefined}
                 onMouseEnter={!isDisabled ? () => handleMouseOver(dateStr) : undefined}
             >
                 <div className="text-sm">{day}</div>
-                {/* Utilisation du formateur de devise */}
                 <div className={`text-xs font-bold mt-1 ${isBooked ? 'opacity-70' : ''}`}>{price != null ? formatCurrency(price) : '-'}</div>
                  {isBooked && <div className="text-[10px] opacity-60 truncate">{bookings[dateStr].channel}</div>}
             </div>
@@ -454,55 +620,120 @@ function PricingPage({ token }) {
    const renderEditPanel = () => {
        const currencyLabel = userProfile?.currency || 'EUR';
        
-       if (selectionStart && selectionEnd) {
-           return (
-                <form onSubmit={handleSaveBooking} className="space-y-3 text-left">
-                    <h5 className="text-md font-semibold text-white mb-2">Ajouter Réservation Manuelle</h5>
-                    <p className="text-xs text-gray-400">La réservation sera ajoutée à la propriété principale du groupe sélectionné (ou à la propriété unique).</p>
-                    <div><label className="text-xs text-gray-400">Période sélectionnée</label>
-                        <p className="text-sm font-medium bg-gray-700 p-1 rounded mt-1">{selectionStart} au {selectionEnd}</p>
-                    </div>
-                    <div>
-                        {/* Mise à jour du label avec la devise dynamique */}
-                        <label className="text-xs text-gray-400">Prix / Nuit ({currencyLabel})</label>
-                        <input 
-                            type="number" 
-                            value={bookingPrice} 
-                            onChange={(e) => setBookingPrice(e.target.value)}
-                            className="w-full bg-gray-700 p-1 rounded text-sm mt-1" 
-                            placeholder="Ex: 150" 
-                            required 
-                            min="1"
-                        />
-                    </div>
-                     <div>
-                        <label className="text-xs text-gray-400">Canal</label>
-                        <select 
-                            value={bookingChannel} 
-                            onChange={(e) => setBookingChannel(e.target.value)}
-                            className="w-full bg-gray-700 p-1 rounded text-sm mt-1"
-                        >
-                            <option value="Direct">Direct</option> <option value="Airbnb">Airbnb</option> <option value="Booking">Booking.com</option> <option value="VRBO">VRBO</option> <option value="Autre">Autre</option>
-                        </select>
-                    </div>
-                    <div className="flex gap-2 pt-2">
-                        <button type="submit" disabled={isLoading} className="flex-grow bg-green-600 hover:bg-green-700 text-white font-semibold py-2 px-4 rounded-lg transition text-sm disabled:bg-gray-500">
-                            {isLoading ? 'Sauvegarde...' : 'Enregistrer Résa.'}
-                        </button>
-                         <button type="button" onClick={clearSelection} className="px-3 py-2 bg-gray-600 hover:bg-gray-500 rounded text-xs">Annuler</button>
-                    </div>
-                </form>
-           );
-       } else {
-           return <p>Sélectionnez une période sur le calendrier pour ajouter une réservation.</p>;
-       }
+       const renderBookingForm = () => (
+            <form onSubmit={handleSaveBooking} className="space-y-3 text-left">
+                <h5 className="text-md font-semibold text-text-primary mb-2">Ajouter Réservation Manuelle</h5>
+                <p className="text-xs text-text-muted">La réservation sera ajoutée à la propriété principale du groupe sélectionné (ou à la propriété unique).</p>
+                <div><label className="text-xs text-text-secondary">Période sélectionnée</label>
+                    <p className="text-sm font-medium bg-bg-muted p-1 rounded mt-1">{selectionStart} au {selectionEnd}</p>
+                </div>
+                <div>
+                    <label className="text-xs text-text-secondary">Prix / Nuit ({currencyLabel})</label>
+                    <input 
+                        type="number" 
+                        value={bookingPrice} 
+                        onChange={(e) => setBookingPrice(e.target.value)}
+                        className="w-full form-input mt-1" 
+                        placeholder="Ex: 150" 
+                        required min="1"
+                    />
+                </div>
+                 <div>
+                    <label className="text-xs text-text-secondary">Canal</label>
+                    <select value={bookingChannel} onChange={(e) => setBookingChannel(e.target.value)} className="w-full form-input mt-1">
+                        <option value="Direct">Direct</option> <option value="Airbnb">Airbnb</option> <option value="Booking">Booking.com</option> <option value="VRBO">VRBO</option> <option value="Autre">Autre</option>
+                    </select>
+                </div>
+                <div className="flex gap-2 pt-2">
+                    <button type="submit" disabled={isLoading} className="flex-grow bg-green-600 hover:bg-green-700 text-white font-semibold py-2 px-4 rounded-lg transition text-sm disabled:bg-gray-500">
+                        {isLoading ? 'Sauvegarde...' : 'Enregistrer Résa.'}
+                    </button>
+                     <button type="button" onClick={clearSelection} className="px-3 py-2 bg-bg-muted hover:bg-border-primary text-text-secondary rounded text-xs">Annuler</button>
+                </div>
+            </form>
+       );
+       
+       const renderPriceForm = () => (
+            <form onSubmit={handleSavePriceOverride} className="space-y-3 text-left">
+                <h5 className="text-md font-semibold text-text-primary mb-2">Définir Prix Manuel</h5>
+                {selectedView === 'group' && <p className="text-xs text-text-muted">Le prix sera appliqué à toutes les propriétés synchronisées de ce groupe.</p>}
+                <div><label className="text-xs text-text-secondary">Période sélectionnée</label>
+                    <p className="text-sm font-medium bg-bg-muted p-1 rounded mt-1">{selectionStart} au {selectionEnd}</p>
+                </div>
+                <div>
+                    <label className="text-xs text-text-secondary">Nouveau Prix / Nuit ({currencyLabel})</label>
+                    <input 
+                        type="number" 
+                        value={manualPrice} 
+                        onChange={(e) => setManualPrice(e.target.value)}
+                        className="w-full form-input mt-1" 
+                        placeholder="Ex: 175" 
+                        required 
+                        min="0" 
+                    />
+                </div>
+                 <div className="flex items-center gap-2 pt-1">
+                    <input
+                        type="checkbox"
+                        id="lockPrice"
+                        checked={isPriceLocked}
+                        onChange={(e) => setIsPriceLocked(e.target.checked)}
+                        className="rounded bg-bg-muted border-border-primary text-blue-500 focus:ring-blue-500"
+                    />
+                    <label htmlFor="lockPrice" className="text-xs text-text-muted">
+                        Verrouiller ce prix (l'IA ne le modifiera pas)
+                    </label>
+                </div>
+                <div className="flex gap-2 pt-2">
+                    <button type="submit" disabled={isLoading} className="flex-grow bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-4 rounded-lg transition text-sm disabled:bg-gray-500">
+                        {isLoading ? 'Sauvegarde...' : 'Appliquer Prix'}
+                    </button>
+                     <button type="button" onClick={clearSelection} className="px-3 py-2 bg-bg-muted hover:bg-border-primary text-text-secondary rounded text-xs">Annuler</button>
+                </div>
+            </form>
+       );
+
+       return (
+            <div className="space-y-4">
+                <div className="flex gap-2">
+                     <button 
+                        onClick={() => { setSelectionMode('booking'); clearSelection(); }}
+                        className={`flex-1 py-2 text-sm rounded-md ${selectionMode === 'booking' ? 'bg-yellow-600 text-white' : 'bg-bg-muted text-text-secondary'}`}
+                     >
+                        Ajouter Réservation
+                     </button>
+                     <button 
+                        onClick={() => { setSelectionMode('price'); clearSelection(); }}
+                        className={`flex-1 py-2 text-sm rounded-md ${selectionMode === 'price' ? 'bg-blue-600 text-white' : 'bg-bg-muted text-text-secondary'}`}
+                     >
+                        Définir Prix
+                     </button>
+                </div>
+                
+                <div className="border-t border-border-primary pt-4">
+                    {!selectionStart ? (
+                        <p>Sélectionnez une période sur le calendrier pour commencer.</p>
+                    ) : selectionMode === 'booking' ? (
+                        renderBookingForm()
+                    ) : (
+                        renderPriceForm()
+                    )}
+                </div>
+            </div>
+       );
    };
    
    const handleViewChange = (e) => {
        const [type, id] = e.target.value.split('-');
+       if (!type || !id) {
+           setSelectedView('property'); // Fallback
+           setSelectedId('');
+           return;
+       }
        setSelectedView(type);
        setSelectedId(id);
        clearSelection();
+       setSelectedDateForAnalysis(null); // Réinitialiser l'analyse
    };
    
    const getSelectedValue = () => {
@@ -513,18 +744,18 @@ function PricingPage({ token }) {
 
   return (
     <div className="space-y-6">
-      <h2 className="text-3xl font-bold text-white">Calendrier de Tarification & Réservations</h2>
+      <h2 className="text-3xl font-bold text-text-primary">Calendrier de Tarification & Réservations</h2>
        {error && <p className="bg-red-900/50 text-red-300 p-3 rounded-md text-sm my-4">{error}</p>}
       
       <div className="md:flex gap-6">
-        <div className="flex-grow bg-gray-900 p-4 rounded-lg">
+        <div className="flex-grow bg-bg-secondary p-4 rounded-lg shadow-lg">
           <div className="flex justify-between items-center mb-4">
             
             <select 
               id="view-selector" 
               value={getSelectedValue()} 
               onChange={handleViewChange}
-              className="bg-gray-800 border-gray-700 rounded-md p-2 focus:ring-blue-500"
+              className="form-input bg-bg-muted border-border-primary"
               disabled={isLoading || iaLoading}
             >
               <option value="">-- Sélectionnez --</option>
@@ -537,28 +768,50 @@ function PricingPage({ token }) {
             </select>
             
             <div className="flex items-center gap-2">
-              <button id="prev-month-btn" onClick={() => { setCurrentCalendarDate(prev => new Date(prev.getFullYear(), prev.getMonth() - 1, 1)); clearSelection(); }} className="bg-gray-700 p-2 rounded-md">&lt;</button>
-              <h3 id="calendar-month-year" className="text-lg font-semibold w-32 text-center">
+              <button id="prev-month-btn" onClick={() => { setCurrentCalendarDate(prev => new Date(prev.getFullYear(), prev.getMonth() - 1, 1)); clearSelection(); setSelectedDateForAnalysis(null); }} className="bg-bg-muted p-2 rounded-md">&lt;</button>
+              <h3 id="calendar-month-year" className="text-lg font-semibold w-32 text-center text-text-primary">
                 {currentCalendarDate.toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' })}
               </h3>
-              <button id="next-month-btn" onClick={() => { setCurrentCalendarDate(prev => new Date(prev.getFullYear(), prev.getMonth() + 1, 1)); clearSelection(); }} className="bg-gray-700 p-2 rounded-md">&gt;</button>
+              <button id="next-month-btn" onClick={() => { setCurrentCalendarDate(prev => new Date(prev.getFullYear(), prev.getMonth() + 1, 1)); clearSelection(); setSelectedDateForAnalysis(null); }} className="bg-bg-muted p-2 rounded-md">&gt;</button>
             </div>
           </div>
           <div id="calendar-grid" className="grid grid-cols-7 gap-1 select-none">
             {renderCalendar()}
           </div>
-           <div className="flex flex-wrap justify-end gap-x-4 gap-y-1 text-xs mt-4 text-gray-400">
-               <span><span className="inline-block w-3 h-3 bg-blue-700 rounded-sm mr-1 align-middle"></span>Prix Modifié (IA/Manuel)</span>
+           <div className="flex flex-wrap justify-end gap-x-4 gap-y-1 text-xs mt-4 text-text-muted">
+               <span><span className="inline-block w-3 h-3 bg-blue-700 rounded-sm mr-1 align-middle"></span>Sélection Prix</span>
                <span><span className="inline-block w-3 h-3 bg-red-900 opacity-60 rounded-sm mr-1 align-middle"></span>Réservé</span>
                <span><span className="inline-block w-3 h-3 bg-yellow-700 rounded-sm mr-1 align-middle"></span>Sélection Résa</span>
            </div>
         </div>
-        <div id="edit-panel" className="w-full md:w-80 bg-gray-900 p-4 rounded-lg mt-6 md:mt-0">
-          <h4 className="font-semibold mb-4">Outils</h4>
+        
+        {/* 4. Afficher le composant dans la barre latérale */}
+        <div id="edit-panel" className="w-full md:w-80 bg-bg-secondary p-4 rounded-lg mt-6 md:mt-0 shadow-lg">
+          <h4 className="font-semibold mb-4 text-text-primary">Outils</h4>
           <div className="space-y-4">
+            
+            <div id="news-feed-section" className="border-b border-border-primary pb-4">
+                <h5 className="text-md font-semibold text-text-primary mb-2">Infos Marché (Propriété)</h5>
+                <PropertyNewsFeed 
+                    token={token} 
+                    propertyId={propertyIdForAnalysis} 
+                />
+            </div>
+
+            {/* Panneau d'Analyse de Date */}
+            <div id="date-analysis-section" className="border-b border-border-primary pb-4">
+                <DateAnalysis
+                    token={token}
+                    date={selectedDateForAnalysis} // Passe la date sélectionnée
+                    propertyId={propertyIdForAnalysis}
+                    currentPrice={currentPriceForAnalysis} // NOUVELLE PROP
+                    userProfile={userProfile} // NOUVELLE PROP
+                />
+            </div>
+          
             <div id="ia-strategy-section">
-              <h5 className="text-md font-semibold text-white mb-2">Stratégie IA (Prix)</h5>
-              <p className="text-xs text-gray-400 mb-3">Générez et appliquez des prix suggérés sur 6 mois.</p>
+              <h5 className="text-md font-semibold text-text-primary mb-2">Stratégie IA (Prix)</h5>
+              <p className="text-xs text-text-muted mb-3">Générez et appliquez des prix suggérés sur 6 mois.</p>
               <button 
                 id="generate-ia-strategy-btn" 
                 onClick={handleGenerateStrategy}
@@ -566,11 +819,12 @@ function PricingPage({ token }) {
                 className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-2 px-4 rounded-lg transition flex items-center justify-center gap-2 disabled:bg-gray-500"
               >
                 <span id="ia-btn-text">{iaLoading ? 'Analyse en cours...' : 'Générer Prix IA'}</span>
-                {iaLoading && <div id="ia-loader" className="loader"></div>}
+                {iaLoading && <div id="ia-loader-small"></div>}
               </button>
             </div>
-            <div className="border-t border-gray-700 pt-4">
-              <div id="booking-panel-content" className="text-center text-gray-500 text-sm">
+            
+            <div className="pt-4">
+              <div id="booking-panel-content" className="text-center text-text-muted text-sm">
                  {renderEditPanel()}
               </div>
             </div>

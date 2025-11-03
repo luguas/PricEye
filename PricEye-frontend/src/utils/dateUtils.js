@@ -20,14 +20,14 @@ const getZonedDate = (timeZone) => {
       timeZone: timeZone || 'UTC', // Fallback sur UTC si non fourni
   });
   
-  // Crée une nouvelle date basée sur cette chaîne pour obtenir le début de journée dans ce fuseau
-  // ex: '2025-10-24'
   const dateString = formatter.format(new Date());
   
-  // Recrée un objet Date. Note : L'heure sera 00:00 dans le fuseau horaire local
-  // mais la *date* sera correcte par rapport au fuseau horaire cible.
-  // Pour les calculs de plage, c'est ce qui compte.
-  return new Date(dateString + 'T00:00:00Z'); // Interpréter comme UTC pour la cohérence
+  // Crée un nouvel objet Date basé sur la date UTC pour éviter les décalages
+  return new Date(Date.UTC(
+      parseInt(dateString.substring(0, 4)),
+      parseInt(dateString.substring(5, 7)) - 1, // Mois est 0-indexé
+      parseInt(dateString.substring(8, 10))
+  ));
 };
 
 
@@ -43,30 +43,55 @@ export const getDatesFromRange = (range, timeZone = 'UTC') => {
 
   switch (range) {
     case '7d':
-      startDate.setDate(endDate.getDate() - 7);
+      startDate.setUTCDate(endDate.getUTCDate() - 7);
       break;
     case '1m':
-      startDate.setMonth(endDate.getMonth() - 1);
+      startDate.setUTCMonth(endDate.getUTCMonth() - 1);
       break;
     case '6m':
-      startDate.setMonth(endDate.getMonth() - 6);
+      startDate.setUTCMonth(endDate.getUTCMonth() - 6);
       break;
     case 'ytd': // Year To Date
       startDate = new Date(Date.UTC(endDate.getUTCFullYear(), 0, 1));
       break;
     case '1y':
-      startDate.setFullYear(endDate.getFullYear() - 1);
+      startDate.setUTCFullYear(endDate.getUTCFullYear() - 1);
       break;
     case 'all':
-      startDate.setFullYear(endDate.getFullYear() - 5); // Simuler "Tout" comme 5 ans
+      startDate.setUTCFullYear(endDate.getUTCFullYear() - 5); // Simuler "Tout" comme 5 ans
       break;
     default:
-      startDate.setMonth(endDate.getMonth() - 1);
+      startDate.setUTCMonth(endDate.getUTCMonth() - 1);
   }
   
   return {
     startDate: formatDate(startDate),
     endDate: formatDate(endDate),
   };
+};
+
+/**
+ * Calcule la période N-1 basée sur les dates de la période N.
+ * @param {string} startDate - Date de début de la période N (YYYY-MM-DD)
+ * @param {string} endDate - Date de fin de la période N (YYYY-MM-DD)
+ * @returns {{startDate: string, endDate: string}}
+ */
+export const getPreviousDates = (startDate, endDate) => {
+    const startN = new Date(startDate + 'T00:00:00Z'); // Interpréter comme UTC
+    const endN = new Date(endDate + 'T00:00:00Z');
+    
+    // Calculer la durée de la période N en millisecondes
+    const durationMs = endN.getTime() - startN.getTime();
+    
+    // La date de fin de N-1 est la veille du début de N
+    const endN_1 = new Date(startN.getTime() - (24 * 60 * 60 * 1000));
+    
+    // La date de début de N-1 est la date de fin de N-1 moins la durée
+    const startN_1 = new Date(endN_1.getTime() - durationMs);
+    
+    return {
+        startDate: formatDate(startN_1),
+        endDate: formatDate(endN_1),
+    };
 };
 

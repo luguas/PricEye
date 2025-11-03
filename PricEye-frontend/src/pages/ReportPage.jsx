@@ -1,13 +1,73 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { getProperties, getReportKpis, getUserProfile } from '../services/api.js'; // Importer getUserProfile
+import { getProperties, getReportKpis, getRevenueOverTime, getPerformanceOverTime } from '../services/api.js'; // Importer getPerformanceOverTime
 import { exportToExcel } from '../utils/exportUtils.js';
 import Chart from 'chart.js/auto'; 
-import { getDatesFromRange } from '../utils/dateUtils.js'; 
+import { getDatesFromRange, getPreviousDates } from '../utils/dateUtils.js'; // Importer les deux fonctions
 
-function ReportPage({ token }) {
+/**
+ * Calcule la tendance entre deux valeurs.
+ * @param {number} current - Période N
+ * @param {number} previous - Période N-1
+ * @returns {{percent: number | null, change: 'increase' | 'decrease' | 'neutral'}}
+ */
+const calculateTrend = (current, previous) => {
+  if (previous === 0 || previous == null) {
+      // Si N-1 est 0, toute augmentation est "infinie"
+      return { percent: current > 0 ? 100.0 : 0, change: current > 0 ? 'increase' : 'neutral' };
+  }
+  
+  const change = ((current - previous) / previous) * 100;
+  
+  return {
+      percent: change,
+      change: change > 0.1 ? 'increase' : (change < -0.1 ? 'decrease' : 'neutral')
+  };
+};
+
+/**
+ * Sous-composant pour afficher un KPI avec sa tendance.
+ */
+function KpiCard({ title, value, previousValue, formatter, isLoading }) {
+    if (isLoading) {
+        return (
+             <div className="bg-bg-secondary p-5 rounded-xl shadow-lg">
+                <p className="text-sm text-text-muted">{title}</p>
+                <p className="text-2xl font-bold text-text-muted animate-pulse">Chargement...</p>
+                <p className="text-sm text-text-muted h-5"></p>
+             </div>
+        );
+    }
+    
+    const trend = calculateTrend(value, previousValue);
+    
+    const trendColor = {
+        increase: 'text-green-400',
+        decrease: 'text-red-400',
+        neutral: 'text-text-muted'
+    }[trend.change];
+    
+    const trendIcon = {
+        increase: '↑',
+        decrease: '↓',
+        neutral: '→'
+    }[trend.change];
+
+    return (
+        <div className="bg-bg-secondary p-5 rounded-xl shadow-lg">
+            <p className="text-sm text-text-muted">{title}</p>
+            <p className="text-2xl font-bold text-text-primary">{formatter(value)}</p>
+            <div className={`flex items-center text-sm font-semibold ${trendColor}`}>
+                {trendIcon} {trend.percent != null ? `${trend.percent.toFixed(1)}%` : '-'}
+                <span className="text-text-muted font-normal ml-2">vs {formatter(previousValue)}</span>
+            </div>
+        </div>
+    );
+}
+
+
+function ReportPage({ token, userProfile }) { 
   const [allProperties, setAllProperties] = useState([]);
   const [filteredProperties, setFilteredProperties] = useState([]);
-  const [userProfile, setUserProfile] = useState(null); // État pour le profil utilisateur
   const [isLoading, setIsLoading] = useState(true);
   const [isKpiLoading, setIsKpiLoading] = useState(true);
   const [error, setError] = useState('');
@@ -21,76 +81,97 @@ function ReportPage({ token }) {
   const [occupancyThreshold, setOccupancyThreshold] = useState(0);
 
   // KPIs State
-  const [kpis, setKpis] = useState({
-    totalRevenue: 0,
-    iaGain: 0, 
-    avgOccupancy: 0,
-    adr: 0,
-    iaScore: 0, 
-  });
+  const [kpis, setKpis] = useState(null); // Période N
+  const [prevKpis, setPrevKpis] = useState(null); // Période N-1
+  const [chartData, setChartData] = useState(null); // Pour le graphique de revenus
+  const [performanceData, setPerformanceData] = useState(null); // NOUVEAU: Pour le graphique de performance
 
   // Chart instances refs
   const revenueChartRef = useRef(null);
   const marketChartRef = useRef(null);
   const revenueChartInstance = useRef(null);
   const marketChartInstance = useRef(null);
+  
+  // Fonctions de formatage
+  const formatCurrency = (amount) => {
+      return (amount || 0).toLocaleString('fr-FR', { 
+          style: 'currency', 
+          currency: userProfile?.currency || 'EUR', 
+          minimumFractionDigits: 0, 
+          maximumFractionDigits: 0 
+      });
+  };
+   const formatCurrencyAdr = (amount) => {
+      return (amount || 0).toLocaleString('fr-FR', { 
+          style: 'currency', 
+          currency: userProfile?.currency || 'EUR', 
+          minimumFractionDigits: 2 
+      });
+  };
+  const formatPercent = (amount) => {
+      return `${(amount || 0).toFixed(1)}%`;
+  }
+   const formatScore = (amount) => {
+      return `${(amount || 0).toFixed(0)}%`;
+  }
 
-  // Fonction unifiée pour charger les données initiales
-  const fetchInitialData = useCallback(async () => {
+
+  // Fetch all properties (pour les filtres)
+  const fetchAllProperties = useCallback(async () => {
     setIsLoading(true);
     try {
-      // Récupérer le profil et les propriétés en parallèle
-      const [profileData, propertiesData] = await Promise.all([
-        getUserProfile(token),
-        getProperties(token)
-      ]);
-      
-      setUserProfile(profileData);
-      setAllProperties(propertiesData);
+      const data = await getProperties(token);
+      setAllProperties(data);
       setError('');
-
     } catch (err) {
-      setError(`Erreur de chargement des données: ${err.message}`);
+      setError(`Erreur de chargement des propriétés: ${err.message}`);
     } finally {
       setIsLoading(false);
     }
   }, [token]);
 
   useEffect(() => {
-    fetchInitialData();
-  }, [fetchInitialData]);
+    fetchAllProperties();
+  }, [fetchAllProperties]);
 
   // Fetch KPIs (Données Réelles)
-  const fetchKpis = useCallback(async () => {
-      // Attendre que le profil utilisateur soit chargé pour avoir le fuseau horaire
-      if (!userProfile) return;
+  const fetchKpisAndCharts = useCallback(async () => {
+      if (!userProfile) return; 
 
       setIsKpiLoading(true);
       setError('');
       try {
-          // Utiliser le fuseau horaire du profil pour calculer les dates
-          const { startDate, endDate } = getDatesFromRange(dateRange, userProfile.timezone);
-          const kpiData = await getReportKpis(token, startDate, endDate);
+          // 1. Obtenir les dates pour N et N-1
+          const { startDate: currentStartDate, endDate: currentEndDate } = getDatesFromRange(dateRange, userProfile.timezone);
+          const { startDate: prevStartDate, endDate: prevEndDate } = getPreviousDates(currentStartDate, currentEndDate);
+
+          // 2. Appeler l'API pour les deux périodes en parallèle
+          const [currentData, prevData, revenueData, perfData] = await Promise.all([
+              getReportKpis(token, currentStartDate, currentEndDate),
+              getReportKpis(token, prevStartDate, prevEndDate),
+              getRevenueOverTime(token, currentStartDate, currentEndDate),
+              getPerformanceOverTime(token, currentStartDate, currentEndDate) // NOUVEL APPEL
+          ]);
           
-          setKpis({
-              totalRevenue: kpiData.totalRevenue || 0,
-              avgOccupancy: kpiData.occupancy || 0,
-              adr: kpiData.adr || 0,
-              iaGain: (kpiData.totalRevenue || 0) * (0.05 + Math.random() * 0.10), 
-              iaScore: 70 + Math.random() * 25, 
-          });
+          setKpis(currentData);
+          setPrevKpis(prevData);
+          setChartData(revenueData); // Sauvegarder les données du graphique de revenus
+          setPerformanceData(perfData); // NOUVEAU: Sauvegarder les données du graphique de performance
           
       } catch (err) {
           setError(`Erreur de chargement des KPIs: ${err.message}`);
-          setKpis({ totalRevenue: 0, iaGain: 0, avgOccupancy: 0, adr: 0, iaScore: 0 });
+          setKpis(null);
+          setPrevKpis(null);
+          setChartData(null);
+          setPerformanceData(null); // NOUVEAU: Réinitialiser en cas d'erreur
       } finally {
           setIsKpiLoading(false);
       }
-  }, [token, dateRange, userProfile]); // Se déclenche si le profil ou la période change
+  }, [token, dateRange, userProfile]); 
 
   useEffect(() => {
-    fetchKpis();
-  }, [fetchKpis]);
+    fetchKpisAndCharts();
+  }, [fetchKpisAndCharts]);
 
 
   // Apply filters
@@ -118,18 +199,16 @@ function ReportPage({ token }) {
     if (revenueChartInstance.current) { revenueChartInstance.current.destroy(); }
     if (marketChartInstance.current) { marketChartInstance.current.destroy(); }
 
-    if (revenueChartRef.current) {
+    // Graphique des Revenus (RÉEL)
+    if (revenueChartRef.current && chartData) { 
         const ctxRevenue = revenueChartRef.current.getContext('2d');
-        const labels = Array.from({length: 30}, (_, i) => `J-${30-i}`); 
-        const revenueData = labels.map(() => kpis.totalRevenue * (0.8 + Math.random() * 0.4) / 30); 
-        
         revenueChartInstance.current = new Chart(ctxRevenue, { 
             type: 'line', 
             data: { 
-                labels: labels, 
+                labels: chartData.labels, 
                 datasets: [{ 
-                    label: 'Revenus Estimés', 
-                    data: revenueData, 
+                    label: 'Revenus Réels', 
+                    data: chartData.revenueData, 
                     borderColor: '#3b82f6', 
                     backgroundColor: 'rgba(59, 130, 246, 0.1)', 
                     fill: true, 
@@ -146,24 +225,53 @@ function ReportPage({ token }) {
         });
     }
 
-    if (marketChartRef.current) {
+    // NOUVEAU: Graphique Performance (RÉEL)
+    if (marketChartRef.current && performanceData) {
       const ctxMarket = marketChartRef.current.getContext('2d');
-      const labelsMarket = ['-30j', '-15j', 'Auj.', '+15j', '+30j'];
       marketChartInstance.current = new Chart(ctxMarket, {
-        type: 'line',
+        type: 'bar', // Type principal en barres
         data: {
-          labels: labelsMarket,
+          labels: performanceData.labels,
           datasets: [
-            { label: 'Demande Estimée', data: [60, 75, 80, 85, 70], borderColor: '#10b981', fill: false, tension: 0.3 },
-            { label: 'Offre Estimée', data: [85, 80, 78, 75, 80], borderColor: '#ef4444', fill: false, tension: 0.3 }
+            { 
+              label: 'Nb. Réservations', 
+              data: performanceData.bookingCounts, 
+              backgroundColor: '#3b82f6', // Bleu
+              yAxisID: 'y', // Axe Y gauche
+            },
+            {
+              label: 'Taux d\'Occupation (%)',
+              data: performanceData.occupancyRates,
+              type: 'line', // Ce dataset est une ligne
+              borderColor: '#10b981', // Vert
+              tension: 0.3,
+              fill: false,
+              yAxisID: 'y1', // Axe Y droit
+            }
           ]
         },
         options: {
              scales: { 
-                y: { beginAtZero: false, ticks: { color: '#9ca3af' } },
-                x: { ticks: { color: '#9ca3af' } } 
+                x: { ticks: { color: '#9ca3af' } },
+                // Axe Y gauche (Barres - Nb Réservations)
+                y: { 
+                    beginAtZero: true, 
+                    position: 'left',
+                    ticks: { color: '#9ca3af' },
+                    grid: { drawOnChartArea: false } // Grille optionnelle
+                },
+                // Axe Y droit (Ligne - %)
+                y1: {
+                    beginAtZero: true,
+                    max: 100, // L'occupation est un %
+                    position: 'right',
+                    ticks: { color: '#9ca3af', callback: (value) => `${value}%` },
+                    grid: { drawOnChartArea: false } // Ne pas dessiner la grille pour cet axe
+                }
             },
-            plugins: { legend: { labels: { color: '#9ca3af' }}}
+            plugins: { 
+                legend: { labels: { color: '#9ca3af' }}
+            }
         }
       });
     }
@@ -172,7 +280,7 @@ function ReportPage({ token }) {
          if (marketChartInstance.current) { marketChartInstance.current.destroy(); }
      };
 
-  }, [kpis.totalRevenue]); 
+  }, [chartData, performanceData]); // Se redéclenche si les données des deux graphiques changent
 
   const handleExport = () => {
     if (filteredProperties.length === 0) {
@@ -181,35 +289,17 @@ function ReportPage({ token }) {
     }
     exportToExcel(filteredProperties, `Rapport_Proprietes_${dateRange}`);
   };
-  
-  // Formatter pour la devise
-  const formatCurrency = (amount) => {
-      return (amount || 0).toLocaleString('fr-FR', { 
-          style: 'currency', 
-          currency: userProfile?.currency || 'EUR', // Utiliser la devise du profil
-          minimumFractionDigits: 0, 
-          maximumFractionDigits: 0 
-      });
-  };
-   const formatCurrencyAdr = (amount) => {
-      return (amount || 0).toLocaleString('fr-FR', { 
-          style: 'currency', 
-          currency: userProfile?.currency || 'EUR', // Utiliser la devise du profil
-          minimumFractionDigits: 2 
-      });
-  };
-
 
   return (
     <div className="space-y-8">
       <div className="flex flex-wrap justify-between items-center gap-4">
-        <h2 className="text-3xl font-bold text-white">Rapport d'Activité</h2>
+        <h2 className="text-3xl font-bold text-text-primary">Rapport d'Activité</h2>
         <div className="flex items-center gap-4">
           <select 
             id="date-range-selector" 
             value={dateRange} 
             onChange={(e) => setDateRange(e.target.value)} 
-            className="bg-gray-800 border-gray-700 rounded-md p-2 focus:ring-blue-500 text-white"
+            className="form-input bg-bg-secondary border-border-primary rounded-md p-2 focus:ring-blue-500 text-text-primary"
           >
             <option value="7d">7 derniers jours</option>
             <option value="1m">Ce mois (30j)</option>
@@ -222,46 +312,86 @@ function ReportPage({ token }) {
         </div>
       </div>
 
-      <div className="bg-gray-800 p-4 rounded-lg">
-         <h3 className="font-semibold mb-3 text-lg">Filtres (pour l'export)</h3>
-         {isLoading && <p className="text-xs text-gray-400">Chargement des filtres...</p>}
+      <div className="bg-bg-secondary p-4 rounded-lg shadow-lg">
+         <h3 className="font-semibold mb-3 text-lg text-text-primary">Filtres (pour l'export)</h3>
+         {isLoading && <p className="text-xs text-text-muted">Chargement des filtres...</p>}
          {!isLoading && 
             <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4 text-sm">
-                <select value={propertyType} onChange={(e) => setPropertyType(e.target.value)} className="filter-input bg-gray-700 border-gray-600 rounded-md p-2 text-white"><option value="">Type de propriété</option>{[...new Set(allProperties.map(p=>p.property_type))].filter(Boolean).map(type => <option key={type} value={type}>{type}</option>)}</select>
-                <select value={channel} onChange={(e) => setChannel(e.target.value)} className="filter-input bg-gray-700 border-gray-600 rounded-md p-2 text-white"><option value="">Canal</option>{[...new Set(allProperties.map(p=>p.channel))].filter(Boolean).map(c => <option key={c} value={c}>{c}</option>)}</select>
-                <select value={status} onChange={(e) => setStatus(e.target.value)} className="filter-input bg-gray-700 border-gray-600 rounded-md p-2 text-white"><option value="">Statut</option>{[...new Set(allProperties.map(p=>p.status))].filter(Boolean).map(s => <option key={s} value={s}>{s}</option>)}</select>
-                <input type="text" value={location} onChange={(e) => setLocation(e.target.value)} className="filter-input bg-gray-700 border-gray-600 rounded-md p-2 text-white" placeholder="Pays / Ville / Adresse" />
+                <select value={propertyType} onChange={(e) => setPropertyType(e.target.value)} className="form-input"><option value="">Type de propriété</option>{[...new Set(allProperties.map(p=>p.property_type))].filter(Boolean).map(type => <option key={type} value={type}>{type}</option>)}</select>
+                <select value={channel} onChange={(e) => setChannel(e.target.value)} className="form-input"><option value="">Canal</option>{[...new Set(allProperties.map(p=>p.channel))].filter(Boolean).map(c => <option key={c} value={c}>{c}</option>)}</select>
+                <select value={status} onChange={(e) => setStatus(e.target.value)} className="form-input"><option value="">Statut</option>{[...new Set(allProperties.map(p=>p.status))].filter(Boolean).map(s => <option key={s} value={s}>{s}</option>)}</select>
+                <input type="text" value={location} onChange={(e) => setLocation(e.target.value)} className="form-input" placeholder="Pays / Ville / Adresse" />
                 <div className="flex flex-col">
-                   <label htmlFor="filter-occupancy" className="text-xs text-gray-400">Taux d'occup. (Base) &gt; <span id="occupancy-value">{occupancyThreshold}</span>%</label>
-                   <input type="range" id="filter-occupancy" min="0" max="100" value={occupancyThreshold} onChange={(e) => setOccupancyThreshold(parseInt(e.target.value, 10))} className="filter-input w-full h-2 bg-gray-600 rounded-lg appearance-none cursor-pointer accent-blue-500" />
+                   <label htmlFor="filter-occupancy" className="text-xs text-text-muted">Taux d'occup. (Base) &gt; <span id="occupancy-value">{occupancyThreshold}</span>%</label>
+                   <input type="range" id="filter-occupancy" min="0" max="100" value={occupancyThreshold} onChange={(e) => setOccupancyThreshold(parseInt(e.target.value, 10))} className="filter-input w-full h-2 bg-bg-muted rounded-lg appearance-none cursor-pointer accent-blue-500" />
                 </div>
             </div>
          }
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-6">
-        {isKpiLoading || isLoading ? (
-            <div className="col-span-full text-center text-gray-400">Chargement des KPIs réels...</div>
-        ) : (
-            <>
-                <div className="bg-gray-800 p-5 rounded-xl"><p className="text-sm text-gray-400">Revenu Total (Réel)</p><p className="text-2xl font-bold">{formatCurrency(kpis.totalRevenue)}</p></div>
-                <div className="bg-gray-800 p-5 rounded-xl"><p className="text-sm text-gray-400">Gains par l'IA (Simulé)</p><p className="text-2xl font-bold">{formatCurrency(kpis.iaGain)}</p></div>
-                <div className="bg-gray-800 p-5 rounded-xl"><p className="text-sm text-gray-400">Taux d'occupation (Réel)</p><p className="text-2xl font-bold">{kpis.avgOccupancy.toFixed(1)}%</p></div>
-                <div className="bg-gray-800 p-5 rounded-xl"><p className="text-sm text-gray-400">Prix Moyen / Nuit (ADR Réel)</p><p className="text-2xl font-bold">{formatCurrencyAdr(kpis.adr)}</p></div>
-                <div className="bg-gray-800 p-5 rounded-xl"><p className="text-sm text-gray-400">Score IA (Simulé)</p><p className="text-2xl font-bold">{kpis.iaScore.toFixed(0)} / 100</p></div>
-            </>
-        )}
+      {/* Grille des KPIs mise à jour (lg:grid-cols-3) */}
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-6">
+        <KpiCard
+            title="Revenu Total (Réel)"
+            isLoading={isKpiLoading}
+            value={kpis?.totalRevenue}
+            previousValue={prevKpis?.totalRevenue}
+            formatter={formatCurrency}
+        />
+         <KpiCard
+            title="Taux d'occupation (Réel)"
+            isLoading={isKpiLoading}
+            value={kpis?.avgOccupancy}
+            previousValue={prevKpis?.avgOccupancy}
+            formatter={formatPercent}
+        />
+         <KpiCard
+            title="ADR (Réel)"
+            isLoading={isKpiLoading}
+            value={kpis?.adr}
+            previousValue={prevKpis?.adr}
+            formatter={formatCurrencyAdr}
+        />
+        <KpiCard
+            title="Gains par l'IA (Réel)"
+            isLoading={isKpiLoading}
+            value={kpis?.iaGain}
+            previousValue={prevKpis?.iaGain}
+            formatter={formatCurrency}
+        />
+         <KpiCard
+            title="Score IA (Réel)"
+            isLoading={isKpiLoading}
+            value={kpis?.iaScore}
+            previousValue={prevKpis?.iaScore}
+            formatter={formatScore}
+        />
+        {/* NOUVELLE KpiCard pour le RevPAR */}
+        <KpiCard
+            title="RevPAR (Réel)"
+            isLoading={isKpiLoading}
+            value={kpis?.revPar}
+            previousValue={prevKpis?.revPar}
+            formatter={formatCurrencyAdr}
+        />
       </div>
 
       {error && <p className="text-red-400 text-center">{error}</p>}
-      {!error && (isLoading || filteredProperties.length > 0) && (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <div className="bg-gray-800 p-5 rounded-xl"><h4 className="font-semibold mb-4 text-white">Évolution des revenus (Simulé)</h4>{isLoading ? <p>Chargement...</p> : <canvas ref={revenueChartRef}></canvas>}</div>
-          <div className="bg-gray-800 p-5 rounded-xl"><h4 className="font-semibold mb-4 text-white">Tendance du Marché (Simulé)</h4>{isLoading ? <p>Chargement...</p> : <canvas ref={marketChartRef}></canvas>}</div>
+      
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div className="bg-bg-secondary p-5 rounded-xl shadow-lg">
+            <h4 className="font-semibold mb-4 text-text-primary">Évolution des revenus (Réel)</h4>
+            {isKpiLoading ? <p>Chargement...</p> : <canvas ref={revenueChartRef}></canvas>}
         </div>
-      )}
+        <div className="bg-bg-secondary p-5 rounded-xl shadow-lg">
+            {/* Titre mis à jour */}
+            <h4 className="font-semibold mb-4 text-text-primary">Performance (Résas vs Occupation)</h4>
+            {isKpiLoading ? <p>Chargement...</p> : <canvas ref={marketChartRef}></canvas>}
+        </div>
+      </div>
+      
       {!isLoading && !error && filteredProperties.length === 0 && (
-          <p className="text-center text-gray-500 mt-8">Aucune propriété à afficher.</p>
+          <p className="text-center text-text-muted mt-8">Aucune propriété à afficher.</p>
       )}
 
     </div>
