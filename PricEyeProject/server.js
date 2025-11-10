@@ -5,7 +5,7 @@ const cors = require('cors');
 require('dotenv').config();
 const cron = require('node-cron'); 
 
-// ... (code existant: config, init, middlewares, auth, logPropertyChange) ...
+// Configuration Firebase (nécessaire pour la clé API web)
 const firebaseConfig = {
     apiKey: "AIzaSyCqdbT96st3gc9bQ9A4Yk7uxU-Dfuzyiuc",
     authDomain: "priceye-6f81a.firebaseapp.com",
@@ -16,6 +16,8 @@ const firebaseConfig = {
     appId: "1:244431363759:web:c2f600581f341fbca63e5a",
     measurementId: "G-QC6JW8HXBE"
 };
+
+// --- INITIALISATION DE FIREBASE ADMIN ---
 try {
   admin.initializeApp({
     credential: admin.credential.applicationDefault()
@@ -25,10 +27,38 @@ try {
   console.error('Erreur d\'initialisation de Firebase Admin:', error);
   process.exit(1);
 }
+
 const app = express();
 const port = process.env.PORT || 5000;
-app.use(cors());
+
+// --- MIDDLEWARES ---
+
+// CORRECTION: Configuration CORS explicite pour la production
+const allowedOrigins = [
+    'https://priceye.onrender.com',    // L'API elle-même
+    'http://localhost:5173',           // Votre app React en local (Vite)
+    'http://localhost:3000',           // Votre app React en local (CRA)
+    // 'https://votre-frontend-sur-vercel.app' // << AJOUTEZ L'URL DE VOTRE FRONTEND DÉPLOYÉ ICI
+];
+
+app.use(cors({
+    origin: function (origin, callback) {
+        // Autoriser les requêtes sans origine (ex: Postman, apps mobiles)
+        if (!origin) return callback(null, true);
+        
+        if (allowedOrigins.indexOf(origin) === -1) {
+            const msg = `La politique CORS pour ce site n'autorise pas l'accès depuis l'origine : ${origin}`;
+            console.error(msg);
+            return callback(new Error(msg), false);
+        }
+        return callback(null, true);
+    }
+}));
+// Fin de la correction CORS
+
 app.use(express.json());
+
+// --- MIDDLEWARE D'AUTHENTIFICATION ---
 const authenticateToken = async (req, res, next) => {
     const authHeader = req.headers.authorization;
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
@@ -45,11 +75,23 @@ const authenticateToken = async (req, res, next) => {
         res.status(403).send({ error: 'Jeton invalide ou expiré.' });
     }
 };
+
+/**
+ * FONCTION D'AUDIT: Enregistre une action dans les logs d'une propriété.
+ * @param {string} propertyId - ID de la propriété
+ * @param {string} userId - ID de l'utilisateur
+ * @param {string} userEmail - Email de l'utilisateur
+ * @param {string} action - Description de l'action (ex: "update:details")
+ * @param {object} changes - Objet décrivant les changements
+ */
 async function logPropertyChange(propertyId, userId, userEmail, action, changes) {
   try {
     const db = admin.firestore();
     const logRef = db.collection('properties').doc(propertyId).collection('logs').doc();
+    
+    // Nettoyer les 'undefined' potentiels
     const cleanChanges = JSON.parse(JSON.stringify(changes || {}));
+
     await logRef.set({
       timestamp: admin.firestore.FieldValue.serverTimestamp(),
       userId: userId,
@@ -60,6 +102,7 @@ async function logPropertyChange(propertyId, userId, userEmail, action, changes)
     console.log(`Log enregistré pour ${propertyId}: action ${action}`);
   } catch (error) {
     console.error(`Erreur lors de l'enregistrement du log pour ${propertyId}:`, error);
+    // Ne pas bloquer la requête principale si le logging échoue
   }
 }
 
@@ -70,8 +113,9 @@ async function logPropertyChange(propertyId, userId, userEmail, action, changes)
  */
 async function getUserPMSClient(userId) {
     const db = admin.firestore();
+    // Les intégrations sont stockées sous /users/{userId}/integrations/{pmsType}
     const integrationsRef = db.collection('users').doc(userId).collection('integrations');
-    const snapshot = await integrationsRef.limit(1).get(); 
+    const snapshot = await integrationsRef.limit(1).get(); // Prend la première intégration trouvée
 
     if (snapshot.empty) {
         throw new Error("Aucun PMS n'est connecté à ce compte.");
@@ -79,8 +123,8 @@ async function getUserPMSClient(userId) {
 
     const integrationDoc = snapshot.docs[0];
     const integration = integrationDoc.data();
-    const pmsType = integrationDoc.id; 
-    const credentials = integration.credentials; 
+    const pmsType = integrationDoc.id; // Le type (ex: 'smoobu') est l'ID du document
+    const credentials = integration.credentials; // Les identifiants stockés
 
     if (!pmsType || !credentials) {
          throw new Error("Configuration PMS invalide ou manquante dans Firestore.");
@@ -89,7 +133,7 @@ async function getUserPMSClient(userId) {
     // Utiliser l'import() dynamique car pmsManager est un module ES6
     const { getPMSClient } = await import('./integrations/pmsManager.js');
     
-    // CORRECTION: getPMSClient est maintenant asynchrone et doit être attendu
+    // getPMSClient est maintenant asynchrone et doit être attendu
     return await getPMSClient(pmsType, credentials);
 }
 
@@ -101,6 +145,7 @@ async function syncAllPMSRates() {
     const db = admin.firestore();
     const { getPMSClient } = await import('./integrations/pmsManager.js');
 
+    // 1. Récupérer toutes les connexions PMS actives
     const integrationsSnapshot = await db.collectionGroup('integrations').get();
     if (integrationsSnapshot.empty) {
         console.log('[PMS Sync] Aucune intégration PMS active trouvée. Tâche terminée.');
@@ -109,6 +154,7 @@ async function syncAllPMSRates() {
 
     console.log(`[PMS Sync] ${integrationsSnapshot.size} connexions PMS trouvées. Traitement...`);
     
+    // Traiter chaque intégration individuellement
     for (const doc of integrationsSnapshot.docs) {
         const userId = doc.ref.parent.parent.id;
         const pmsType = doc.id;
@@ -118,7 +164,7 @@ async function syncAllPMSRates() {
         console.log(`[PMS Sync] Traitement de ${pmsType} pour ${userEmail} (ID: ${userId})`);
 
         try {
-            // CORRECTION: getPMSClient est maintenant asynchrone
+            // 2. Obtenir le client et les propriétés
             const client = await getPMSClient(pmsType, credentials);
             const properties = await client.getProperties();
 
@@ -127,12 +173,14 @@ async function syncAllPMSRates() {
                 continue;
             }
 
+            // 3. Pour chaque propriété, calculer et mettre à jour le prix (pour aujourd'hui, en mock)
             const priceUpdatePromises = [];
             const today = new Date().toISOString().split('T')[0];
 
             for (const prop of properties) {
                 // MOCK: Calcul du prix IA
-                const mockPrice = Math.floor(100 + Math.random() * 150); 
+                // TODO: Remplacer par un véritable appel à votre service de pricing
+                const mockPrice = Math.floor(100 + Math.random() * 150); // Simule un prix entre 100 et 250
 
                 priceUpdatePromises.push(
                     client.updateRate(prop.pmsId, today, mockPrice)
@@ -150,11 +198,14 @@ async function syncAllPMSRates() {
                 );
             }
 
+            // 4. Exécuter toutes les mises à jour en parallèle
             const results = await Promise.allSettled(priceUpdatePromises);
 
+            // 5. Journaliser les résultats
             for (const result of results) {
                 if (result.status === 'fulfilled') {
                     console.log(`[PMS Sync] Succès: Prix pour ${result.value.propertyId} mis à ${result.value.price}€ pour ${result.value.date}`);
+                    // logPropertyChange(result.value.propertyId, 'system-pms', 'pms-sync', 'update:rate', { ... });
                 } else {
                     console.error(`[PMS Sync] Échec: Prix pour ${result.reason.propertyId} n'a pas pu être mis à jour. Raison: ${result.reason.reason}`);
                 }
@@ -162,6 +213,7 @@ async function syncAllPMSRates() {
 
         } catch (error) {
             console.error(`[PMS Sync] Échec critique pour ${userEmail} (PMS: ${pmsType}). Raison: ${error.message}`);
+            // On pourrait logger cette erreur dans le profil de l'utilisateur
         }
     }
     console.log('[PMS Sync] Tâche de synchronisation quotidienne terminée.');
@@ -170,12 +222,17 @@ async function syncAllPMSRates() {
 
 /**
  * HELPER: Obtient l'identifiant de la semaine (ISO 8601) pour une date donnée.
+ * @param {Date} date - L'objet Date (en UTC)
+ * @returns {string} - L'identifiant de la semaine (ex: "2025-W05")
  */
 function getWeekId(date) {
-    // ... (code existant de la fonction)
+    // Crée une copie pour éviter de muter la date originale
     const d = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+    // Positionne au jeudi de la même semaine
     d.setUTCDate(d.getUTCDate() + 4 - (d.getUTCDay() || 7));
+    // Date du 1er janvier de cette année
     const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+    // Calcule le numéro de la semaine
     const weekNo = Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
     return `${d.getUTCFullYear()}-W${String(weekNo).padStart(2, '0')}`;
 }
@@ -183,16 +240,18 @@ function getWeekId(date) {
 
 // --- ROUTES D'AUTHENTIFICATION (PUBLIQUES) ---
 app.post('/api/auth/register', async (req, res) => {
-    // ... (code existant de la route)
   const { email, password, name, currency, language, timezone } = req.body;
+
   if (!email || !password) {
     return res.status(400).send({ error: 'Email et mot de passe sont requis.' });
   }
+
   try {
     const userRecord = await admin.auth().createUser({
       email: email,
       password: password,
     });
+
     const db = admin.firestore();
     await db.collection('users').doc(userRecord.uid).set({
       email: email,
@@ -210,6 +269,7 @@ app.post('/api/auth/register', async (req, res) => {
       teamId: userRecord.uid,
       role: 'admin'
     });
+
     res.status(201).send({
       message: 'Utilisateur créé et profil enregistré avec succès',
       uid: userRecord.uid
@@ -227,7 +287,6 @@ app.post('/api/auth/register', async (req, res) => {
 });
 
 app.post('/api/auth/login', async (req, res) => {
-    // ... (code existant de la route)
     const { email, password } = req.body;
     if (!email || !password) {
         return res.status(400).send({ error: 'Email et mot de passe sont requis.' });
@@ -261,7 +320,6 @@ app.post('/api/auth/login', async (req, res) => {
 
 // --- ROUTES DE GESTION DU PROFIL UTILISATEUR (SÉCURISÉES) ---
 app.get('/api/users/profile', authenticateToken, async (req, res) => {
-    // ... (code existant de la route)
     try {
         const db = admin.firestore();
         const userId = req.user.uid;
@@ -290,7 +348,6 @@ app.get('/api/users/profile', authenticateToken, async (req, res) => {
 });
 
 app.put('/api/users/profile', authenticateToken, async (req, res) => {
-    // ... (code existant de la route)
     try {
         const db = admin.firestore();
         const userId = req.user.uid;
@@ -453,32 +510,6 @@ app.post('/api/integrations/sync-properties', authenticateToken, async (req, res
     }
 });
 
-app.delete('/api/integrations/:type', authenticateToken, async (req, res) => {
-    const { type } = req.params;
-    const userId = req.user.uid;
-
-    if (!type) {
-        return res.status(400).send({ error: 'Le type de PMS est requis.' });
-    }
-
-    try {
-        const db = admin.firestore();
-        const integrationRef = db.collection('users').doc(userId).collection('integrations').doc(type);
-        
-        const doc = await integrationRef.get();
-        if (!doc.exists) {
-            return res.status(404).send({ error: 'Aucune intégration de ce type n\'a été trouvée.' });
-        }
-
-        await integrationRef.delete();
-        
-        res.status(200).send({ message: 'Déconnexion réussie.' });
-    } catch (error) {
-        console.error("Erreur lors de la déconnexion du PMS:", error.message);
-        res.status(500).send({ error: error.message });
-    }
-});
-
 /**
  * Importe les propriétés PMS dans la base de données Priceye.
  */
@@ -497,8 +528,9 @@ app.post('/api/integrations/import-properties', authenticateToken, async (req, r
         // 1. Get user's teamId
         const userProfileRef = db.collection('users').doc(userId);
         const userProfileDoc = await userProfileRef.get();
-        if (!userProfileDoc.exists) {
-             return res.status(404).send({ error: 'Profil utilisateur non trouvé.' });
+        if (!userProfileDoc.exists || !userProfileDoc.data().teamId) { // CORRECTION: Vérification plus robuste
+             console.error(`[Import] Échec: Profil utilisateur ${userId} non trouvé ou n'a pas de teamId.`);
+             return res.status(404).send({ error: 'Profil utilisateur non trouvé ou teamId manquant.' });
         }
         const teamId = userProfileDoc.data().teamId;
         
@@ -522,7 +554,7 @@ app.post('/api/integrations/import-properties', authenticateToken, async (req, r
                 
                 // User/Team Info
                 ownerId: userId,
-                teamId: teamId,
+                teamId: teamId, // CORRECTION: Assure que teamId est bien défini
                 
                 // Normalized Data from PMS
                 address: prop.name, // Utilise le 'name' du PMS comme 'address'
@@ -567,6 +599,35 @@ app.post('/api/integrations/import-properties', authenticateToken, async (req, r
     } catch (error) {
         console.error("Erreur lors de l'importation des propriétés:", error.message);
         res.status(500).send({ error: `Erreur interne du serveur: ${error.message}` });
+    }
+});
+
+/**
+ * NOUVEAU: Déconnecte un PMS et supprime ses identifiants.
+ */
+app.delete('/api/integrations/:type', authenticateToken, async (req, res) => {
+    const { type } = req.params;
+    const userId = req.user.uid;
+
+    if (!type) {
+        return res.status(400).send({ error: 'Le type de PMS est requis.' });
+    }
+
+    try {
+        const db = admin.firestore();
+        const integrationRef = db.collection('users').doc(userId).collection('integrations').doc(type);
+        
+        const doc = await integrationRef.get();
+        if (!doc.exists) {
+            return res.status(404).send({ error: 'Aucune intégration de ce type n\'a été trouvée.' });
+        }
+
+        await integrationRef.delete();
+        
+        res.status(200).send({ message: 'Déconnexion réussie.' });
+    } catch (error) {
+        console.error("Erreur lors de la déconnexion du PMS:", error.message);
+        res.status(500).send({ error: error.message });
     }
 });
 
@@ -2520,7 +2581,7 @@ app.post('/api/properties/:id/pricing-strategy', authenticateToken, async (req, 
         }
         // --- FIN DE L'ÉTAPE DE SYNCHRONISATION PMS ---
 
-
+ 
         const batch = db.batch(); 
         const floor = property.floor_price;
         const ceiling = property.ceiling_price;
@@ -2791,4 +2852,3 @@ setTimeout(updateMarketNewsCache, 10000); // Délai de 10s
 app.listen(port, () => {
   console.log(`Le serveur écoute sur le port ${port}`);
 });
-

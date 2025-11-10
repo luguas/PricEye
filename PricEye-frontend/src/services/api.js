@@ -1,5 +1,5 @@
 // L'URL de base de notre serveur backend
-const API_BASE_URL = 'http://localhost:5000';
+const API_BASE_URL = 'https://priceye.onrender.com';
 
 // Importer Firebase (client) pour l'authentification
 import { initializeApp } from "firebase/app";
