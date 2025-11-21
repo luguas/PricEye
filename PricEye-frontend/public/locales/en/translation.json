@@ -1,0 +1,27 @@
+{
+  "sidebar": {
+    "dashboard": "Dashboard",
+    "bookings": "Bookings",
+    "reports": "Reports",
+    "pricing": "Pricing Calendar",
+    "competitors": "Competitors (Soon)",
+    "settings": "Settings",
+    "logout": "Logout"
+  },
+  "dashboard": {
+    "title": "Dashboard",
+    "addProperty": "Add property",
+    "kpi": {
+      "revenue": "Total Revenue (30d Real)",
+      "occupancy": "Occupancy Rate (Real)",
+      "adr": "ADR (Real)",
+      "iaGain": "AI Gains (Real)",
+      "iaScore": "AI Score (Real)"
+    },
+    "groupsTitle": "Groups Management",
+    "propertiesTitle": "My Properties"
+  },
+  "settings": {
+    "title": "Settings"
+  }
+}

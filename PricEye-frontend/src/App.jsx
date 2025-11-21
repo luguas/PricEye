@@ -7,6 +7,7 @@ import SettingsPage from './pages/SettingsPage.jsx';
 import ReportPage from './pages/ReportPage.jsx'; 
 import BookingsPage from './pages/BookingsPage.jsx'; // NOUVELLE PAGE
 import { getUserProfile } from './services/api.js'; 
+import NavBar from './components/NavBar.jsx';
 
 /**
  * Applique le thème (clair/sombre/auto) à l'élément <html>.
@@ -114,32 +115,40 @@ function App() {
     }
 
     return (
-      <div className="flex flex-col md:flex-row min-h-screen bg-bg-primary text-text-primary transition-colors duration-200">
-        <nav className="bg-bg-sidebar md:w-64 p-4 md:p-6 flex-shrink-0 flex flex-col">
-          <div>
-              <h1 className="text-2xl font-bold text-white mb-8">Pricing IA</h1>
-              <ul className="space-y-2">
-                <li><button onClick={() => navigateTo('dashboard')} className={`w-full text-left block py-2.5 px-4 rounded transition duration-200 hover:bg-gray-700 ${currentView === 'dashboard' ? 'bg-blue-800 text-text-sidebar-active' : 'text-text-sidebar'}`}>Dashboard</button></li>
-                <li><button onClick={() => navigateTo('bookings')} className={`w-full text-left block py-2.5 px-4 rounded transition duration-200 hover:bg-gray-700 ${currentView === 'bookings' ? 'bg-blue-800 text-text-sidebar-active' : 'text-text-sidebar'}`}>Réservations</button></li> 
-                <li><button onClick={() => navigateTo('report')} className={`w-full text-left block py-2.5 px-4 rounded transition duration-200 hover:bg-gray-700 ${currentView === 'report' ? 'bg-blue-800 text-text-sidebar-active' : 'text-text-sidebar'}`}>Rapports</button></li> 
-                <li><button onClick={() => navigateTo('pricing')} className={`w-full text-left block py-2.5 px-4 rounded transition duration-200 hover:bg-gray-700 ${currentView === 'pricing' ? 'bg-blue-800 text-text-sidebar-active' : 'text-text-sidebar'}`}>Calendrier Pricing</button></li>
-                 <li><button disabled className={`w-full text-left block py-2.5 px-4 rounded text-gray-600 cursor-not-allowed`}>Concurrents (Bientôt)</button></li>
-                 <li><button onClick={() => navigateTo('settings')} className={`w-full text-left block py-2.5 px-4 rounded transition duration-200 hover:bg-gray-700 ${currentView === 'settings' ? 'bg-blue-800 text-text-sidebar-active' : 'text-text-sidebar'}`}>Paramètres</button></li> 
-              </ul>
-          </div>
-          <div className="mt-auto pt-6 border-t border-gray-700">
-             <button
-                onClick={handleLogout}
-                className="w-full px-4 py-2 font-semibold text-white bg-red-600 rounded-md hover:bg-red-700"
-              >
-                Déconnexion
-              </button>
-          </div>
-        </nav>
+      <div className="min-h-screen bg-bg-primary text-text-primary transition-colors duration-200 md:pl-[255px]">
+        <NavBar
+          currentView={currentView}
+          onNavigate={navigateTo}
+          onLogout={handleLogout}
+        />
 
-        <main className="flex-1 p-4 md:p-8 overflow-auto">
-          {renderMainContent()}
-        </main>
+        <div className="flex flex-col min-h-screen">
+          <nav className="bg-bg-sidebar md:hidden p-4 flex-shrink-0 flex flex-col rounded-b-3xl border border-border-primary">
+            <div>
+                <h1 className="text-2xl font-bold text-white mb-6">Pricing IA</h1>
+                <ul className="space-y-2">
+                  <li><button onClick={() => navigateTo('dashboard')} className={`w-full text-left block py-2.5 px-4 rounded-xl transition duration-200 hover:bg-global-bg-box ${currentView === 'dashboard' ? 'bg-global-stroke-highlight-2nd/30 text-text-sidebar-active' : 'text-text-sidebar'}`}>Dashboard</button></li>
+                  <li><button onClick={() => navigateTo('bookings')} className={`w-full text-left block py-2.5 px-4 rounded-xl transition duration-200 hover:bg-global-bg-box ${currentView === 'bookings' ? 'bg-global-stroke-highlight-2nd/30 text-text-sidebar-active' : 'text-text-sidebar'}`}>Réservations</button></li> 
+                  <li><button onClick={() => navigateTo('report')} className={`w-full text-left block py-2.5 px-4 rounded-xl transition duration-200 hover:bg-global-bg-box ${currentView === 'report' ? 'bg-global-stroke-highlight-2nd/30 text-text-sidebar-active' : 'text-text-sidebar'}`}>Rapports</button></li> 
+                  <li><button onClick={() => navigateTo('pricing')} className={`w-full text-left block py-2.5 px-4 rounded-xl transition duration-200 hover:bg-global-bg-box ${currentView === 'pricing' ? 'bg-global-stroke-highlight-2nd/30 text-text-sidebar-active' : 'text-text-sidebar'}`}>Calendrier Pricing</button></li>
+                  <li><button disabled className="w-full text-left block py-2.5 px-4 rounded-xl text-gray-600 cursor-not-allowed bg-gray-800/40 border border-gray-700/60">Concurrents (Bientôt)</button></li>
+                  <li><button onClick={() => navigateTo('settings')} className={`w-full text-left block py-2.5 px-4 rounded-xl transition duration-200 hover:bg-global-bg-box ${currentView === 'settings' ? 'bg-global-stroke-highlight-2nd/30 text-text-sidebar-active' : 'text-text-sidebar'}`}>Paramètres</button></li> 
+                </ul>
+            </div>
+            <div className="mt-6 pt-6 border-t border-border-primary">
+               <button
+                  onClick={handleLogout}
+                  className="w-full px-4 py-2.5 font-semibold text-white bg-red-600 rounded-xl hover:bg-red-700"
+                >
+                  Déconnexion
+                </button>
+            </div>
+          </nav>
+
+          <main className="flex-1 p-4 md:p-8 overflow-auto">
+            {renderMainContent()}
+          </main>
+        </div>
       </div>
     );
   };

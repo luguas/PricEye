@@ -23,7 +23,25 @@ export default {
         
         'border-primary': 'var(--color-border-primary)',
         'border-secondary': 'var(--color-border-secondary)',
-      }
+        'global-stroke-box': 'rgba(49, 65, 88, 0.50)',
+        'global-bg-box': 'rgba(15, 23, 43, 0.40)',
+        'global-blanc': '#ffffff',
+        'global-stroke-highlight-2nd': 'rgba(0, 184, 219, 0.30)',
+        'global-content-highlight-2nd': '#00d3f2',
+        'global-inactive': '#90a1b9',
+      },
+      fontFamily: {
+        'h2-font-family': ['"Avenir-Heavy"', 'sans-serif'],
+      },
+      fontSize: {
+        'h2-font-size': '20px',
+      },
+      fontWeight: {
+        'h2-font-weight': '400',
+      },
+      lineHeight: {
+        'h2-line-height': 'normal',
+      },
     },
   },
   plugins: [

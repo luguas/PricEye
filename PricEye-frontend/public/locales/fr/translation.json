@@ -1,0 +1,27 @@
+{
+  "sidebar": {
+    "dashboard": "Tableau de Bord",
+    "bookings": "Réservations",
+    "reports": "Rapports",
+    "pricing": "Calendrier Pricing",
+    "competitors": "Concurrents (Bientôt)",
+    "settings": "Paramètres",
+    "logout": "Déconnexion"
+  },
+  "dashboard": {
+    "title": "Tableau de Bord",
+    "addProperty": "Ajouter une propriété",
+    "kpi": {
+      "revenue": "Revenu Total (30j Réel)",
+      "occupancy": "Taux d'occupation (Réel)",
+      "adr": "ADR (Réel)",
+      "iaGain": "Gains par l'IA (Réel)",
+      "iaScore": "Score IA (Réel)"
+    },
+    "groupsTitle": "Gestion des Groupes",
+    "propertiesTitle": "Mes Propriétés"
+  },
+  "settings": {
+    "title": "Paramètres"
+  }
+}
