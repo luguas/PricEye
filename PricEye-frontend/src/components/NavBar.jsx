@@ -105,6 +105,23 @@ const IconLogout = ({ className = '' }) => (
   </svg>
 );
 
+const IconArrow = ({ direction = 'left', className = '' }) => {
+  const isLeft = direction === 'left';
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={`${className} w-4 h-4`}
+    >
+      {isLeft ? <polyline points="15 18 9 12 15 6" /> : <polyline points="9 18 15 12 9 6" />}
+    </svg>
+  );
+};
+
 const navItems = [
   { id: 'dashboard', label: 'Tableau de bord', icon: IconDashboard },
   { id: 'bookings', label: 'Réservations', icon: IconCalendar },
@@ -117,44 +134,41 @@ export const NavBar = ({
   currentView,
   onNavigate,
   onLogout,
+  isCollapsed = false,
+  onToggleCollapse,
   className = '',
   ...props
 }) => {
+  const navWidthClass = isCollapsed ? 'w-[96px]' : 'w-[255px]';
+
   return (
     <nav
-      className={`hidden md:flex flex-col gap-2.5 items-start justify-center w-[255px] min-h-screen fixed left-0 top-0 ${className}`}
+      className={`hidden md:flex flex-col gap-2.5 items-start justify-center ${navWidthClass} min-h-screen fixed left-0 top-0 transition-[width] duration-300 z-20 ${className}`}
       {...props}
     >
-      <div className="bg-global-bg-box border-r border-global-stroke-box flex flex-col items-stretch justify-between w-full min-h-screen">
-        <div className="border-b border-global-stroke-box px-8 h-[70px] flex items-center justify-between">
+      <div className="bg-global-bg-box border-r border-global-stroke-box flex flex-col items-stretch justify-between w-full min-h-screen relative">
+        <div className={`border-b border-global-stroke-box h-[70px] flex items-center justify-between ${isCollapsed ? 'px-4' : 'px-8'}`}>
           <div className="flex items-center gap-3">
             <div className="w-[27px] h-10 rounded-lg bg-global-content-highlight-2nd text-global-blanc font-bold flex items-center justify-center text-base">
               P
             </div>
-            <div className="text-global-blanc font-h2-font-family text-h2-font-size font-h2-font-weight">
-              PricEye
-            </div>
+            {!isCollapsed && (
+              <div className="text-global-blanc font-h2-font-family text-h2-font-size font-h2-font-weight">
+                PricEye
+              </div>
+            )}
           </div>
           <button
             type="button"
-            className="p-3 rounded-xl border border-transparent text-global-inactive hover:text-global-blanc hover:border-global-stroke-box transition"
-            aria-label="Réduire la barre latérale"
+            onClick={() => onToggleCollapse?.()}
+            className={`${isCollapsed ? 'hidden' : 'p-3'} rounded-xl border border-transparent text-global-inactive hover:text-global-blanc hover:border-global-stroke-box transition`}
+            aria-label={isCollapsed ? 'Déplier la barre latérale' : 'Replier la barre latérale'}
           >
-            <svg
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.6"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              className="w-4 h-4"
-            >
-              <polyline points="15 18 9 12 15 6" />
-            </svg>
+            {!isCollapsed && <IconArrow direction="left" />}
           </button>
         </div>
 
-        <div className="p-4 flex flex-col gap-2 flex-1">
+        <div className={`p-4 flex flex-col gap-2 flex-1 ${isCollapsed ? 'items-center' : ''}`}>
           {navItems.map(({ id, label, icon: Icon }) => {
             const isActive = currentView === id;
             return (
@@ -162,33 +176,46 @@ export const NavBar = ({
                 key={id}
                 type="button"
                 onClick={() => onNavigate?.(id)}
-                className={`w-full flex items-center gap-3 rounded-2xl px-4 py-3 text-sm font-medium transition duration-200 border ${
+                className={`w-full flex items-center ${isCollapsed ? 'justify-center' : 'gap-3 justify-start'} rounded-2xl ${isCollapsed ? 'px-0 py-3' : 'px-4 py-3'} text-sm font-medium transition duration-200 border ${
                   isActive
                     ? 'bg-global-stroke-highlight-2nd/20 border-global-stroke-highlight-2nd text-global-blanc shadow-[0_8px_30px_rgba(0,184,219,0.15)]'
                     : 'border-transparent text-global-inactive hover:border-global-stroke-box hover:text-global-blanc'
                 }`}
+                aria-label={isCollapsed ? label : undefined}
               >
                 <Icon
                   className={
                     isActive ? 'text-global-content-highlight-2nd' : ''
                   }
                 />
-                <span className="flex-1 text-left">{label}</span>
+                {!isCollapsed && <span className="flex-1 text-left">{label}</span>}
               </button>
             );
           })}
         </div>
 
-        <div className="p-4 border-t border-global-stroke-box">
+        <div className={`p-4 border-t border-global-stroke-box ${isCollapsed ? 'flex justify-center' : ''}`}>
           <button
             type="button"
             onClick={onLogout}
-            className="w-full flex items-center gap-3 px-4 py-3 rounded-2xl border border-global-stroke-box text-global-blanc hover:border-global-content-highlight-2nd transition"
+            className={`w-full flex items-center ${isCollapsed ? 'justify-center' : 'gap-3 justify-start'} px-4 py-3 rounded-2xl border border-global-stroke-box text-global-blanc hover:border-global-content-highlight-2nd transition`}
+            aria-label={isCollapsed ? 'Déconnexion' : undefined}
           >
             <IconLogout className="text-global-content-highlight-2nd" />
-            <span>Déconnexion</span>
+            {!isCollapsed && <span>Déconnexion</span>}
           </button>
         </div>
+
+        {isCollapsed && (
+          <button
+            type="button"
+            onClick={() => onToggleCollapse?.()}
+            aria-label="Déplier la barre latérale"
+            className="hidden md:flex absolute top-[70px] -right-4 bg-global-bg-box border border-global-stroke-box rounded-tr-xl rounded-br-xl p-2 text-global-inactive hover:text-global-blanc hover:border-global-content-highlight-2nd transition"
+          >
+            <IconArrow direction="right" />
+          </button>
+        )}
       </div>
     </nav>
   );

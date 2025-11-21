@@ -8,6 +8,7 @@ import ReportPage from './pages/ReportPage.jsx';
 import BookingsPage from './pages/BookingsPage.jsx'; // NOUVELLE PAGE
 import { getUserProfile } from './services/api.js'; 
 import NavBar from './components/NavBar.jsx';
+import PageTopBar from './components/PageTopBar.jsx';
 
 /**
  * Applique le thème (clair/sombre/auto) à l'élément <html>.
@@ -30,6 +31,7 @@ function App() {
   const [currentView, setCurrentView] = useState(localStorage.getItem('authToken') ? 'dashboard' : 'login'); 
   const [userProfile, setUserProfile] = useState(null); 
   const [isLoadingProfile, setIsLoadingProfile] = useState(true);
+  const [isNavCollapsed, setIsNavCollapsed] = useState(false);
 
   // Gérer le changement de thème
   const handleThemeChange = (newTheme) => {
@@ -115,14 +117,22 @@ function App() {
     }
 
     return (
-      <div className="min-h-screen bg-bg-primary text-text-primary transition-colors duration-200 md:pl-[255px]">
+      <div className={`min-h-screen bg-transparent text-text-primary transition-colors duration-200 ${isNavCollapsed ? 'md:pl-[96px]' : 'md:pl-[255px]'}`}>
         <NavBar
           currentView={currentView}
           onNavigate={navigateTo}
           onLogout={handleLogout}
+          isCollapsed={isNavCollapsed}
+          onToggleCollapse={() => setIsNavCollapsed((prev) => !prev)}
         />
 
         <div className="flex flex-col min-h-screen">
+          <div className="hidden md:block">
+            <PageTopBar
+              userName={userProfile?.name || userProfile?.email || 'Utilisateur'}
+              propertyCount={userProfile?.stats?.propertyCount}
+            />
+          </div>
           <nav className="bg-bg-sidebar md:hidden p-4 flex-shrink-0 flex flex-col rounded-b-3xl border border-border-primary">
             <div>
                 <h1 className="text-2xl font-bold text-white mb-6">Pricing IA</h1>

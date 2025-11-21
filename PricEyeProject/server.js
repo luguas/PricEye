@@ -404,6 +404,180 @@ app.put('/api/users/profile', authenticateToken, async (req, res) => {
     }
 });
 
+/**
+ * Endpoint pour récupérer l'état actuel de la génération automatique des prix IA
+ * GET /api/users/auto-pricing/:userId
+ */
+app.get('/api/users/auto-pricing/:userId', authenticateToken, async (req, res) => {
+    try {
+        const db = admin.firestore();
+        const requestedUserId = req.params.userId;
+        const authenticatedUserId = req.user.uid;
+
+        // Vérifier que l'utilisateur ne peut consulter que son propre profil
+        if (requestedUserId !== authenticatedUserId) {
+            return res.status(403).send({ 
+                error: 'Vous n\'êtes pas autorisé à consulter les préférences d\'un autre utilisateur.' 
+            });
+        }
+
+        const userRef = db.collection('users').doc(requestedUserId);
+        const userDoc = await userRef.get();
+
+        // Vérifier que l'utilisateur existe
+        if (!userDoc.exists) {
+            return res.status(404).send({ 
+                error: 'Utilisateur non trouvé.' 
+            });
+        }
+
+        const userData = userDoc.data();
+        const autoPricing = userData.autoPricing || {};
+
+        // Retourner l'état actuel avec des valeurs par défaut si non défini
+        const response = {
+            enabled: autoPricing.enabled || false,
+            timezone: autoPricing.timezone || userData.timezone || 'Europe/Paris',
+            lastRun: autoPricing.lastRun || null,
+            enabledAt: autoPricing.enabledAt || null,
+            updatedAt: autoPricing.updatedAt || null
+        };
+
+        res.status(200).send(response);
+
+    } catch (error) {
+        console.error('Erreur lors de la récupération des préférences de génération automatique:', error);
+        
+        // Gestion des erreurs spécifiques
+        if (error.code === 'permission-denied') {
+            return res.status(403).send({ 
+                error: 'Permission refusée. Vérifiez vos droits d\'accès.' 
+            });
+        }
+        
+        if (error.code === 'not-found') {
+            return res.status(404).send({ 
+                error: 'Utilisateur non trouvé.' 
+            });
+        }
+
+        res.status(500).send({ 
+            error: 'Erreur interne du serveur lors de la récupération des préférences de génération automatique.' 
+        });
+    }
+});
+
+/**
+ * Endpoint pour activer/désactiver la génération automatique des prix IA
+ * PUT /api/users/auto-pricing/:userId
+ * Body: { enabled: boolean, timezone: string }
+ */
+app.put('/api/users/auto-pricing/:userId', authenticateToken, async (req, res) => {
+    try {
+        const db = admin.firestore();
+        const requestedUserId = req.params.userId;
+        const authenticatedUserId = req.user.uid;
+        const { enabled, timezone } = req.body;
+
+        // Vérifier que l'utilisateur ne peut modifier que son propre profil
+        if (requestedUserId !== authenticatedUserId) {
+            return res.status(403).send({ 
+                error: 'Vous n\'êtes pas autorisé à modifier les préférences d\'un autre utilisateur.' 
+            });
+        }
+
+        // Validation des données
+        if (typeof enabled !== 'boolean') {
+            return res.status(400).send({ 
+                error: 'Le champ "enabled" doit être un booléen (true ou false).' 
+            });
+        }
+
+        if (!timezone || typeof timezone !== 'string') {
+            return res.status(400).send({ 
+                error: 'Le champ "timezone" est requis et doit être une chaîne de caractères.' 
+            });
+        }
+
+        // Valider le format du fuseau horaire (format IANA, ex: "Europe/Paris", "America/New_York")
+        const timezoneRegex = /^[A-Za-z_]+\/[A-Za-z_]+$/;
+        if (!timezoneRegex.test(timezone)) {
+            return res.status(400).send({ 
+                error: 'Le fuseau horaire doit être au format IANA (ex: "Europe/Paris", "America/New_York").' 
+            });
+        }
+
+        const userRef = db.collection('users').doc(requestedUserId);
+        const userDoc = await userRef.get();
+
+        // Vérifier que l'utilisateur existe
+        if (!userDoc.exists) {
+            return res.status(404).send({ 
+                error: 'Utilisateur non trouvé.' 
+            });
+        }
+
+        // Préparer les données à mettre à jour
+        const updateData = {
+            autoPricing: {
+                enabled: enabled,
+                timezone: timezone,
+                updatedAt: admin.firestore.FieldValue.serverTimestamp()
+            }
+        };
+
+        // Si la génération automatique est activée, enregistrer aussi la date d'activation
+        if (enabled) {
+            const existingData = userDoc.data();
+            if (!existingData.autoPricing || !existingData.autoPricing.enabled) {
+                updateData.autoPricing.enabledAt = admin.firestore.FieldValue.serverTimestamp();
+            } else {
+                // Conserver la date d'activation existante si elle existe
+                updateData.autoPricing.enabledAt = existingData.autoPricing.enabledAt || admin.firestore.FieldValue.serverTimestamp();
+            }
+        } else {
+            // Si désactivé, on peut optionnellement enregistrer la date de désactivation
+            updateData.autoPricing.disabledAt = admin.firestore.FieldValue.serverTimestamp();
+        }
+
+        // Mettre à jour le document utilisateur
+        await userRef.update(updateData);
+
+        // Message de confirmation
+        const message = enabled 
+            ? `Génération automatique des prix IA activée. Les prix seront générés tous les jours à 00h00 (fuseau horaire: ${timezone}).`
+            : 'Génération automatique des prix IA désactivée.';
+
+        res.status(200).send({ 
+            message: message,
+            autoPricing: {
+                enabled: enabled,
+                timezone: timezone
+            }
+        });
+
+    } catch (error) {
+        console.error('Erreur lors de la mise à jour des préférences de génération automatique:', error);
+        
+        // Gestion des erreurs spécifiques
+        if (error.code === 'permission-denied') {
+            return res.status(403).send({ 
+                error: 'Permission refusée. Vérifiez vos droits d\'accès.' 
+            });
+        }
+        
+        if (error.code === 'not-found') {
+            return res.status(404).send({ 
+                error: 'Utilisateur non trouvé.' 
+            });
+        }
+
+        res.status(500).send({ 
+            error: 'Erreur interne du serveur lors de la mise à jour des préférences de génération automatique.' 
+        });
+    }
+});
+
 // --- ROUTES D'INTÉGRATION PMS (SÉCURISÉES) ---
 
 app.get('/api/integrations', authenticateToken, async (req, res) => {
@@ -2847,6 +3021,482 @@ cron.schedule('0 4 * * *', () => {
 
 // Lancer une mise à jour au démarrage du serveur (pour avoir des données fraîches)
 setTimeout(updateMarketNewsCache, 10000); // Délai de 10s
+
+
+// ============================================================================
+// SERVICE DE PLANIFICATION POUR LA GÉNÉRATION AUTOMATIQUE DES PRIX IA
+// ============================================================================
+
+/**
+ * Fonction utilitaire pour obtenir l'heure actuelle dans un fuseau horaire donné
+ * @param {string} timezone - Fuseau horaire IANA (ex: "Europe/Paris")
+ * @returns {Date} Date dans le fuseau horaire spécifié
+ */
+function getCurrentTimeInTimezone(timezone) {
+    try {
+        // Utiliser Intl.DateTimeFormat pour obtenir l'heure dans un fuseau horaire spécifique
+        const formatter = new Intl.DateTimeFormat('en-US', {
+            timeZone: timezone,
+            hour: '2-digit',
+            minute: '2-digit',
+            hour12: false
+        });
+        
+        const parts = formatter.formatToParts(new Date());
+        const hour = parseInt(parts.find(p => p.type === 'hour').value);
+        const minute = parseInt(parts.find(p => p.type === 'minute').value);
+        
+        return { hour, minute };
+    } catch (error) {
+        console.error(`Erreur lors de la récupération de l'heure pour le fuseau horaire ${timezone}:`, error);
+        // Fallback: retourner l'heure UTC
+        const now = new Date();
+        return { hour: now.getUTCHours(), minute: now.getUTCMinutes() };
+    }
+}
+
+/**
+ * Génère et applique les prix IA pour une propriété
+ * @param {string} propertyId - ID de la propriété
+ * @param {object} property - Données de la propriété
+ * @param {string} userId - ID de l'utilisateur
+ * @param {string} userEmail - Email de l'utilisateur
+ * @returns {Promise<{success: boolean, propertyId: string, message: string}>}
+ */
+async function generateAndApplyPricingForProperty(propertyId, property, userId, userEmail) {
+    const db = admin.firestore();
+    
+    try {
+        const today = new Date().toISOString().split('T')[0];
+
+        // Construire le prompt pour l'IA (identique à celui de l'endpoint)
+        const prompt = `
+            Tu es un expert mondial en tarification dynamique pour le marché de la location saisonnière (${property.location}).
+            Ton objectif est de créer une stratégie de prix détaillée, jour par jour, pour les 180 prochains jours, en respectant les règles définies par l'utilisateur.
+
+            PROPRIÉTÉ À ANALYSER:
+            ${JSON.stringify({
+                address: property.address,
+                location: property.location,
+                property_type: property.property_type,
+                capacity: property.capacity,
+                surface: property.surface,
+                amenities: property.amenities || []
+            })}
+
+            RÈLES UTILISATEUR À RESPECTER IMPÉRATIVEMENT:
+            - Stratégie Générale: ${property.strategy || 'Équilibré'}
+
+            INSTRUCTIONS DE STRATÉGIE DÉTAILLÉES:
+            Tu dois pondérer les facteurs de demande (saisonnalité, événements) différemment selon la stratégie choisie:
+            
+            1.  **Si "Prudent":**
+                * **Objectif:** Maximiser le taux d'occupation.
+                * **Basse saison:** N'hésite pas à baisser le prix (vers le Prix Plancher) pour sécuriser des réservations.
+                * **Haute saison/Événements:** Augmente le prix, mais reste légèrement *en dessous* du pic du marché pour garantir une réservation rapide.
+                * **Pondération:** Taux d'occupation (Élevé) > Saisonnalité (Moyen) > Tendance Marché (Faible).
+
+            2.  **Si "Équilibré" (Défaut):**
+                * **Objectif:** Équilibre parfait entre Taux d'occupation et ADR.
+                * **Basse saison:** Applique des réductions modérées.
+                * **Haute saison/Événements:** Augmente le prix significativement pour suivre la demande du marché.
+                * **Pondération:** Saisonnalité (Élevé) > Taux d'occupation (Moyen) > Tendance Marché (Moyen).
+
+            3.  **Si "Agressif":**
+                * **Objectif:** Maximiser l'ADR (Prix moyen par nuit).
+                * **Basse saison:** Maintiens le prix proche du Prix de Base. Ne pas brader.
+                * **Haute saison/Événements:** Augmente le prix *au-dessus* du marché. Il vaut mieux avoir moins de réservations mais à un prix très élevé.
+                * **Pondération:** Tendance Marché/Événements (Élevé) > Saisonnalité (Moyen) > Taux d'occupation (Faible).
+
+            - Prix Plancher Absolu: ${property.floor_price} € (Ne JAMAIS proposer un prix inférieur)
+            - Prix de Référence (Base): ${property.base_price} € (Utilise comme point de départ pour tes ajustements)
+            - Prix Plafond (Optionnel): ${property.ceiling_price != null ? property.ceiling_price + ' €' : 'Aucun'} (Ne JAMAIS proposer un prix supérieur si défini)
+            - Durée Minimale de Séjour: ${property.min_stay != null ? property.min_stay + ' nuits' : 'Aucune'}
+            - Durée Maximale de Séjour: ${property.max_stay != null ? property.max_stay + ' nuits' : 'Aucune'}
+            - Réduction Hebdomadaire: ${property.weekly_discount_percent != null ? property.weekly_discount_percent + '%' : 'Aucune'}
+            - Réduction Mensuelle: ${property.monthly_discount_percent != null ? property.monthly_discount_percent + '%' : 'Aucune'}
+            - Majoration Week-end (Ven/Sam): ${property.weekend_markup_percent != null ? property.weekend_markup_percent + '%' : 'Aucune'}
+
+            INSTRUCTIONS DÉTAILLÉES (SUITE):
+            1.  **Analyse des Facteurs de Demande (180 jours à partir du ${today}) pour "${property.location}":**
+                * **Saisonnalité:** Haute, moyenne, basse saison.
+                * **Effet Week-end:** Majoration si définie.
+                * **Jours Fériés & Vacances Scolaires (France Zone A, B, C):** Impact sur la demande.
+                * **Événements Locaux:** Recherche simulée (festivals, conférences, etc.).
+                * **Qualité du bien:** Prendre en compte les équipements fournis.
+
+            2.  **Génération des Prix Journaliers (180 jours):**
+                * Pour CHAQUE jour, calcule un prix optimal.
+                * Commence par le prix de base, puis ajuste en fonction des facteurs de demande ET des règles utilisateur (surtout la stratégie).
+                * **Contraintes:** Le prix final doit TOUJOURS être >= Prix Plancher et <= Prix Plafond (si défini).
+                * **Justification:** Fournis une raison CLAIRE pour chaque prix (ex: "Base + Majoration WE", "Haute saison + Vacances", "Événement + Agressif").
+
+            FORMAT DE SORTIE OBLIGATOIRE (JSON uniquement, sans texte avant/après):
+            {
+              "strategy_summary": "Résumé très bref de la stratégie globale.",
+              "daily_prices": [ { "date": "YYYY-MM-DD", "price": 135, "reason": "Basse saison" }, /* ... autres jours ... */ ]
+            }
+        `;
+
+        // Appeler l'API Gemini
+        const strategyResult = await callGeminiAPI(prompt);
+
+        if (!strategyResult || !Array.isArray(strategyResult.daily_prices) || strategyResult.daily_prices.length === 0) {
+            throw new Error("La réponse de l'IA est invalide ou ne contient pas de prix journaliers.");
+        }
+
+        // Synchronisation PMS si nécessaire
+        if (property.pmsId && property.pmsType) {
+            try {
+                const client = await getUserPMSClient(userId);
+                const lockedPricesCol = db.collection('properties').doc(propertyId).collection('price_overrides');
+                const lockedSnapshot = await lockedPricesCol.where('isLocked', '==', true).get();
+                const lockedDates = new Set(lockedSnapshot.docs.map(doc => doc.id));
+                
+                const pricesToSync = strategyResult.daily_prices.filter(day => !lockedDates.has(day.date));
+                
+                if (pricesToSync.length > 0) {
+                    await client.updateBatchRates(property.pmsId, pricesToSync);
+                    console.log(`[Auto-Pricing] [PMS Sync] Stratégie IA (${pricesToSync.length} jours) synchronisée avec ${property.pmsType} pour ${propertyId}.`);
+                }
+            } catch (pmsError) {
+                console.error(`[Auto-Pricing] [PMS Sync] ERREUR pour ${propertyId}: ${pmsError.message}`);
+                // On continue quand même avec la sauvegarde Firestore
+            }
+        }
+
+        // Sauvegarder les prix dans Firestore
+        const batch = db.batch();
+        const floor = property.floor_price;
+        const ceiling = property.ceiling_price;
+
+        const overridesCol = db.collection('properties').doc(propertyId).collection('price_overrides');
+        const lockedSnapshot = await overridesCol.where('isLocked', '==', true).get();
+        const lockedPrices = new Map();
+        lockedSnapshot.forEach(doc => {
+            lockedPrices.set(doc.id, doc.data().price);
+        });
+
+        let pricesApplied = 0;
+        for (const day of strategyResult.daily_prices) {
+            const priceNum = Number(day.price);
+            if (isNaN(priceNum)) {
+                console.warn(`[Auto-Pricing] Prix invalide pour ${propertyId} - ${day.date}: ${day.price}. Ignoré.`);
+                continue;
+            }
+
+            if (lockedPrices.has(day.date)) {
+                continue; // Ignorer les prix verrouillés
+            }
+
+            let finalPrice = priceNum;
+            if (priceNum < floor) {
+                finalPrice = floor;
+            }
+            if (ceiling != null && priceNum > ceiling) {
+                finalPrice = ceiling;
+            }
+
+            const dayRef = db.collection('properties').doc(propertyId).collection('price_overrides').doc(day.date);
+            batch.set(dayRef, {
+                date: day.date,
+                price: finalPrice,
+                reason: day.reason || "Stratégie IA (Auto)",
+                isLocked: false
+            });
+            pricesApplied++;
+        }
+
+        await batch.commit();
+
+        // Log de l'action
+        await logPropertyChange(propertyId, userId, userEmail, 'update:ia-pricing-auto', {
+            summary: strategyResult.strategy_summary,
+            days: pricesApplied,
+            lockedPricesIgnored: lockedPrices.size
+        });
+
+        return {
+            success: true,
+            propertyId: propertyId,
+            message: `Prix générés avec succès pour ${property.address} (${pricesApplied} jours)`
+        };
+
+    } catch (error) {
+        console.error(`[Auto-Pricing] Erreur pour la propriété ${propertyId}:`, error);
+        return {
+            success: false,
+            propertyId: propertyId,
+            message: `Erreur: ${error.message}`
+        };
+    }
+}
+
+/**
+ * Génère et applique les prix IA pour tous les groupes d'un utilisateur
+ * @param {string} userId - ID de l'utilisateur
+ * @param {string} userEmail - Email de l'utilisateur
+ * @param {Array} groups - Liste des groupes
+ * @param {Array} allProperties - Liste de toutes les propriétés
+ * @returns {Promise<Array>} Résultats pour chaque groupe
+ */
+async function generatePricingForGroups(userId, userEmail, groups, allProperties) {
+    const results = [];
+
+    for (const group of groups) {
+        if (!group.syncPrices || !group.mainPropertyId) {
+            continue; // Ignorer les groupes sans synchronisation ou sans propriété principale
+        }
+
+        try {
+            const mainProperty = allProperties.find(p => p.id === group.mainPropertyId);
+            if (!mainProperty) {
+                console.warn(`[Auto-Pricing] Propriété principale ${group.mainPropertyId} du groupe ${group.id} non trouvée.`);
+                continue;
+            }
+
+            // Générer les prix pour la propriété principale
+            const result = await generateAndApplyPricingForProperty(
+                group.mainPropertyId,
+                mainProperty,
+                userId,
+                userEmail
+            );
+
+            if (result.success) {
+                // Appliquer les mêmes prix aux autres propriétés du groupe si syncPrices est activé
+                const otherProperties = group.properties
+                    .filter(propId => propId !== group.mainPropertyId)
+                    .map(propId => allProperties.find(p => p.id === propId))
+                    .filter(Boolean);
+
+                for (const otherProp of otherProperties) {
+                    await generateAndApplyPricingForProperty(
+                        otherProp.id,
+                        otherProp,
+                        userId,
+                        userEmail
+                    );
+                }
+
+                results.push({
+                    ...result,
+                    groupId: group.id,
+                    groupName: group.name,
+                    propertiesCount: group.properties.length
+                });
+            } else {
+                results.push(result);
+            }
+        } catch (error) {
+            console.error(`[Auto-Pricing] Erreur pour le groupe ${group.id}:`, error);
+            results.push({
+                success: false,
+                groupId: group.id,
+                message: `Erreur: ${error.message}`
+            });
+        }
+    }
+
+    return results;
+}
+
+/**
+ * Traite la génération automatique des prix pour un utilisateur
+ * @param {string} userId - ID de l'utilisateur
+ * @param {object} userData - Données de l'utilisateur
+ * @returns {Promise<{success: boolean, userId: string, results: Array}>}
+ */
+async function processAutoPricingForUser(userId, userData) {
+    const db = admin.firestore();
+    const startTime = new Date();
+
+    try {
+        console.log(`[Auto-Pricing] Début du traitement pour l'utilisateur ${userId} (${userData.email || 'N/A'})`);
+
+        // Récupérer toutes les propriétés de l'utilisateur
+        // Les propriétés peuvent être liées par ownerId ou teamId
+        const teamId = userData.teamId || userId;
+        
+        // Récupérer les propriétés par ownerId
+        const propertiesByOwner = await db.collection('properties')
+            .where('ownerId', '==', userId)
+            .get();
+        
+        // Récupérer les propriétés par teamId (si différent de userId)
+        let propertiesByTeam = [];
+        if (teamId !== userId) {
+            const teamSnapshot = await db.collection('properties')
+                .where('teamId', '==', teamId)
+                .get();
+            propertiesByTeam = teamSnapshot;
+        }
+
+        // Combiner les résultats et éviter les doublons
+        const propertiesMap = new Map();
+        propertiesByOwner.forEach(doc => {
+            propertiesMap.set(doc.id, { id: doc.id, ...doc.data() });
+        });
+        propertiesByTeam.forEach(doc => {
+            if (!propertiesMap.has(doc.id)) {
+                propertiesMap.set(doc.id, { id: doc.id, ...doc.data() });
+            }
+        });
+
+        const properties = Array.from(propertiesMap.values());
+
+        if (properties.length === 0) {
+            console.log(`[Auto-Pricing] Aucune propriété trouvée pour l'utilisateur ${userId}`);
+            return {
+                success: true,
+                userId: userId,
+                results: [],
+                message: 'Aucune propriété à traiter'
+            };
+        }
+
+        // Récupérer tous les groupes de l'utilisateur
+        const groupsSnapshot = await db.collection('groups')
+            .where('ownerId', '==', userId)
+            .get();
+
+        const groups = [];
+        groupsSnapshot.forEach(doc => {
+            groups.push({ id: doc.id, ...doc.data() });
+        });
+
+        const results = [];
+
+        // Traiter les groupes avec synchronisation activée
+        const groupsWithSync = groups.filter(g => g.syncPrices && g.mainPropertyId);
+        if (groupsWithSync.length > 0) {
+            const groupResults = await generatePricingForGroups(userId, userData.email, groupsWithSync, properties);
+            results.push(...groupResults);
+        }
+
+        // Traiter les propriétés individuelles (non dans un groupe avec sync)
+        const propertiesInSyncedGroups = new Set();
+        groupsWithSync.forEach(group => {
+            group.properties.forEach(propId => propertiesInSyncedGroups.add(propId));
+        });
+
+        const individualProperties = properties.filter(p => !propertiesInSyncedGroups.has(p.id));
+        for (const property of individualProperties) {
+            const result = await generateAndApplyPricingForProperty(
+                property.id,
+                property,
+                userId,
+                userData.email
+            );
+            results.push(result);
+        }
+
+        // Mettre à jour lastRun dans le profil utilisateur
+        const userRef = db.collection('users').doc(userId);
+        await userRef.update({
+            'autoPricing.lastRun': admin.firestore.FieldValue.serverTimestamp()
+        });
+
+        const endTime = new Date();
+        const duration = ((endTime - startTime) / 1000).toFixed(2);
+
+        const successCount = results.filter(r => r.success).length;
+        const failureCount = results.filter(r => !r.success).length;
+
+        console.log(`[Auto-Pricing] Traitement terminé pour ${userId}: ${successCount} succès, ${failureCount} échecs (${duration}s)`);
+
+        return {
+            success: true,
+            userId: userId,
+            results: results,
+            summary: {
+                total: results.length,
+                success: successCount,
+                failures: failureCount,
+                duration: `${duration}s`
+            }
+        };
+
+    } catch (error) {
+        console.error(`[Auto-Pricing] Erreur fatale pour l'utilisateur ${userId}:`, error);
+        return {
+            success: false,
+            userId: userId,
+            error: error.message
+        };
+    }
+}
+
+/**
+ * Vérifie et exécute la génération automatique pour tous les utilisateurs éligibles
+ */
+async function checkAndRunAutoPricing() {
+    const db = admin.firestore();
+    const now = new Date();
+
+    try {
+        console.log(`[Auto-Pricing] Vérification des utilisateurs éligibles à ${now.toISOString()}`);
+
+        // Récupérer tous les utilisateurs avec autoPricing.enabled = true
+        const usersSnapshot = await db.collection('users')
+            .where('autoPricing.enabled', '==', true)
+            .get();
+
+        if (usersSnapshot.empty) {
+            console.log(`[Auto-Pricing] Aucun utilisateur avec génération automatique activée.`);
+            return;
+        }
+
+        const eligibleUsers = [];
+
+        usersSnapshot.forEach(doc => {
+            const userData = doc.data();
+            const autoPricing = userData.autoPricing || {};
+            const timezone = autoPricing.timezone || userData.timezone || 'Europe/Paris';
+
+            // Vérifier si c'est 00h00 dans le fuseau horaire de l'utilisateur
+            const { hour, minute } = getCurrentTimeInTimezone(timezone);
+
+            if (hour === 0 && minute === 0) {
+                eligibleUsers.push({
+                    userId: doc.id,
+                    userData: userData,
+                    timezone: timezone
+                });
+                console.log(`[Auto-Pricing] Utilisateur ${doc.id} (${userData.email || 'N/A'}) éligible - Fuseau: ${timezone}`);
+            }
+        });
+
+        if (eligibleUsers.length === 0) {
+            console.log(`[Auto-Pricing] Aucun utilisateur éligible à ce moment (00h00 dans leur fuseau horaire).`);
+            return;
+        }
+
+        // Traiter chaque utilisateur éligible
+        for (const { userId, userData, timezone } of eligibleUsers) {
+            try {
+                await processAutoPricingForUser(userId, userData);
+            } catch (error) {
+                console.error(`[Auto-Pricing] Erreur lors du traitement de l'utilisateur ${userId}:`, error);
+            }
+        }
+
+    } catch (error) {
+        console.error(`[Auto-Pricing] Erreur lors de la vérification des utilisateurs éligibles:`, error);
+    }
+}
+
+// Démarrer le service de planification
+// Exécuter toutes les heures pour vérifier si c'est 00h00 dans chaque fuseau horaire
+cron.schedule('0 * * * *', () => {
+    console.log(`[Auto-Pricing] Exécution du cron job (vérification toutes les heures)`);
+    checkAndRunAutoPricing();
+}, {
+    scheduled: true,
+    timezone: "UTC" // Le cron s'exécute en UTC, mais on vérifie les fuseaux horaires dans la fonction
+});
+
+console.log('[Auto-Pricing] Service de planification démarré. Vérification toutes les heures.');
 
 
 // --- DÉMARRAGE DU SERVEUR ---

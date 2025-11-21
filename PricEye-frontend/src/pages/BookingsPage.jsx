@@ -279,8 +279,18 @@ function BookingsPage({ token, userProfile }) {
 
 
   return (
-    <div className="space-y-6">
-      <h2 className="text-3xl font-bold text-text-primary">Centre de Réservations</h2>
+    <div className="relative min-h-screen">
+      {/* Fond qui couvre tout l'écran avec le même dégradé */}
+      <div
+        className="fixed inset-0"
+        style={{
+          background:
+            'linear-gradient(135deg, rgba(2,6,24,1) 0%, rgba(22,36,86,1) 45%, rgba(15,23,43,1) 100%)',
+          zIndex: 0,
+        }}
+      />
+      <div className="relative z-10 space-y-6 p-4 md:p-6 lg:p-8">
+        <h2 className="text-3xl font-bold text-text-primary">Centre de Réservations</h2>
 
       {/* Barre de Filtres */}
       <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-4 p-4 bg-bg-secondary rounded-lg shadow-lg">
@@ -430,6 +440,7 @@ function BookingsPage({ token, userProfile }) {
             )}
           </tbody>
         </table>
+      </div>
       </div>
     </div>
   );

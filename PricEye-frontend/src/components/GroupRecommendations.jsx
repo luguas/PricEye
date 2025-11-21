@@ -49,23 +49,32 @@ function GroupRecommendations({ token, recommendations, onGroupCreated }) {
   };
 
   return (
-    <div className="bg-bg-secondary p-4 rounded-lg shadow-lg mb-6 border border-blue-500/30">
-      <h3 className="text-xl font-semibold text-text-primary mb-3">Suggestions d'Optimisation</h3>
-      {error && <p className="text-sm text-red-400 mb-2">{error}</p>}
-      
+    <div className="space-y-4">
+      {error && (
+        <p className="text-sm text-red-400 bg-red-900/30 border border-red-500/40 p-3 rounded-[10px]">
+          {error}
+        </p>
+      )}
       <div className="space-y-3">
         {recommendations.map((rec) => (
-          <div key={rec.key} className="bg-bg-muted p-3 rounded-md flex flex-col md:flex-row justify-between items-center gap-3">
-            <div className="text-sm text-text-secondary">
-              <strong className="text-text-primary">Suggestion :</strong> Nous avons trouvé {rec.properties.length} propriétés non groupées qui ont des caractéristiques identiques.
-              <ul className="list-disc list-inside ml-4 text-xs mt-1">
-                {rec.properties.map(p => <li key={p.id}>{p.address}</li>)}
+          <div
+            key={rec.key}
+            className="bg-global-bg-small-box border border-global-stroke-box rounded-[12px] p-4 flex flex-col gap-4 md:flex-row md:items-center md:justify-between"
+          >
+            <div className="text-sm text-global-inactive">
+              <p className="text-global-blanc font-semibold mb-1">
+                {rec.properties.length} propriétés similaires détectées
+              </p>
+              <ul className="list-disc list-inside text-xs space-y-1">
+                {rec.properties.map((p) => (
+                  <li key={p.id}>{p.address}</li>
+                ))}
               </ul>
             </div>
             <button
               onClick={() => handleCreateGroup(rec)}
               disabled={isLoading}
-              className="px-4 py-2 font-semibold text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:bg-gray-500 w-full md:w-auto flex-shrink-0"
+              className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-[10px] font-semibold text-white bg-gradient-to-r from-[#155dfc] to-[#12a1d5] shadow-lg hover:opacity-90 disabled:opacity-50"
             >
               {isLoading ? 'Création...' : 'Créer le groupe'}
             </button>

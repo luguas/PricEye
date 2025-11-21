@@ -2,6 +2,42 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Charger les fonts Avenir et Average Sans si disponibles */
+/* Si vous avez les fichiers de fonts, décommentez et ajustez les chemins */
+/*
+@font-face {
+  font-family: 'Avenir';
+  src: url('/fonts/Avenir.woff2') format('woff2'),
+       url('/fonts/Avenir.woff') format('woff');
+  font-weight: normal;
+  font-style: normal;
+}
+
+@font-face {
+  font-family: 'Avenir';
+  src: url('/fonts/Avenir-Medium.woff2') format('woff2'),
+       url('/fonts/Avenir-Medium.woff') format('woff');
+  font-weight: 500;
+  font-style: normal;
+}
+
+@font-face {
+  font-family: 'Avenir';
+  src: url('/fonts/Avenir-Heavy.woff2') format('woff2'),
+       url('/fonts/Avenir-Heavy.woff') format('woff');
+  font-weight: 700;
+  font-style: normal;
+}
+
+@font-face {
+  font-family: 'Average Sans';
+  src: url('/fonts/AverageSans-Regular.woff2') format('woff2'),
+       url('/fonts/AverageSans-Regular.woff') format('woff');
+  font-weight: normal;
+  font-style: normal;
+}
+*/
+
 /* Définir les variables de couleur pour le thème */
 :root {
   /* Mode Clair (Défaut) */
@@ -52,6 +88,10 @@ input:disabled, select:disabled {
 @layer components {
   input[type="checkbox"] {
     @apply rounded bg-bg-muted border-border-primary text-blue-500 focus:ring-blue-500;
+  }
+  
+  .all-\[unset\] {
+    all: unset;
   }
 }
 

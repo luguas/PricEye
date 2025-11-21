@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { getProperties, generatePricingStrategy, addBooking, getBookingsForMonth, getGroups, updateGroup, getUserProfile, getPropertySpecificNews } from '../services/api.js';
-import { getFirestore, doc, setDoc, writeBatch, collection, query, where, getDocs, addDoc } from "firebase/firestore"; 
+import { getProperties, generatePricingStrategy, addBooking, getBookingsForMonth, getGroups, updateGroup, getUserProfile, getPropertySpecificNews, getAutoPricingStatus, enableAutoPricing } from '../services/api.js';
+import { getFirestore, doc, setDoc, writeBatch, collection, query, where, getDocs, addDoc } from "firebase/firestore";
+import { jwtDecode } from 'jwt-decode'; 
 import { initializeApp } from "firebase/app"; 
 import PropertyNewsFeed from '../components/PropertyNewsFeed.jsx';
 import DateAnalysis from '../components/DateAnalysis.jsx'; 
@@ -40,7 +41,13 @@ function PricingPage({ token, userProfile }) {
   const [bookings, setBookings] = useState({}); 
   const [isLoading, setIsLoading] = useState(true); 
   const [error, setError] = useState('');
-  const [iaLoading, setIaLoading] = useState(false); 
+  const [iaLoading, setIaLoading] = useState(false);
+  const [isAutoGenerationEnabled, setIsAutoGenerationEnabled] = useState(false);
+  const [autoPricingTimezone, setAutoPricingTimezone] = useState('Europe/Paris');
+  const [autoPricingLastRun, setAutoPricingLastRun] = useState(null);
+  const [isLoadingAutoPricing, setIsLoadingAutoPricing] = useState(true);
+  const [autoPricingSuccess, setAutoPricingSuccess] = useState('');
+  const [autoPricingError, setAutoPricingError] = useState(''); 
 
   const [selectionStart, setSelectionStart] = useState(null);
   const [selectionEnd, setSelectionEnd] = useState(null);
@@ -100,7 +107,214 @@ function PricingPage({ token, userProfile }) {
 
   useEffect(() => {
     fetchInitialData();
-  }, [fetchInitialData]); 
+  }, [fetchInitialData]);
+
+  // Charger l'état de la génération automatique au chargement
+  useEffect(() => {
+    const loadAutoPricingStatus = async () => {
+      if (!token) {
+        setIsLoadingAutoPricing(false);
+        return;
+      }
+
+      try {
+        // Obtenir l'userId depuis le token
+        let userId = null;
+        try {
+          const decodedToken = jwtDecode(token);
+          userId = decodedToken?.user_id || decodedToken?.uid;
+        } catch (e) {
+          console.error("Erreur de décodage du token:", e);
+          setIsLoadingAutoPricing(false);
+          return;
+        }
+
+        if (!userId) {
+          console.warn("Impossible de récupérer l'userId depuis le token");
+          setIsLoadingAutoPricing(false);
+          return;
+        }
+
+        const status = await getAutoPricingStatus(userId, token);
+        setIsAutoGenerationEnabled(status.enabled || false);
+        // Utiliser le fuseau horaire sauvegardé dans autoPricing, ou celui du profil utilisateur
+        setAutoPricingTimezone(status.timezone || userProfile?.timezone || 'Europe/Paris');
+        setAutoPricingLastRun(status.lastRun || null);
+        setAutoPricingError(''); // Réinitialiser les erreurs
+      } catch (err) {
+        console.error("Erreur lors du chargement de l'état de génération automatique:", err);
+        setAutoPricingError(`Erreur lors du chargement: ${err.message || 'Impossible de charger l\'état actuel.'}`);
+        // En cas d'erreur, on garde les valeurs par défaut
+        setIsAutoGenerationEnabled(false);
+        setAutoPricingTimezone(userProfile?.timezone || 'Europe/Paris');
+      } finally {
+        setIsLoadingAutoPricing(false);
+      }
+    };
+
+    loadAutoPricingStatus();
+  }, [token, userProfile]);
+
+  // Mettre à jour le fuseau horaire si le profil utilisateur change et que la génération automatique est activée
+  useEffect(() => {
+    if (userProfile?.timezone && isAutoGenerationEnabled) {
+      // Si le fuseau horaire du profil a changé, mettre à jour autoPricingTimezone
+      // mais seulement si c'est différent de celui actuellement sauvegardé
+      if (userProfile.timezone !== autoPricingTimezone) {
+        // Optionnel : on peut mettre à jour automatiquement ou laisser l'utilisateur le faire
+        // Pour l'instant, on ne met pas à jour automatiquement pour éviter des appels API non désirés
+        // L'utilisateur devra réactiver la génération automatique pour utiliser le nouveau fuseau horaire
+      }
+    }
+  }, [userProfile?.timezone, isAutoGenerationEnabled, autoPricingTimezone]);
+
+  // Fonction pour calculer la prochaine génération prévue
+  const getNextGenerationTime = useMemo(() => {
+    if (!isAutoGenerationEnabled || !autoPricingTimezone) {
+      return null;
+    }
+
+    try {
+      // Créer une date pour demain à 00h00
+      const tomorrow = new Date();
+      tomorrow.setDate(tomorrow.getDate() + 1);
+      tomorrow.setUTCHours(0, 0, 0, 0);
+
+      // Formater la date selon le fuseau horaire de l'utilisateur
+      const formatter = new Intl.DateTimeFormat('fr-FR', {
+        timeZone: autoPricingTimezone,
+        day: 'numeric',
+        month: 'long',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false
+      });
+
+      return formatter.format(tomorrow);
+    } catch (error) {
+      console.error("Erreur lors du calcul de la prochaine génération:", error);
+      // Fallback simple
+      return 'demain à 00h00';
+    }
+  }, [isAutoGenerationEnabled, autoPricingTimezone]);
+
+  // Fonction pour formater la date de dernière génération
+  const formatLastRun = useMemo(() => {
+    if (!autoPricingLastRun) {
+      return null;
+    }
+
+    try {
+      // autoPricingLastRun peut être un timestamp Firestore, une date ISO string, ou un objet
+      let date;
+      
+      if (typeof autoPricingLastRun === 'string') {
+        // C'est une string ISO
+        date = new Date(autoPricingLastRun);
+      } else if (autoPricingLastRun instanceof Date) {
+        // C'est déjà une Date
+        date = autoPricingLastRun;
+      } else if (autoPricingLastRun.toDate && typeof autoPricingLastRun.toDate === 'function') {
+        // C'est un Timestamp Firestore (côté client, on reçoit généralement une string)
+        date = autoPricingLastRun.toDate();
+      } else if (autoPricingLastRun.seconds) {
+        // C'est un objet avec seconds (format Firestore)
+        date = new Date(autoPricingLastRun.seconds * 1000);
+      } else if (autoPricingLastRun._seconds) {
+        // Format alternatif Firestore
+        date = new Date(autoPricingLastRun._seconds * 1000);
+      } else {
+        // Essayer de créer une date directement
+        date = new Date(autoPricingLastRun);
+      }
+
+      // Vérifier que la date est valide
+      if (isNaN(date.getTime())) {
+        console.warn("Date de dernière génération invalide:", autoPricingLastRun);
+        return null;
+      }
+
+      // Formater selon le fuseau horaire de l'utilisateur
+      const formatter = new Intl.DateTimeFormat('fr-FR', {
+        timeZone: autoPricingTimezone || userProfile?.timezone || 'Europe/Paris',
+        day: 'numeric',
+        month: 'long',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false
+      });
+
+      return formatter.format(date);
+    } catch (error) {
+      console.error("Erreur lors du formatage de la dernière génération:", error, autoPricingLastRun);
+      return null;
+    }
+  }, [autoPricingLastRun, autoPricingTimezone, userProfile?.timezone]);
+
+  // Fonction pour gérer le toggle de génération automatique
+  const handleToggleAutoGeneration = async (newEnabled) => {
+    // Réinitialiser les messages
+    setAutoPricingSuccess('');
+    setAutoPricingError('');
+
+    const newTimezone = autoPricingTimezone || userProfile?.timezone || 'Europe/Paris';
+    
+    // Mettre à jour l'état local immédiatement pour une meilleure UX
+    setIsAutoGenerationEnabled(newEnabled);
+    
+    try {
+      // Obtenir l'userId depuis le token
+      let userId = null;
+      try {
+        const decodedToken = jwtDecode(token);
+        userId = decodedToken?.user_id || decodedToken?.uid;
+      } catch (decodeError) {
+        console.error("Erreur de décodage du token:", decodeError);
+        setAutoPricingError("Erreur d'authentification. Veuillez vous reconnecter.");
+        setIsAutoGenerationEnabled(!newEnabled); // Revenir à l'état précédent
+        return;
+      }
+
+      if (!userId) {
+        setAutoPricingError("Impossible de récupérer l'identifiant utilisateur.");
+        setIsAutoGenerationEnabled(!newEnabled);
+        return;
+      }
+
+      // Utiliser le fuseau horaire du profil utilisateur si disponible, sinon celui sauvegardé
+      const timezoneToUse = userProfile?.timezone || autoPricingTimezone || 'Europe/Paris';
+      
+      // Appeler l'API pour sauvegarder la préférence
+      const response = await enableAutoPricing(userId, newEnabled, timezoneToUse, token);
+      
+      // Mettre à jour le timezone
+      setAutoPricingTimezone(timezoneToUse);
+
+      // Afficher un message de confirmation
+      if (newEnabled) {
+        setAutoPricingSuccess(`Génération automatique activée. Les prix seront générés tous les jours à 00h00 (${timezoneToUse}).`);
+      } else {
+        setAutoPricingSuccess('Génération automatique désactivée.');
+      }
+
+      // Effacer le message de succès après 5 secondes
+      setTimeout(() => {
+        setAutoPricingSuccess('');
+      }, 5000);
+
+    } catch (err) {
+      console.error("Erreur lors de la mise à jour de la génération automatique:", err);
+      setAutoPricingError(`Erreur: ${err.message || 'Impossible de sauvegarder la préférence.'}`);
+      // Revenir à l'état précédent en cas d'erreur
+      setIsAutoGenerationEnabled(!newEnabled);
+      
+      // Effacer le message d'erreur après 7 secondes
+      setTimeout(() => {
+        setAutoPricingError('');
+      }, 7000);
+    }
+  }; 
 
 
   const fetchCalendarData = useCallback(async () => {
@@ -540,77 +754,162 @@ function PricingPage({ token, userProfile }) {
       });
   };
 
+  // Icônes pour les flèches (SVG inline)
+  const ArrowDownIcon = ({ className = '' }) => (
+    <div className={`relative w-5 h-5 ${className}`} role="img" aria-label="Icon">
+      <svg
+        className="absolute w-full h-full"
+        viewBox="0 0 20 20"
+        fill="none"
+        xmlns="http://www.w3.org/2000/svg"
+        aria-hidden="true"
+      >
+        <path
+          d="M5 7.5L10 12.5L15 7.5"
+          stroke="white"
+          strokeWidth="1.5"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </svg>
+    </div>
+  );
+
+  const ArrowLeftIcon = ({ className = '' }) => (
+    <div className={`relative w-5 h-5 ${className}`} role="img" aria-label="Previous month">
+      <svg
+        className="absolute w-full h-full"
+        viewBox="0 0 20 20"
+        fill="none"
+        xmlns="http://www.w3.org/2000/svg"
+        aria-hidden="true"
+      >
+        <path
+          d="M12.5 5L7.5 10L12.5 15"
+          stroke="white"
+          strokeWidth="1.5"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </svg>
+    </div>
+  );
+
+  const ArrowRightIcon = ({ className = '' }) => (
+    <div className={`relative w-5 h-5 ${className}`} role="img" aria-label="Next month">
+      <svg
+        className="absolute w-full h-full"
+        viewBox="0 0 20 20"
+        fill="none"
+        xmlns="http://www.w3.org/2000/svg"
+        aria-hidden="true"
+      >
+        <path
+          d="M7.5 5L12.5 10L7.5 15"
+          stroke="white"
+          strokeWidth="1.5"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </svg>
+    </div>
+  );
+
   const renderCalendar = () => {
-    const currentProperty = currentItem; // Utiliser le useMemo
+    const currentProperty = currentItem;
     
     if (isLoading || !selectedId || !currentProperty) {
-         return <div className="grid grid-cols-7 gap-1"><p className="text-center p-4 text-text-muted col-span-7">Chargement ou sélection requise...</p></div>;
+         return <div className="grid grid-cols-7 gap-3"><p className="text-center p-4 text-global-inactive col-span-7">Chargement ou sélection requise...</p></div>;
     }
     
     const year = currentCalendarDate.getFullYear();
     const month = currentCalendarDate.getMonth();
     const grid = [];
 
-    ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'].forEach(day => {
-        grid.push(<div key={day} className="text-center font-semibold text-xs text-text-muted">{day}</div>);
-    });
-
     const firstDayOfMonth = new Date(year, month, 1);
     const firstDayWeekday = firstDayOfMonth.getDay(); 
     const daysInMonth = new Date(year, month + 1, 0).getDate();
     const dayOffset = (firstDayWeekday === 0) ? 6 : firstDayWeekday - 1;
 
-    for (let i = 0; i < dayOffset; i++) { grid.push(<div key={`empty-${i}`}></div>); }
+    // Jours du mois précédent (grisés)
+    const prevMonth = new Date(year, month, 0);
+    const daysInPrevMonth = prevMonth.getDate();
+    for (let i = dayOffset - 1; i >= 0; i--) {
+      const day = daysInPrevMonth - i;
+      const dateStr = `${prevMonth.getFullYear()}-${String(prevMonth.getMonth() + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+      grid.push(
+        <div 
+          key={`prev-${day}`}
+          className="w-full h-full flex flex-col items-center justify-center bg-global-bg-small-box rounded-[10px] border border-solid border-global-stroke-box relative"
+          style={{ opacity: 0.3 }}
+        >
+          <div className={`text-global-inactive relative w-fit font-h3-font-family font-h3-font-weight text-h3-font-size text-center leading-h3-line-height`}>
+            {day}
+          </div>
+        </div>
+      );
+    }
 
     for (let day = 1; day <= daysInMonth; day++) {
         const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
         const isBooked = !!bookings[dateStr];
-        const price = isBooked ? bookings[dateStr].pricePerNight : (priceOverrides[dateStr] ?? currentProperty.daily_revenue); 
+        const price = isBooked ? bookings[dateStr].pricePerNight : (priceOverrides[dateStr] ?? currentProperty.daily_revenue);
+        const currency = userProfile?.currency || 'EUR';
+        const priceFormatted = price != null ? `${Math.round(price)}${currency === 'EUR' ? '€' : currency === 'USD' ? '$US' : currency}` : '';
         
-        let bgColor = 'bg-bg-secondary hover:bg-bg-muted'; 
-        let textColor = 'text-text-primary';
-        let borderColor = 'border-transparent';
-        let isDisabled = isBooked; 
+        let bgClass = 'bg-global-bg-small-box';
+        let borderClass = 'border-global-stroke-box';
+        let textColor = 'text-global-blanc';
+        let isInSelection = false;
+        let isDisabled = false;
         
-        if (isBooked) {
-            bgColor = 'bg-red-900 opacity-60'; 
-            textColor = 'text-red-300';
-        }
-        
-        // Surlignage de la sélection (booking ou price)
+        // Vérifier si dans la sélection
         if (selectionStart && selectionEnd) {
              const dayTime = new Date(dateStr).getTime();
              const startTime = new Date(selectionStart).getTime();
              const endTime = new Date(selectionEnd).getTime();
              
              if (!isNaN(startTime) && !isNaN(endTime) && dayTime >= startTime && dayTime <= endTime) {
-                  bgColor = selectionMode === 'booking' ? 'bg-yellow-700' : 'bg-blue-700'; 
-                  textColor = 'text-white';
-                  isDisabled = true; 
-             }
-             if (dateStr === selectionStart || dateStr === selectionEnd) {
-                  bgColor = selectionMode === 'booking' ? 'bg-yellow-600' : 'bg-blue-600'; 
-                  borderColor = selectionMode === 'booking' ? 'border-yellow-400' : 'border-blue-400'; 
+                  isInSelection = true;
+                  if (selectionMode === 'booking') {
+                    // Sélection réservation = bleu
+                    bgClass = 'bg-calendrierbg-bleu';
+                    borderClass = 'border-calendrierstroke-bleu';
+                  } else {
+                    // Sélection prix = vert
+                    bgClass = 'bg-calendrierbg-vert';
+                    borderClass = 'border-calendrierstroke-vert';
+                  }
              }
         }
         
-        // Surlignage de la date d'analyse (si pas déjà en sélection)
-        if (dateStr === selectedDateForAnalysis && !isDisabled) {
-            borderColor = 'border-blue-500';
+        if (isBooked) {
+            // Réservé = orange
+            bgClass = 'bg-calendrierbg-orange';
+            borderClass = 'border-calendrierstroke-orange';
+            isDisabled = true;
+        } else if (!isInSelection && !isBooked) {
+            // Par défaut, fond normal
+            bgClass = 'bg-global-bg-small-box';
+            borderClass = 'border-global-stroke-box';
         }
-
 
         grid.push(
             <div 
                 key={dateStr} 
                 data-date={dateStr} 
-                className={`calendar-day p-2 rounded-md text-center border ${borderColor} ${bgColor} ${textColor} ${isDisabled ? 'cursor-not-allowed' : 'cursor-pointer'}`}
+                className={`w-full h-full flex flex-col items-center justify-center ${priceFormatted ? 'gap-1' : ''} ${bgClass} rounded-[10px] border border-solid ${borderClass} ${textColor} ${isDisabled ? 'cursor-not-allowed' : 'cursor-pointer'} transition-colors relative`}
                 onMouseDown={!isDisabled ? () => handleMouseDown(dateStr) : undefined}
                 onMouseEnter={!isDisabled ? () => handleMouseOver(dateStr) : undefined}
             >
-                <div className="text-sm">{day}</div>
-                <div className={`text-xs font-bold mt-1 ${isBooked ? 'opacity-70' : ''}`}>{price != null ? formatCurrency(price) : '-'}</div>
-                 {isBooked && <div className="text-[10px] opacity-60 truncate">{bookings[dateStr].channel}</div>}
+                <div className={`${textColor} relative w-fit font-h3-font-family font-h3-font-weight text-h3-font-size text-center leading-h3-line-height`}>
+                  {day}
+                </div>
+                {priceFormatted && (
+                  <div className={`relative w-fit font-h4-font-family font-h4-font-weight text-global-blanc text-h4-font-size text-center leading-h4-line-height whitespace-nowrap`}>
+                    {priceFormatted}
+                  </div>
+                )}
             </div>
         );
     }
@@ -742,47 +1041,133 @@ function PricingPage({ token, userProfile }) {
    };
 
 
+  const getSelectedPropertyName = () => {
+    if (!selectedId) return 'Sélectionnez une propriété';
+    if (selectedView === 'property') {
+      const prop = properties.find(p => p.id === selectedId);
+      return prop?.address || 'Propriété inconnue';
+    } else {
+      const group = allGroups.find(g => g.id === selectedId);
+      return group?.name || 'Groupe inconnu';
+    }
+  };
+
   return (
-    <div className="space-y-6">
-      <h2 className="text-3xl font-bold text-text-primary">Calendrier de Tarification & Réservations</h2>
-       {error && <p className="bg-red-900/50 text-red-300 p-3 rounded-md text-sm my-4">{error}</p>}
+    <div className="relative min-h-screen">
+      {/* Fond qui couvre tout l'écran avec le même dégradé */}
+      <div
+        className="fixed inset-0"
+        style={{
+          background:
+            'linear-gradient(135deg, rgba(2,6,24,1) 0%, rgba(22,36,86,1) 45%, rgba(15,23,43,1) 100%)',
+          zIndex: 0,
+        }}
+      />
+      <div className="relative z-10 space-y-6 p-4 md:p-6 lg:p-8">
+        {error && <p className="bg-red-900/50 text-red-300 p-3 rounded-md text-sm">{error}</p>}
       
       <div className="md:flex gap-6">
-        <div className="flex-grow bg-bg-secondary p-4 rounded-lg shadow-lg">
-          <div className="flex justify-between items-center mb-4">
-            
-            <select 
-              id="view-selector" 
-              value={getSelectedValue()} 
-              onChange={handleViewChange}
-              className="form-input bg-bg-muted border-border-primary"
-              disabled={isLoading || iaLoading}
+        <div className="flex-grow self-stretch p-8 bg-global-bg-box rounded-[14px] border border-solid border-global-stroke-box flex flex-col items-start gap-6">
+          {/* Header avec sélecteur et navigation mois */}
+          <header className="flex items-center justify-between relative self-stretch w-full flex-[0_0_auto]">
+            {/* Sélecteur de propriété */}
+            <button
+              onClick={() => {}}
+              className="flex w-80 h-9 items-center justify-between px-3 py-0 relative bg-global-bg-small-box rounded-lg border border-solid border-global-stroke-box cursor-pointer hover:opacity-90 transition-opacity"
+              aria-label="Select address"
             >
-              <option value="">-- Sélectionnez --</option>
-              <optgroup label="Groupes">
-                {allGroups.map(g => <option key={g.id} value={`group-${g.id}`}>{g.name}</option>)}
-              </optgroup>
-              <optgroup label="Propriétés Individuelles">
-                {properties.map(p => <option key={p.id} value={`property-${p.id}`}>{p.address}</option>)}
-              </optgroup>
-            </select>
+              <select 
+                id="view-selector" 
+                value={getSelectedValue()} 
+                onChange={handleViewChange}
+                className="flex-1 bg-transparent text-center font-h3-font-family font-h3-font-weight text-global-blanc text-h3-font-size leading-h3-line-height appearance-none cursor-pointer focus:outline-none border-none"
+                disabled={isLoading || iaLoading}
+              >
+                <option value="">-- Sélectionnez --</option>
+                <optgroup label="Groupes">
+                  {allGroups.map(g => <option key={g.id} value={`group-${g.id}`}>{g.name}</option>)}
+                </optgroup>
+                <optgroup label="Propriétés Individuelles">
+                  {properties.map(p => <option key={p.id} value={`property-${p.id}`}>{p.address}</option>)}
+                </optgroup>
+              </select>
+              <div className="pointer-events-none">
+                <ArrowDownIcon />
+              </div>
+            </button>
             
-            <div className="flex items-center gap-2">
-              <button id="prev-month-btn" onClick={() => { setCurrentCalendarDate(prev => new Date(prev.getFullYear(), prev.getMonth() - 1, 1)); clearSelection(); setSelectedDateForAnalysis(null); }} className="bg-bg-muted p-2 rounded-md">&lt;</button>
-              <h3 id="calendar-month-year" className="text-lg font-semibold w-32 text-center text-text-primary">
+            {/* Navigation mois */}
+            <nav
+              className="inline-flex h-8 items-center gap-3 relative flex-[0_0_auto]"
+              aria-label="Month navigation"
+            >
+              <button 
+                id="prev-month-btn" 
+                onClick={() => { setCurrentCalendarDate(prev => new Date(prev.getFullYear(), prev.getMonth() - 1, 1)); clearSelection(); setSelectedDateForAnalysis(null); }} 
+                className="cursor-pointer hover:opacity-70 transition-opacity"
+                aria-label="Previous month"
+              >
+                <ArrowLeftIcon />
+              </button>
+              <time className="relative w-[150px] font-h4-font-family font-h4-font-weight text-global-blanc text-h4-font-size text-center leading-h4-line-height">
                 {currentCalendarDate.toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' })}
-              </h3>
-              <button id="next-month-btn" onClick={() => { setCurrentCalendarDate(prev => new Date(prev.getFullYear(), prev.getMonth() + 1, 1)); clearSelection(); setSelectedDateForAnalysis(null); }} className="bg-bg-muted p-2 rounded-md">&gt;</button>
+              </time>
+              <button 
+                id="next-month-btn" 
+                onClick={() => { setCurrentCalendarDate(prev => new Date(prev.getFullYear(), prev.getMonth() + 1, 1)); clearSelection(); setSelectedDateForAnalysis(null); }} 
+                className="cursor-pointer hover:opacity-70 transition-opacity"
+                aria-label="Next month"
+              >
+                <ArrowRightIcon />
+              </button>
+            </nav>
+          </header>
+
+          {/* Grille calendrier */}
+          <section className="flex flex-col items-start gap-3 relative self-stretch w-full flex-[0_0_auto]">
+            {/* En-têtes jours */}
+            <header className="flex items-center justify-between px-9 py-0 relative self-stretch w-full flex-[0_0_auto]">
+              {['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'].map((day, index) => (
+                <div
+                  key={index}
+                  className="relative w-fit mt-[-1.00px] font-p1-font-family font-p1-font-weight text-global-inactive text-p1-font-size text-center leading-p1-line-height"
+                >
+                  {day}
+                </div>
+              ))}
+            </header>
+            
+            {/* Grille des jours */}
+            <div id="calendar-grid" className="self-stretch h-[458px] grid grid-cols-7 gap-2 select-none relative">
+              {renderCalendar()}
             </div>
-          </div>
-          <div id="calendar-grid" className="grid grid-cols-7 gap-1 select-none">
-            {renderCalendar()}
-          </div>
-           <div className="flex flex-wrap justify-end gap-x-4 gap-y-1 text-xs mt-4 text-text-muted">
-               <span><span className="inline-block w-3 h-3 bg-blue-700 rounded-sm mr-1 align-middle"></span>Sélection Prix</span>
-               <span><span className="inline-block w-3 h-3 bg-red-900 opacity-60 rounded-sm mr-1 align-middle"></span>Réservé</span>
-               <span><span className="inline-block w-3 h-3 bg-yellow-700 rounded-sm mr-1 align-middle"></span>Sélection Résa</span>
-           </div>
+          </section>
+
+          {/* Légende */}
+          <section
+            className="flex items-start justify-center gap-6 pt-4 pb-0 px-0 self-stretch w-full border-t border-solid border-global-stroke-box relative flex-[0_0_auto]"
+            role="region"
+            aria-label="Calendar legends"
+          >
+            <div className="inline-flex items-center gap-2 relative flex-[0_0_auto]">
+              <div className="w-3 h-3 bg-calendrierbg-vert rounded border border-solid border-calendrierstroke-vert relative" role="img" aria-label="Sélection prix indicator" />
+              <span className="relative w-fit mt-[-1.00px] font-p1-font-family font-p1-font-weight text-global-inactive text-p1-font-size leading-p1-line-height">
+                Sélection prix
+              </span>
+            </div>
+            <div className="inline-flex items-center gap-2 relative flex-[0_0_auto]">
+              <div className="w-3 h-3 bg-calendrierbg-orange rounded border border-solid border-calendrierstroke-orange relative" role="img" aria-label="Réservé indicator" />
+              <span className="relative w-fit mt-[-1.00px] font-p1-font-family font-p1-font-weight text-global-inactive text-p1-font-size leading-p1-line-height">
+                Réservé
+              </span>
+            </div>
+            <div className="inline-flex items-center gap-2 relative flex-[0_0_auto]">
+              <div className="w-3 h-3 bg-calendrierbg-bleu rounded border border-solid border-calendrierstroke-bleu relative" role="img" aria-label="Sélection résa indicator" />
+              <span className="relative w-fit mt-[-1.00px] font-p1-font-family font-p1-font-weight text-global-inactive text-p1-font-size leading-p1-line-height">
+                Sélection résa
+              </span>
+            </div>
+          </section>
         </div>
         
         {/* 4. Afficher le composant dans la barre latérale */}
@@ -811,16 +1196,118 @@ function PricingPage({ token, userProfile }) {
           
             <div id="ia-strategy-section">
               <h5 className="text-md font-semibold text-text-primary mb-2">Stratégie IA (Prix)</h5>
-              <p className="text-xs text-text-muted mb-3">Générez et appliquez des prix suggérés sur 6 mois.</p>
-              <button 
-                id="generate-ia-strategy-btn" 
-                onClick={handleGenerateStrategy}
-                disabled={iaLoading || !selectedId || !db}
-                className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-2 px-4 rounded-lg transition flex items-center justify-center gap-2 disabled:bg-gray-500"
-              >
-                <span id="ia-btn-text">{iaLoading ? 'Analyse en cours...' : 'Générer Prix IA'}</span>
-                {iaLoading && <div id="ia-loader-small"></div>}
-              </button>
+              
+              {/* Indicateur visuel de statut */}
+              <div className="mb-3 flex items-center gap-2">
+                {isAutoGenerationEnabled ? (
+                  <div className="inline-flex items-center gap-2 px-3 py-1.5 bg-global-positive-impact/20 border border-global-positive-impact/40 rounded-lg">
+                    <div className="w-2 h-2 bg-global-positive-impact rounded-full animate-pulse" />
+                    <span className="font-p1-font-family font-p1-font-weight text-global-positive-impact text-p1-font-size leading-p1-line-height">
+                      Actif
+                    </span>
+                    {getNextGenerationTime && (
+                      <span className="font-p1-font-family font-p1-font-weight text-global-inactive text-xs leading-p1-line-height">
+                        • Prochaine : {getNextGenerationTime}
+                      </span>
+                    )}
+                  </div>
+                ) : (
+                  <div className="inline-flex items-center gap-2 px-3 py-1.5 bg-global-inactive/20 border border-global-inactive/40 rounded-lg">
+                    <div className="w-2 h-2 bg-global-inactive rounded-full" />
+                    <span className="font-p1-font-family font-p1-font-weight text-global-inactive text-p1-font-size leading-p1-line-height">
+                      Inactif
+                    </span>
+                  </div>
+                )}
+              </div>
+
+              {/* Affichage de la dernière génération */}
+              {formatLastRun && (
+                <div className="mb-3 p-2 bg-global-bg-small-box border border-global-stroke-box rounded-lg">
+                  <p className="text-xs text-global-inactive">
+                    Dernière génération : <span className="text-global-blanc font-medium">{formatLastRun}</span>
+                  </p>
+                </div>
+              )}
+
+              <p className="text-xs text-text-muted mb-3">
+                {isAutoGenerationEnabled 
+                  ? 'La génération automatique des prix est activée. Les prix seront générés tous les jours à 00h00.'
+                  : 'Activez la génération automatique pour que les prix soient générés tous les jours à 00h00.'}
+              </p>
+
+              {/* Messages de succès et d'erreur */}
+              {autoPricingSuccess && (
+                <div className="mb-3 p-3 bg-green-900/40 border border-green-500/40 rounded-lg">
+                  <p className="text-sm text-green-300">{autoPricingSuccess}</p>
+                </div>
+              )}
+              {autoPricingError && (
+                <div className="mb-3 p-3 bg-red-900/40 border border-red-500/40 rounded-lg">
+                  <p className="text-sm text-red-300">{autoPricingError}</p>
+                </div>
+              )}
+              
+              {/* Toggle Switch */}
+              <div className="flex items-center justify-between p-4 bg-global-bg-small-box rounded-[10px] border border-solid border-global-stroke-box">
+                <div className="flex items-center gap-3 flex-1">
+                  <div className="relative inline-block w-12 h-6">
+                    <input
+                      type="checkbox"
+                      id="auto-generation-toggle"
+                      checked={isAutoGenerationEnabled}
+                      disabled={isLoadingAutoPricing}
+                      onChange={(e) => handleToggleAutoGeneration(e.target.checked)}
+                      className="sr-only"
+                    />
+                    <label
+                      htmlFor="auto-generation-toggle"
+                      className={`block h-6 w-12 rounded-full cursor-pointer transition-all duration-300 ${
+                        isAutoGenerationEnabled
+                          ? 'bg-gradient-to-r from-[#155dfc] to-[#12a1d5]'
+                          : 'bg-global-stroke-box'
+                      }`}
+                    >
+                      <span
+                        className={`absolute top-0.5 left-0.5 h-5 w-5 rounded-full bg-white transition-all duration-300 transform ${
+                          isAutoGenerationEnabled ? 'translate-x-6' : 'translate-x-0'
+                        }`}
+                      />
+                    </label>
+                  </div>
+                  
+                  <div className="flex items-center gap-2">
+                    {isAutoGenerationEnabled ? (
+                      <>
+                        <div className="w-2 h-2 bg-global-positive-impact rounded-full animate-pulse" />
+                        <span className="font-p1-font-family font-p1-font-weight text-global-positive-impact text-p1-font-size leading-p1-line-height">
+                          Génération automatique activée
+                        </span>
+                      </>
+                    ) : (
+                      <>
+                        <div className="w-2 h-2 bg-global-inactive rounded-full" />
+                        <span className="font-p1-font-family font-p1-font-weight text-global-inactive text-p1-font-size leading-p1-line-height">
+                          Génération automatique désactivée
+                        </span>
+                      </>
+                    )}
+                  </div>
+                </div>
+                
+                {/* Bouton de génération manuelle (toujours disponible) */}
+                <button 
+                  id="generate-ia-strategy-btn" 
+                  onClick={handleGenerateStrategy}
+                  disabled={iaLoading || !selectedId || !db}
+                  className="ml-4 px-4 py-2 bg-gradient-to-r from-[#155dfc] to-[#12a1d5] hover:opacity-90 text-white font-h3-font-family font-h3-font-weight text-h3-font-size rounded-[10px] transition-opacity disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                >
+                  <span id="ia-btn-text">{iaLoading ? 'Analyse...' : 'Générer maintenant'}</span>
+                  {iaLoading && (
+                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  )}
+                </button>
+              </div>
             </div>
             
             <div className="pt-4">
@@ -831,9 +1318,11 @@ function PricingPage({ token, userProfile }) {
           </div>
         </div>
       </div>
+      </div>
     </div>
   );
 }
 
 export default PricingPage;
+
 

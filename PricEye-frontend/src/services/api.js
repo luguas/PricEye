@@ -478,3 +478,31 @@ export function getPropertySpecificNews(propertyId, token) {
     });
 }
 
+/**
+ * Récupère l'état actuel de la génération automatique des prix IA
+ * @param {string} userId - ID de l'utilisateur
+ * @param {string} token - Token d'authentification
+ * @returns {Promise<{enabled: boolean, timezone: string, lastRun: Date|null}>}
+ */
+export function getAutoPricingStatus(userId, token) {
+    return apiRequest(`/api/users/auto-pricing/${userId}`, {
+        token,
+    });
+}
+
+/**
+ * Active ou désactive la génération automatique des prix IA
+ * @param {string} userId - ID de l'utilisateur
+ * @param {boolean} enabled - État d'activation
+ * @param {string} timezone - Fuseau horaire (format IANA, ex: "Europe/Paris")
+ * @param {string} token - Token d'authentification
+ * @returns {Promise<{message: string, autoPricing: {enabled: boolean, timezone: string}}>}
+ */
+export function enableAutoPricing(userId, enabled, timezone, token) {
+    return apiRequest(`/api/users/auto-pricing/${userId}`, {
+        method: 'PUT',
+        token,
+        body: JSON.stringify({ enabled, timezone }),
+    });
+}
+

@@ -270,8 +270,18 @@ function SettingsPage({ token, userProfile: initialProfile, onThemeChange }) {
 
 
   return (
-    <div className="space-y-8 max-w-4xl mx-auto"> 
-      <h1 className="text-3xl font-bold text-text-primary">Paramètres</h1>
+    <div className="relative min-h-screen">
+      {/* Fond qui couvre tout l'écran avec le même dégradé */}
+      <div
+        className="fixed inset-0"
+        style={{
+          background:
+            'linear-gradient(135deg, rgba(2,6,24,1) 0%, rgba(22,36,86,1) 45%, rgba(15,23,43,1) 100%)',
+          zIndex: 0,
+        }}
+      />
+      <div className="relative z-10 space-y-8 max-w-4xl mx-auto p-4 md:p-6 lg:p-8"> 
+        <h1 className="text-3xl font-bold text-text-primary">Paramètres</h1>
 
       {error && <p className="bg-red-900/50 text-red-300 p-3 rounded-md text-sm">{error}</p>}
       {successMessage && <p className="bg-green-900/50 text-green-300 p-3 rounded-md text-sm">{successMessage}</p>}
@@ -332,10 +342,68 @@ function SettingsPage({ token, userProfile: initialProfile, onThemeChange }) {
                   <label htmlFor="timezone" className="block text-sm font-medium text-text-secondary">Fuseau Horaire</label>
                   <select name="timezone" id="timezone" value={profile.timezone} onChange={handleChange} className="w-full form-input mt-1">
                       <option value="">Sélectionner...</option>
-                      <option value="Europe/Paris">Europe/Paris</option>
-                      <option value="Europe/London">Europe/London</option>
-                      <option value="America/New_York">America/New_York</option>
+                      <optgroup label="Europe">
+                        <option value="Europe/Paris">Europe/Paris (UTC+1/+2)</option>
+                        <option value="Europe/London">Europe/London (UTC+0/+1)</option>
+                        <option value="Europe/Berlin">Europe/Berlin (UTC+1/+2)</option>
+                        <option value="Europe/Madrid">Europe/Madrid (UTC+1/+2)</option>
+                        <option value="Europe/Rome">Europe/Rome (UTC+1/+2)</option>
+                        <option value="Europe/Amsterdam">Europe/Amsterdam (UTC+1/+2)</option>
+                        <option value="Europe/Brussels">Europe/Brussels (UTC+1/+2)</option>
+                        <option value="Europe/Zurich">Europe/Zurich (UTC+1/+2)</option>
+                        <option value="Europe/Vienna">Europe/Vienna (UTC+1/+2)</option>
+                        <option value="Europe/Prague">Europe/Prague (UTC+1/+2)</option>
+                        <option value="Europe/Warsaw">Europe/Warsaw (UTC+1/+2)</option>
+                        <option value="Europe/Stockholm">Europe/Stockholm (UTC+1/+2)</option>
+                        <option value="Europe/Oslo">Europe/Oslo (UTC+1/+2)</option>
+                        <option value="Europe/Copenhagen">Europe/Copenhagen (UTC+1/+2)</option>
+                        <option value="Europe/Helsinki">Europe/Helsinki (UTC+2/+3)</option>
+                        <option value="Europe/Athens">Europe/Athens (UTC+2/+3)</option>
+                        <option value="Europe/Lisbon">Europe/Lisbon (UTC+0/+1)</option>
+                        <option value="Europe/Dublin">Europe/Dublin (UTC+0/+1)</option>
+                        <option value="Europe/Moscow">Europe/Moscow (UTC+3)</option>
+                      </optgroup>
+                      <optgroup label="Amérique du Nord">
+                        <option value="America/New_York">America/New_York (UTC-5/-4)</option>
+                        <option value="America/Chicago">America/Chicago (UTC-6/-5)</option>
+                        <option value="America/Denver">America/Denver (UTC-7/-6)</option>
+                        <option value="America/Los_Angeles">America/Los_Angeles (UTC-8/-7)</option>
+                        <option value="America/Toronto">America/Toronto (UTC-5/-4)</option>
+                        <option value="America/Vancouver">America/Vancouver (UTC-8/-7)</option>
+                        <option value="America/Mexico_City">America/Mexico_City (UTC-6/-5)</option>
+                        <option value="America/Montreal">America/Montreal (UTC-5/-4)</option>
+                      </optgroup>
+                      <optgroup label="Amérique du Sud">
+                        <option value="America/Sao_Paulo">America/Sao_Paulo (UTC-3)</option>
+                        <option value="America/Buenos_Aires">America/Buenos_Aires (UTC-3)</option>
+                        <option value="America/Lima">America/Lima (UTC-5)</option>
+                        <option value="America/Santiago">America/Santiago (UTC-3/-4)</option>
+                      </optgroup>
+                      <optgroup label="Asie">
+                        <option value="Asia/Tokyo">Asia/Tokyo (UTC+9)</option>
+                        <option value="Asia/Shanghai">Asia/Shanghai (UTC+8)</option>
+                        <option value="Asia/Hong_Kong">Asia/Hong_Kong (UTC+8)</option>
+                        <option value="Asia/Singapore">Asia/Singapore (UTC+8)</option>
+                        <option value="Asia/Seoul">Asia/Seoul (UTC+9)</option>
+                        <option value="Asia/Dubai">Asia/Dubai (UTC+4)</option>
+                        <option value="Asia/Kolkata">Asia/Kolkata (UTC+5:30)</option>
+                        <option value="Asia/Bangkok">Asia/Bangkok (UTC+7)</option>
+                      </optgroup>
+                      <optgroup label="Océanie">
+                        <option value="Australia/Sydney">Australia/Sydney (UTC+10/+11)</option>
+                        <option value="Australia/Melbourne">Australia/Melbourne (UTC+10/+11)</option>
+                        <option value="Australia/Brisbane">Australia/Brisbane (UTC+10)</option>
+                        <option value="Pacific/Auckland">Pacific/Auckland (UTC+12/+13)</option>
+                      </optgroup>
+                      <optgroup label="Afrique">
+                        <option value="Africa/Cairo">Africa/Cairo (UTC+2)</option>
+                        <option value="Africa/Johannesburg">Africa/Johannesburg (UTC+2)</option>
+                        <option value="Africa/Casablanca">Africa/Casablanca (UTC+0/+1)</option>
+                      </optgroup>
                   </select>
+                  <p className="text-xs text-text-muted mt-1">
+                    Le fuseau horaire est utilisé pour la génération automatique des prix (00h00 chaque jour).
+                  </p>
                   {validationErrors.timezone && <p className="text-xs text-red-400 mt-1">{validationErrors.timezone}</p>}
                 </div>
                 {/* SÉLECTEUR DE THÈME */}
@@ -491,6 +559,7 @@ function SettingsPage({ token, userProfile: initialProfile, onThemeChange }) {
           </div>
         </div>
       )}
+      </div>
     </div>
   );
 }
