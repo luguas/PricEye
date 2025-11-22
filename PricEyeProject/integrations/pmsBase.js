@@ -81,6 +81,35 @@ class PMSBase {
   async getReservations(startDate, endDate) {
     throw new Error("La méthode 'getReservations()' doit être implémentée par la classe enfant.");
   }
+
+  /**
+   * Crée une nouvelle réservation dans le PMS.
+   * @param {string} pmsPropertyId - L'ID PMS de la propriété.
+   * @param {object} reservationData - Les données de la réservation.
+   * @returns {Promise<object>} - La réservation créée avec son pmsId
+   */
+  async createReservation(pmsPropertyId, reservationData) {
+    throw new Error("La méthode 'createReservation()' doit être implémentée par la classe enfant.");
+  }
+
+  /**
+   * Met à jour une réservation existante dans le PMS.
+   * @param {string} pmsReservationId - L'ID PMS de la réservation.
+   * @param {object} reservationData - Les données à mettre à jour.
+   * @returns {Promise<object>} - La réservation mise à jour
+   */
+  async updateReservation(pmsReservationId, reservationData) {
+    throw new Error("La méthode 'updateReservation()' doit être implémentée par la classe enfant.");
+  }
+
+  /**
+   * Supprime une réservation dans le PMS.
+   * @param {string} pmsReservationId - L'ID PMS de la réservation.
+   * @returns {Promise<object>} - Confirmation de suppression
+   */
+  async deleteReservation(pmsReservationId) {
+    throw new Error("La méthode 'deleteReservation()' doit être implémentée par la classe enfant.");
+  }
 }
 
 export default PMSBase;

@@ -1252,6 +1252,34 @@ app.post('/api/properties/:id/bookings', authenticateToken, async (req, res) => 
             console.error("Erreur lors de la vérification de la méthode de prix:", e);
         }
 
+        const propertyData = propertyDoc.data();
+        let pmsReservationId = null;
+
+        // Synchronisation avec PMS si la propriété est liée
+        if (propertyData.pmsId && propertyData.pmsType) {
+            try {
+                console.log(`[PMS Sync] Propriété ${propertyId} (PMS ID: ${propertyData.pmsId}) est liée. Création de la réservation...`);
+                const client = await getUserPMSClient(userId);
+                
+                const reservationData = {
+                    startDate,
+                    endDate,
+                    totalPrice: totalPrice || pricePerNight * nights,
+                    guestName,
+                    numberOfGuests,
+                    channel: channel || 'Direct',
+                    status: 'confirmed'
+                };
+
+                const pmsReservation = await client.createReservation(propertyData.pmsId, reservationData);
+                pmsReservationId = pmsReservation.pmsId;
+                console.log(`[PMS Sync] Réservation créée dans ${propertyData.pmsType} avec l'ID: ${pmsReservationId}`);
+            } catch (pmsError) {
+                console.error(`[PMS Sync] ERREUR lors de la création de la réservation pour ${propertyId}:`, pmsError.message);
+                // On continue quand même avec la sauvegarde Firestore
+            }
+        }
+
         const newBooking = {
             startDate,
             endDate,
@@ -1264,11 +1292,16 @@ app.post('/api/properties/:id/bookings', authenticateToken, async (req, res) => 
             teamId: propertyTeamId,
             ...(guestName && { guestName }),
             ...(numberOfGuests && typeof numberOfGuests === 'number' && { numberOfGuests }),
+            ...(pmsReservationId && { pmsId: pmsReservationId }), // Stocker l'ID PMS si disponible
         };
 
         const bookingRef = await propertyRef.collection('reservations').add(newBooking);
 
-        res.status(201).send({ message: 'Réservation ajoutée avec succès.', bookingId: bookingRef.id });
+        res.status(201).send({ 
+            message: 'Réservation ajoutée avec succès.', 
+            bookingId: bookingRef.id,
+            ...(pmsReservationId && { pmsReservationId })
+        });
 
     } catch (error) {
         console.error('Erreur lors de l\'ajout de la réservation:', error);
@@ -1383,6 +1416,232 @@ app.get('/api/bookings', authenticateToken, async (req, res) => {
     }
 });
 
+// PUT /api/properties/:id/bookings/:bookingId - Modifier une réservation
+app.put('/api/properties/:id/bookings/:bookingId', authenticateToken, async (req, res) => {
+    try {
+        const db = admin.firestore();
+        const { id: propertyId, bookingId } = req.params;
+        const userId = req.user.uid;
+        const { startDate, endDate, pricePerNight, totalPrice, channel, guestName, numberOfGuests, status } = req.body;
+
+        const propertyRef = db.collection('properties').doc(propertyId);
+        const propertyDoc = await propertyRef.get();
+        if (!propertyDoc.exists) {
+            return res.status(404).send({ error: 'Propriété non trouvée.' });
+        }
+
+        const userProfileRef = db.collection('users').doc(userId);
+        const userProfileDoc = await userProfileRef.get();
+        const propertyTeamId = propertyDoc.data().teamId || propertyDoc.data().ownerId;
+        if (!userProfileDoc.exists || userProfileDoc.data().teamId !== propertyTeamId) {
+            return res.status(403).send({ error: 'Action non autorisée (pas dans la bonne équipe).' });
+        }
+
+        const bookingRef = propertyRef.collection('reservations').doc(bookingId);
+        const bookingDoc = await bookingRef.get();
+        if (!bookingDoc.exists) {
+            return res.status(404).send({ error: 'Réservation non trouvée.' });
+        }
+
+        const bookingData = bookingDoc.data();
+        const propertyData = propertyDoc.data();
+
+        // Préparer les données de mise à jour
+        const updateData = {};
+        if (startDate) updateData.startDate = startDate;
+        if (endDate) updateData.endDate = endDate;
+        if (pricePerNight != null) updateData.pricePerNight = pricePerNight;
+        if (totalPrice != null) updateData.totalPrice = totalPrice;
+        if (channel) updateData.channel = channel;
+        if (guestName) updateData.guestName = guestName;
+        if (numberOfGuests != null) updateData.numberOfGuests = numberOfGuests;
+        if (status) updateData.status = status;
+        updateData.updatedAt = admin.firestore.FieldValue.serverTimestamp();
+
+        // Synchronisation avec PMS si la propriété est liée et la réservation a un pmsId
+        if (propertyData.pmsId && propertyData.pmsType && bookingData.pmsId) {
+            try {
+                console.log(`[PMS Sync] Mise à jour de la réservation ${bookingId} (PMS ID: ${bookingData.pmsId})...`);
+                const client = await getUserPMSClient(userId);
+                
+                const reservationData = {};
+                if (startDate) reservationData.startDate = startDate;
+                if (endDate) reservationData.endDate = endDate;
+                if (totalPrice != null) reservationData.totalPrice = totalPrice;
+                if (guestName) reservationData.guestName = guestName;
+                if (numberOfGuests != null) reservationData.numberOfGuests = numberOfGuests;
+                if (channel) reservationData.channel = channel;
+                if (status) reservationData.status = status === 'confirmé' ? 'confirmed' : status;
+
+                await client.updateReservation(bookingData.pmsId, reservationData);
+                console.log(`[PMS Sync] Réservation mise à jour dans ${propertyData.pmsType}.`);
+            } catch (pmsError) {
+                console.error(`[PMS Sync] ERREUR lors de la mise à jour de la réservation pour ${propertyId}:`, pmsError.message);
+                // On continue quand même avec la sauvegarde Firestore
+            }
+        }
+
+        await bookingRef.update(updateData);
+
+        res.status(200).send({ message: 'Réservation modifiée avec succès.' });
+    } catch (error) {
+        console.error('Erreur lors de la modification de la réservation:', error);
+        res.status(500).send({ error: 'Erreur serveur lors de la modification de la réservation.' });
+    }
+});
+
+// DELETE /api/properties/:id/bookings/:bookingId - Supprimer une réservation
+app.delete('/api/properties/:id/bookings/:bookingId', authenticateToken, async (req, res) => {
+    try {
+        const db = admin.firestore();
+        const { id: propertyId, bookingId } = req.params;
+        const userId = req.user.uid;
+
+        const propertyRef = db.collection('properties').doc(propertyId);
+        const propertyDoc = await propertyRef.get();
+        if (!propertyDoc.exists) {
+            return res.status(404).send({ error: 'Propriété non trouvée.' });
+        }
+
+        const userProfileRef = db.collection('users').doc(userId);
+        const userProfileDoc = await userProfileRef.get();
+        const propertyTeamId = propertyDoc.data().teamId || propertyDoc.data().ownerId;
+        if (!userProfileDoc.exists || userProfileDoc.data().teamId !== propertyTeamId) {
+            return res.status(403).send({ error: 'Action non autorisée (pas dans la bonne équipe).' });
+        }
+
+        const bookingRef = propertyRef.collection('reservations').doc(bookingId);
+        const bookingDoc = await bookingRef.get();
+        if (!bookingDoc.exists) {
+            return res.status(404).send({ error: 'Réservation non trouvée.' });
+        }
+
+        const bookingData = bookingDoc.data();
+        const propertyData = propertyDoc.data();
+
+        // Synchronisation avec PMS si la propriété est liée et la réservation a un pmsId
+        if (propertyData.pmsId && propertyData.pmsType && bookingData.pmsId) {
+            try {
+                console.log(`[PMS Sync] Suppression de la réservation ${bookingId} (PMS ID: ${bookingData.pmsId})...`);
+                const client = await getUserPMSClient(userId);
+                await client.deleteReservation(bookingData.pmsId);
+                console.log(`[PMS Sync] Réservation supprimée dans ${propertyData.pmsType}.`);
+            } catch (pmsError) {
+                console.error(`[PMS Sync] ERREUR lors de la suppression de la réservation pour ${propertyId}:`, pmsError.message);
+                // On continue quand même avec la suppression Firestore
+            }
+        }
+
+        await bookingRef.delete();
+
+        res.status(200).send({ message: 'Réservation supprimée avec succès.' });
+    } catch (error) {
+        console.error('Erreur lors de la suppression de la réservation:', error);
+        res.status(500).send({ error: 'Erreur serveur lors de la suppression de la réservation.' });
+    }
+});
+
+// POST /api/properties/:id/bookings/sync - Synchroniser les réservations depuis le PMS
+app.post('/api/properties/:id/bookings/sync', authenticateToken, async (req, res) => {
+    try {
+        const db = admin.firestore();
+        const { id: propertyId } = req.params;
+        const userId = req.user.uid;
+        const { startDate, endDate } = req.body;
+
+        if (!startDate || !endDate) {
+            return res.status(400).send({ error: 'Les dates de début et de fin sont requises.' });
+        }
+
+        const propertyRef = db.collection('properties').doc(propertyId);
+        const propertyDoc = await propertyRef.get();
+        if (!propertyDoc.exists) {
+            return res.status(404).send({ error: 'Propriété non trouvée.' });
+        }
+
+        const userProfileRef = db.collection('users').doc(userId);
+        const userProfileDoc = await userProfileRef.get();
+        const propertyTeamId = propertyDoc.data().teamId || propertyDoc.data().ownerId;
+        if (!userProfileDoc.exists || userProfileDoc.data().teamId !== propertyTeamId) {
+            return res.status(403).send({ error: 'Action non autorisée (pas dans la bonne équipe).' });
+        }
+
+        const propertyData = propertyDoc.data();
+        if (!propertyData.pmsId || !propertyData.pmsType) {
+            return res.status(400).send({ error: 'Cette propriété n\'est pas liée à un PMS.' });
+        }
+
+        try {
+            console.log(`[PMS Sync] Synchronisation des réservations depuis ${propertyData.pmsType} pour ${propertyId}...`);
+            const client = await getUserPMSClient(userId);
+            const pmsReservations = await client.getReservations(startDate, endDate);
+
+            // Filtrer les réservations pour cette propriété uniquement
+            const propertyReservations = pmsReservations.filter(
+                res => res.propertyId === propertyData.pmsId
+            );
+
+            const batch = db.batch();
+            const reservationsRef = propertyRef.collection('reservations');
+            let importedCount = 0;
+            let updatedCount = 0;
+
+            for (const pmsReservation of propertyReservations) {
+                // Chercher si une réservation avec ce pmsId existe déjà
+                const existingQuery = await reservationsRef
+                    .where('pmsId', '==', pmsReservation.pmsId)
+                    .limit(1)
+                    .get();
+
+                const reservationData = {
+                    startDate: pmsReservation.startDate,
+                    endDate: pmsReservation.endDate,
+                    pricePerNight: pmsReservation.totalPrice ? 
+                        Math.round(pmsReservation.totalPrice / 
+                            Math.max(1, Math.round((new Date(pmsReservation.endDate) - new Date(pmsReservation.startDate)) / (1000 * 60 * 60 * 24)))) : 0,
+                    totalPrice: pmsReservation.totalPrice || 0,
+                    channel: pmsReservation.channel || 'Direct',
+                    status: pmsReservation.status === 'confirmed' ? 'confirmé' : pmsReservation.status || 'confirmé',
+                    guestName: pmsReservation.guestName || '',
+                    pmsId: pmsReservation.pmsId,
+                    teamId: propertyTeamId,
+                    pricingMethod: 'pms', // Marquer comme importé depuis PMS
+                    syncedAt: admin.firestore.FieldValue.serverTimestamp()
+                };
+
+                if (existingQuery.empty) {
+                    // Nouvelle réservation
+                    const newReservationRef = reservationsRef.doc();
+                    batch.set(newReservationRef, {
+                        ...reservationData,
+                        bookedAt: admin.firestore.FieldValue.serverTimestamp()
+                    });
+                    importedCount++;
+                } else {
+                    // Mise à jour de la réservation existante
+                    const existingDoc = existingQuery.docs[0];
+                    batch.update(existingDoc.ref, reservationData);
+                    updatedCount++;
+                }
+            }
+
+            await batch.commit();
+
+            res.status(200).send({ 
+                message: `Synchronisation réussie. ${importedCount} nouvelle(s) réservation(s) importée(s), ${updatedCount} réservation(s) mise(s) à jour.`,
+                imported: importedCount,
+                updated: updatedCount,
+                total: propertyReservations.length
+            });
+        } catch (pmsError) {
+            console.error(`[PMS Sync] ERREUR lors de la synchronisation des réservations pour ${propertyId}:`, pmsError.message);
+            return res.status(500).send({ error: `Échec de la synchronisation PMS: ${pmsError.message}` });
+        }
+    } catch (error) {
+        console.error('Erreur lors de la synchronisation des réservations:', error);
+        res.status(500).send({ error: 'Erreur serveur lors de la synchronisation des réservations.' });
+    }
+});
 
 // GET /api/properties/:id/news - Récupérer les actualités spécifiques (avec cache par propriété)
 app.get('/api/properties/:id/news', authenticateToken, async (req, res) => {

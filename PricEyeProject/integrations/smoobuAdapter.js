@@ -237,6 +237,101 @@ class SmoobuAdapter extends PMSBase {
       throw new Error(`Échec de la récupération des réservations Smoobu : ${error.message}`);
     }
   }
+
+  /**
+   * Crée une nouvelle réservation dans Smoobu.
+   * @param {string} pmsPropertyId - L'ID PMS de la propriété.
+   * @param {object} reservationData - Les données de la réservation { startDate, endDate, guestName, totalPrice, numberOfGuests, channel }
+   * @returns {Promise<object>} - La réservation créée avec son pmsId
+   */
+  async createReservation(pmsPropertyId, reservationData) {
+    try {
+      console.log(`[Smoobu] Création d'une réservation pour la propriété ${pmsPropertyId}...`);
+      
+      // Préparer le payload selon l'API Smoobu
+      // Note: L'API Smoobu attend probablement un format spécifique
+      const payload = {
+        apartmentId: parseInt(pmsPropertyId, 10),
+        arrival: reservationData.startDate, // Format YYYY-MM-DD
+        departure: reservationData.endDate, // Format YYYY-MM-DD
+        price: reservationData.totalPrice || 0,
+        ...(reservationData.guestName && {
+          customer: {
+            firstName: reservationData.guestName.split(' ')[0] || '',
+            lastName: reservationData.guestName.split(' ').slice(1).join(' ') || ''
+          }
+        }),
+        ...(reservationData.numberOfGuests && { numberOfGuests: reservationData.numberOfGuests }),
+        ...(reservationData.channel && { portal: reservationData.channel }),
+        status: reservationData.status || 'confirmed'
+      };
+
+      const response = await this.apiClient.post('/reservations', payload);
+      
+      // Retourner la réservation normalisée
+      if (response.data && response.data.booking) {
+        return this._normalizeReservation(response.data.booking);
+      }
+      throw new Error('Réponse de l\'API Smoobu invalide lors de la création de réservation.');
+    } catch (error) {
+      console.error("Erreur CreateReservation (Smoobu):", error.response?.data || error.message);
+      throw new Error(`Échec de la création de la réservation Smoobu : ${error.message}`);
+    }
+  }
+
+  /**
+   * Met à jour une réservation existante dans Smoobu.
+   * @param {string} pmsReservationId - L'ID PMS de la réservation.
+   * @param {object} reservationData - Les données à mettre à jour { startDate, endDate, guestName, totalPrice, numberOfGuests, channel, status }
+   * @returns {Promise<object>} - La réservation mise à jour
+   */
+  async updateReservation(pmsReservationId, reservationData) {
+    try {
+      console.log(`[Smoobu] Mise à jour de la réservation ${pmsReservationId}...`);
+      
+      const payload = {};
+      if (reservationData.startDate) payload.arrival = reservationData.startDate;
+      if (reservationData.endDate) payload.departure = reservationData.endDate;
+      if (reservationData.totalPrice != null) payload.price = reservationData.totalPrice;
+      if (reservationData.guestName) {
+        payload.customer = {
+          firstName: reservationData.guestName.split(' ')[0] || '',
+          lastName: reservationData.guestName.split(' ').slice(1).join(' ') || ''
+        };
+      }
+      if (reservationData.numberOfGuests != null) payload.numberOfGuests = reservationData.numberOfGuests;
+      if (reservationData.channel) payload.portal = reservationData.channel;
+      if (reservationData.status) payload.status = reservationData.status;
+
+      const response = await this.apiClient.put(`/reservations/${pmsReservationId}`, payload);
+      
+      if (response.data && response.data.booking) {
+        return this._normalizeReservation(response.data.booking);
+      }
+      throw new Error('Réponse de l\'API Smoobu invalide lors de la mise à jour de réservation.');
+    } catch (error) {
+      console.error("Erreur UpdateReservation (Smoobu):", error.response?.data || error.message);
+      throw new Error(`Échec de la mise à jour de la réservation Smoobu : ${error.message}`);
+    }
+  }
+
+  /**
+   * Supprime une réservation dans Smoobu.
+   * @param {string} pmsReservationId - L'ID PMS de la réservation.
+   * @returns {Promise<object>} - Confirmation de suppression
+   */
+  async deleteReservation(pmsReservationId) {
+    try {
+      console.log(`[Smoobu] Suppression de la réservation ${pmsReservationId}...`);
+      
+      await this.apiClient.delete(`/reservations/${pmsReservationId}`);
+      
+      return { success: true, message: 'Réservation supprimée avec succès.' };
+    } catch (error) {
+      console.error("Erreur DeleteReservation (Smoobu):", error.response?.data || error.message);
+      throw new Error(`Échec de la suppression de la réservation Smoobu : ${error.message}`);
+    }
+  }
 }
 
 export default SmoobuAdapter;

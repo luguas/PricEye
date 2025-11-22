@@ -239,6 +239,24 @@ class Beds24Adapter extends PMSBase {
    * @param {string} endDate - Date de fin (YYYY-MM-DD).
    * @returns {Promise<Array<object>>} - Liste des réservations normalisées.
    */
+  async createReservation(pmsPropertyId, reservationData) {
+    throw new Error("La création de réservations n'est pas encore implémentée pour Beds24.");
+  }
+
+  async updateReservation(pmsReservationId, reservationData) {
+    throw new Error("La mise à jour de réservations n'est pas encore implémentée pour Beds24.");
+  }
+
+  async deleteReservation(pmsReservationId) {
+    throw new Error("La suppression de réservations n'est pas encore implémentée pour Beds24.");
+  }
+
+  /**
+   * Récupère les réservations pour une plage de dates donnée.
+   * @param {string} startDate - Date de début (YYYY-MM-DD).
+   * @param {string} endDate - Date de fin (YYYY-MM-DD).
+   * @returns {Promise<Array<object>>} - Liste des réservations normalisées.
+   */
   async getReservations(startDate, endDate) {
     console.log(`Récupération des réservations Beds24 du ${startDate} au ${endDate}...`);
     
