@@ -2860,9 +2860,9 @@ app.get('/api/recommendations/group-candidates', authenticateToken, async (req, 
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 /**
- * Fonction helper pour appeler l'API Gemini avec retry
+ * Fonction helper pour appeler l'API Gemini avec retry et backoff exponentiel
  */
-async function callGeminiAPI(prompt, maxRetries = 3) {
+async function callGeminiAPI(prompt, maxRetries = 10) {
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) {
         console.error("GEMINI_API_KEY non trouvée dans .env");
@@ -2884,8 +2884,10 @@ async function callGeminiAPI(prompt, maxRetries = 3) {
             });
 
             if (response.status === 429) {
-                console.warn(`Tentative ${attempt}/${maxRetries}: API Gemini surchargée (429). Nouvel essai dans ${attempt} seconde(s)...`);
-                await delay(attempt * 1000);
+                // Backoff exponentiel: 2^(attempt-1) secondes, avec un maximum de 60 secondes
+                const waitTime = Math.min(Math.pow(2, attempt - 1) * 1000, 60000);
+                console.warn(`Tentative ${attempt}/${maxRetries}: API Gemini surchargée (429). Nouvel essai dans ${waitTime / 1000} seconde(s)...`);
+                await delay(waitTime);
                 continue;
             }
 
@@ -2915,18 +2917,19 @@ async function callGeminiAPI(prompt, maxRetries = 3) {
                  throw error;
              }
              console.error(`Erreur lors de la tentative ${attempt} d'appel à Gemini:`, error.message);
-             if (!error.message.includes('429')) {
-                  await delay(attempt * 1000);
-             }
+             // Backoff exponentiel: 2^(attempt-1) secondes, avec un maximum de 60 secondes
+             const waitTime = Math.min(Math.pow(2, attempt - 1) * 1000, 60000);
+             console.log(`Nouvelle tentative dans ${waitTime / 1000} seconde(s)...`);
+             await delay(waitTime);
         }
     }
      throw new Error(`Échec de l'appel à l'API Gemini après ${maxRetries} tentatives.`);
 }
 
 /**
- * Fonction helper pour appeler l'API Gemini avec l'outil de recherche
+ * Fonction helper pour appeler l'API Gemini avec l'outil de recherche et backoff exponentiel
  */
-async function callGeminiWithSearch(prompt, maxRetries = 3) {
+async function callGeminiWithSearch(prompt, maxRetries = 10) {
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) {
         throw new Error("Clé API Gemini non configurée sur le serveur.");
@@ -2947,8 +2950,10 @@ async function callGeminiWithSearch(prompt, maxRetries = 3) {
             });
 
              if (response.status === 429) {
-                console.warn(`Tentative ${attempt}/${maxRetries}: API Gemini (Search) surchargée. Nouvel essai...`);
-                await delay(attempt * 1000);
+                // Backoff exponentiel: 2^(attempt-1) secondes, avec un maximum de 60 secondes
+                const waitTime = Math.min(Math.pow(2, attempt - 1) * 1000, 60000);
+                console.warn(`Tentative ${attempt}/${maxRetries}: API Gemini (Search) surchargée (429). Nouvel essai dans ${waitTime / 1000} seconde(s)...`);
+                await delay(waitTime);
                 continue;
             }
             if (!response.ok) {
@@ -2984,9 +2989,10 @@ async function callGeminiWithSearch(prompt, maxRetries = 3) {
                  throw new Error(`Échec de l'appel à l'API Gemini (Search) après ${maxRetries} tentatives. ${error.message}`);
              }
              console.error(`Erreur (Search) Tentative ${attempt}:`, error.message);
-             if (!error.message.includes('429')) {
-                  await delay(attempt * 1000);
-             }
+             // Backoff exponentiel: 2^(attempt-1) secondes, avec un maximum de 60 secondes
+             const waitTime = Math.min(Math.pow(2, attempt - 1) * 1000, 60000);
+             console.log(`Nouvelle tentative dans ${waitTime / 1000} seconde(s)...`);
+             await delay(waitTime);
         }
      }
 }

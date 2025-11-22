@@ -1193,6 +1193,20 @@ function PricingPage({ token, userProfile }) {
             {/* Grille des jours */}
             <div id="calendar-grid" className="self-stretch h-[458px] grid grid-cols-7 gap-2 select-none relative">
               {renderCalendar()}
+              {/* Overlay de chargement sur le calendrier */}
+              {iaLoading && (
+                <div className="absolute inset-0 bg-black/30 backdrop-blur-sm rounded-[10px] flex items-center justify-center z-10">
+                  <div className="bg-global-bg-box border border-global-content-highlight-2nd rounded-[10px] p-4 flex flex-col items-center gap-3">
+                    <svg className="animate-spin w-8 h-8 text-global-content-highlight-2nd" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                    </svg>
+                    <span className="text-global-blanc text-sm font-h3-font-family font-h3-font-weight">
+                      Génération des prix en cours...
+                    </span>
+                  </div>
+                </div>
+              )}
             </div>
           </section>
 
@@ -1243,10 +1257,49 @@ function PricingPage({ token, userProfile }) {
               Générez et appliquez des prix suggérés sur 6 mois.
             </div>
             
+            {/* Feedback de chargement du pricing */}
+            {iaLoading && (
+              <div className="w-full bg-global-bg-small-box border border-global-content-highlight-2nd rounded-[10px] p-4 flex items-center gap-3 animate-pulse">
+                <div className="relative w-5 h-5 shrink-0">
+                  <svg className="animate-spin w-5 h-5 text-global-content-highlight-2nd" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                  </svg>
+                </div>
+                <div className="flex flex-col gap-1 flex-1">
+                  <span className="text-global-blanc text-sm font-h3-font-family font-h3-font-weight">
+                    Génération des prix en cours...
+                  </span>
+                  <span className="text-global-inactive text-xs font-p1-font-family">
+                    L'IA analyse le marché et génère une stratégie optimale. Veuillez patienter.
+                  </span>
+                </div>
+              </div>
+            )}
+            
+            {/* Messages de succès/erreur pour l'auto-pricing */}
+            {autoPricingSuccess && !iaLoading && (
+              <div className="w-full bg-green-900/20 border border-green-500/50 rounded-[10px] p-3 flex items-start gap-2">
+                <svg className="w-5 h-5 text-green-400 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                <span className="text-green-300 text-sm font-p1-font-family">{autoPricingSuccess}</span>
+              </div>
+            )}
+            
+            {autoPricingError && !iaLoading && (
+              <div className="w-full bg-red-900/20 border border-red-500/50 rounded-[10px] p-3 flex items-start gap-2">
+                <svg className="w-5 h-5 text-red-400 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                <span className="text-red-300 text-sm font-p1-font-family">{autoPricingError}</span>
+              </div>
+            )}
+            
             {/* Toggle "Automatiser le pricing" */}
             <div 
-              className={`bg-global-stroke-highlight-2nd rounded-[10px] border border-solid border-global-content-highlight-2nd pt-2 pr-3 pb-2 pl-3 flex flex-row gap-3 items-center justify-center self-stretch shrink-0 h-[46px] relative cursor-pointer hover:opacity-90 transition-opacity ${isAutoGenerationEnabled ? 'opacity-100' : 'opacity-70'}`}
-              onClick={() => handleToggleAutoGeneration(!isAutoGenerationEnabled)}
+              className={`bg-global-stroke-highlight-2nd rounded-[10px] border border-solid border-global-content-highlight-2nd pt-2 pr-3 pb-2 pl-3 flex flex-row gap-3 items-center justify-center self-stretch shrink-0 h-[46px] relative transition-opacity ${iaLoading ? 'opacity-50 cursor-not-allowed' : isAutoGenerationEnabled ? 'opacity-100 cursor-pointer hover:opacity-90' : 'opacity-70 cursor-pointer hover:opacity-90'}`}
+              onClick={iaLoading ? undefined : () => handleToggleAutoGeneration(!isAutoGenerationEnabled)}
             >
               <div className={`relative w-5 h-5 shrink-0`}>
                 {isAutoGenerationEnabled ? (
@@ -1269,16 +1322,20 @@ function PricingPage({ token, userProfile }) {
               <Bouton
                 state="principal"
                 text="Ajouter Réservation"
-                onClick={() => { setSelectionMode('booking'); clearSelection(); }}
-                className={selectionMode === 'booking' ? 'opacity-100' : 'opacity-70'}
+                onClick={iaLoading ? undefined : () => { setSelectionMode('booking'); clearSelection(); }}
+                className={iaLoading ? 'opacity-50 cursor-not-allowed' : selectionMode === 'booking' ? 'opacity-100' : 'opacity-70'}
+                disabled={iaLoading}
               />
               
               <button
-                onClick={() => { setSelectionMode('price'); clearSelection(); }}
-                className={`inline-flex items-center justify-center gap-2 px-3 py-2 relative flex-1 rounded-[10px] border border-solid border-global-stroke-highlight-2nd cursor-pointer hover:opacity-90 transition-opacity ${
-                  selectionMode === 'price' 
-                    ? 'bg-global-stroke-highlight-2nd text-global-blanc' 
-                    : 'bg-transparent text-global-inactive'
+                onClick={iaLoading ? undefined : () => { setSelectionMode('price'); clearSelection(); }}
+                disabled={iaLoading}
+                className={`inline-flex items-center justify-center gap-2 px-3 py-2 relative flex-1 rounded-[10px] border border-solid border-global-stroke-highlight-2nd transition-opacity ${
+                  iaLoading 
+                    ? 'opacity-50 cursor-not-allowed bg-transparent text-global-inactive'
+                    : selectionMode === 'price' 
+                      ? 'bg-global-stroke-highlight-2nd text-global-blanc cursor-pointer hover:opacity-90' 
+                      : 'bg-transparent text-global-inactive cursor-pointer hover:opacity-90'
                 }`}
               >
                 <svg width="20" height="20" viewBox="0 0 20 20" fill="none" className="w-5 h-5">
