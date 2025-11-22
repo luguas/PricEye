@@ -397,6 +397,49 @@ export function getTeamBookings(token, startDate, endDate) {
     });
 }
 
+/**
+ * Synchronise les réservations depuis le PMS pour une propriété donnée.
+ * @param {string} propertyId - L'ID de la propriété
+ * @param {string} startDate - Date de début (YYYY-MM-DD)
+ * @param {string} endDate - Date de fin (YYYY-MM-DD)
+ * @param {string} token - Jeton d'authentification
+ */
+export function syncBookingsFromPMS(propertyId, startDate, endDate, token) {
+    return apiRequest(`/api/properties/${propertyId}/bookings/sync`, {
+        method: 'POST',
+        token,
+        body: JSON.stringify({ startDate, endDate }),
+    });
+}
+
+/**
+ * Met à jour une réservation existante.
+ * @param {string} propertyId - L'ID de la propriété
+ * @param {string} bookingId - L'ID de la réservation
+ * @param {object} bookingData - Les données à mettre à jour
+ * @param {string} token - Jeton d'authentification
+ */
+export function updateBooking(propertyId, bookingId, bookingData, token) {
+    return apiRequest(`/api/properties/${propertyId}/bookings/${bookingId}`, {
+        method: 'PUT',
+        token,
+        body: JSON.stringify(bookingData),
+    });
+}
+
+/**
+ * Supprime une réservation.
+ * @param {string} propertyId - L'ID de la propriété
+ * @param {string} bookingId - L'ID de la réservation
+ * @param {string} token - Jeton d'authentification
+ */
+export function deleteBooking(propertyId, bookingId, token) {
+    return apiRequest(`/api/properties/${propertyId}/bookings/${bookingId}`, {
+        method: 'DELETE',
+        token,
+    });
+}
+
 
 /**
  * Fonctions de Gestion d'Équipe

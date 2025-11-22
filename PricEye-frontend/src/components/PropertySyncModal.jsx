@@ -81,11 +81,21 @@ function PropertySyncModal({ token, pmsType, onClose }) {
     
     try {
       const result = await importPmsProperties(stats.newProperties, pmsType, token);
-      setAlertModal({ isOpen: true, message: result.message || 'Importation réussie !', title: 'Succès' });
+      
+      // Construire le message avec les détails des réservations
+      let message = result.message || 'Importation réussie !';
+      if (result.reservationsImported > 0 || result.reservationsUpdated > 0) {
+        message += `\n\n${result.reservationsImported} nouvelle(s) réservation(s) importée(s).`;
+        if (result.reservationsUpdated > 0) {
+          message += `\n${result.reservationsUpdated} réservation(s) mise(s) à jour.`;
+        }
+      }
+      
+      setAlertModal({ isOpen: true, message: message, title: 'Succès' });
       // Fermer la modale après confirmation
       setTimeout(() => {
         onClose(true); // Fermer et signaler qu'il faut rafraîchir
-      }, 1500);
+      }, 2000);
     } catch (err) {
       setError(err.message);
     } finally {

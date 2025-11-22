@@ -770,7 +770,111 @@ app.post('/api/integrations/import-properties', authenticateToken, async (req, r
         // 5. Commit batch
         await batch.commit();
 
-        res.status(201).send({ message: `${importedCount} propriétés importées avec succès.` });
+        // 6. Importer les réservations pour chaque propriété importée
+        let totalReservationsImported = 0;
+        let totalReservationsUpdated = 0;
+        const today = new Date();
+        const sixMonthsAgo = new Date(today);
+        sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
+        const sixMonthsLater = new Date(today);
+        sixMonthsLater.setMonth(sixMonthsLater.getMonth() + 6);
+        
+        const startDate = sixMonthsAgo.toISOString().split('T')[0];
+        const endDate = sixMonthsLater.toISOString().split('T')[0];
+
+        try {
+            const client = await getUserPMSClient(userId);
+            const pmsReservations = await client.getReservations(startDate, endDate);
+
+            // Grouper les réservations par propriété PMS
+            const reservationsByProperty = new Map();
+            for (const pmsReservation of pmsReservations) {
+                const propertyPmsId = pmsReservation.propertyId;
+                if (!reservationsByProperty.has(propertyPmsId)) {
+                    reservationsByProperty.set(propertyPmsId, []);
+                }
+                reservationsByProperty.get(propertyPmsId).push(pmsReservation);
+            }
+
+            // Pour chaque propriété importée, importer ses réservations
+            const reservationsBatch = db.batch();
+            for (const prop of propertiesToImport) {
+                if (!prop.pmsId || !prop.name) continue;
+
+                // Trouver l'ID Firestore de la propriété que nous venons d'importer
+                const propertyQuery = await db.collection('properties')
+                    .where('pmsId', '==', prop.pmsId)
+                    .where('teamId', '==', teamId)
+                    .limit(1)
+                    .get();
+
+                if (propertyQuery.empty) continue;
+                const propertyDoc = propertyQuery.docs[0];
+                const propertyId = propertyDoc.id;
+                const reservationsRef = propertyDoc.ref.collection('reservations');
+
+                // Récupérer les réservations pour cette propriété
+                const propertyReservations = reservationsByProperty.get(prop.pmsId) || [];
+
+                for (const pmsReservation of propertyReservations) {
+                    // Chercher si une réservation avec ce pmsId existe déjà
+                    const existingQuery = await reservationsRef
+                        .where('pmsId', '==', pmsReservation.pmsId)
+                        .limit(1)
+                        .get();
+
+                    const reservationData = {
+                        startDate: pmsReservation.startDate,
+                        endDate: pmsReservation.endDate,
+                        pricePerNight: pmsReservation.totalPrice ? 
+                            Math.round(pmsReservation.totalPrice / 
+                                Math.max(1, Math.round((new Date(pmsReservation.endDate) - new Date(pmsReservation.startDate)) / (1000 * 60 * 60 * 24)))) : 0,
+                        totalPrice: pmsReservation.totalPrice || 0,
+                        channel: pmsReservation.channel || 'Direct',
+                        status: pmsReservation.status === 'confirmed' ? 'confirmé' : pmsReservation.status || 'confirmé',
+                        guestName: pmsReservation.guestName || '',
+                        pmsId: pmsReservation.pmsId,
+                        teamId: teamId,
+                        pricingMethod: 'pms',
+                        syncedAt: admin.firestore.FieldValue.serverTimestamp()
+                    };
+
+                    if (existingQuery.empty) {
+                        // Nouvelle réservation
+                        const newReservationRef = reservationsRef.doc();
+                        reservationsBatch.set(newReservationRef, {
+                            ...reservationData,
+                            bookedAt: admin.firestore.FieldValue.serverTimestamp()
+                        });
+                        totalReservationsImported++;
+                    } else {
+                        // Mise à jour de la réservation existante
+                        const existingDoc = existingQuery.docs[0];
+                        reservationsBatch.update(existingDoc.ref, reservationData);
+                        totalReservationsUpdated++;
+                    }
+                }
+            }
+
+            if (totalReservationsImported > 0 || totalReservationsUpdated > 0) {
+                await reservationsBatch.commit();
+            }
+        } catch (reservationError) {
+            console.error(`[Import] Erreur lors de l'importation des réservations:`, reservationError.message);
+            // On continue quand même, les propriétés sont déjà importées
+        }
+
+        const message = `${importedCount} propriété(s) importée(s) avec succès.`;
+        const reservationsMessage = totalReservationsImported > 0 || totalReservationsUpdated > 0
+            ? ` ${totalReservationsImported} nouvelle(s) réservation(s) importée(s), ${totalReservationsUpdated} réservation(s) mise(s) à jour.`
+            : '';
+
+        res.status(201).send({ 
+            message: message + reservationsMessage,
+            propertiesImported: importedCount,
+            reservationsImported: totalReservationsImported,
+            reservationsUpdated: totalReservationsUpdated
+        });
 
     } catch (error) {
         console.error("Erreur lors de l'importation des propriétés:", error.message);
