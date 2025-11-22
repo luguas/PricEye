@@ -3606,6 +3606,36 @@ app.put('/api/properties/:id/price-overrides', authenticateToken, async (req, re
 
         await batch.commit();
 
+        // Synchronisation avec PMS si la propriété est liée à un PMS
+        if (propertyData.pmsId && propertyData.pmsType) {
+            try {
+                console.log(`[PMS Sync] Propriété ${propertyId} (PMS ID: ${propertyData.pmsId}) est liée. Synchronisation des prix...`);
+                
+                // Récupérer le client PMS
+                const client = await getUserPMSClient(userId);
+                
+                // Filtrer les prix verrouillés et invalides (on ne synchronise pas les prix verrouillés)
+                const pricesToSync = overrides
+                    .filter(override => !override.isLocked && override.date && override.price != null)
+                    .map(override => ({
+                        date: override.date,
+                        price: Number(override.price)
+                    }))
+                    .filter(rate => !isNaN(rate.price) && rate.price > 0); // Filtrer les prix invalides
+
+                if (pricesToSync.length > 0) {
+                    await client.updateBatchRates(propertyData.pmsId, pricesToSync);
+                    console.log(`[PMS Sync] ${pricesToSync.length} prix synchronisés avec ${propertyData.pmsType} pour ${propertyId}.`);
+                } else {
+                    console.log(`[PMS Sync] Aucun prix à synchroniser (tous les prix sont verrouillés ou invalides).`);
+                }
+            } catch (pmsError) {
+                console.error(`[PMS Sync] ERREUR lors de la synchronisation des prix pour ${propertyId}:`, pmsError.message);
+                // On continue quand même car les prix sont déjà sauvegardés dans Firestore
+                // On pourrait optionnellement retourner un avertissement dans la réponse
+            }
+        }
+
         res.status(200).send({ 
             message: `${overrides.length} price override(s) mis à jour avec succès.`,
             count: overrides.length

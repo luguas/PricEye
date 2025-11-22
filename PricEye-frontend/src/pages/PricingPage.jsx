@@ -231,6 +231,86 @@ function PricingPage({ token, userProfile }) {
     }
   }, [autoPricingLastRun, autoPricingTimezone, userProfile?.timezone]);
 
+  // Fonction réutilisable pour appliquer une stratégie de pricing
+  const applyPricingStrategy = async (propertyIdToAnalyze, groupToSync = null) => {
+    if (!propertyIdToAnalyze || !token) {
+      throw new Error('Propriété ou token manquant.');
+    }
+
+    setIaLoading(true);
+    setError('');
+
+    try {
+      const strategy = await generatePricingStrategy(propertyIdToAnalyze, token);
+      
+      if (!strategy.daily_prices || strategy.daily_prices.length === 0) {
+          throw new Error("La stratégie générée par l'IA est vide ou mal formée.");
+      }
+      
+      let propertyIdsToUpdate = [propertyIdToAnalyze]; 
+      if (groupToSync) {
+          groupToSync.properties.forEach(propId => {
+              if (propId !== propertyIdToAnalyze && !propertyIdsToUpdate.includes(propId)) {
+                  propertyIdsToUpdate.push(propId);
+              }
+          });
+      }
+
+      // Pré-charger les prix verrouillés pour toutes les propriétés concernées
+      const lockedPricesMap = new Map();
+      for (const propId of propertyIdsToUpdate) {
+           try {
+               const overridesData = await getPriceOverrides(propId, token);
+               Object.keys(overridesData).forEach(date => {
+                   if (overridesData[date].isLocked) {
+                       lockedPricesMap.set(`${propId}-${date}`, overridesData[date].price);
+                   }
+               });
+           } catch (err) {
+               console.warn(`Erreur lors de la récupération des prix verrouillés pour ${propId}:`, err);
+           }
+      }
+      
+      console.log(`Trouvé ${lockedPricesMap.size} prix verrouillés pour ${propertyIdsToUpdate.length} propriétés.`);
+
+      // Préparer les overrides à mettre à jour pour chaque propriété
+      for (const propId of propertyIdsToUpdate) {
+          const overridesToUpdate = [];
+          
+          strategy.daily_prices.forEach(dayPrice => {
+            if (!/^\d{4}-\d{2}-\d{2}$/.test(dayPrice.date)) return; 
+            if (typeof dayPrice.price !== 'number' || isNaN(dayPrice.price)) return;
+            
+            // Vérifier si cette date spécifique est verrouillée pour CETTE propriété
+            if (lockedPricesMap.has(`${propId}-${dayPrice.date}`)) {
+                 console.log(`Ignoré ${dayPrice.date} pour ${propId}: prix verrouillé.`);
+                 return; // Ne pas écraser
+            }
+
+            overridesToUpdate.push({
+                date: dayPrice.date,
+                price: dayPrice.price,
+                isLocked: false,
+                reason: dayPrice.reason || "Stratégie IA Automatique"
+            });
+          });
+          
+          // Mettre à jour via l'API backend
+          if (overridesToUpdate.length > 0) {
+              await updatePriceOverrides(propId, overridesToUpdate, token);
+          }
+      }
+      
+      fetchCalendarData(); // Recharger le calendrier
+      return { success: true, propertyCount: propertyIdsToUpdate.length, summary: strategy.strategy_summary };
+    } catch (err) {
+      console.error("Erreur lors de l'application de la stratégie:", err);
+      throw err;
+    } finally {
+      setIaLoading(false);
+    }
+  };
+
   // Fonction pour gérer le toggle de génération automatique
   const handleToggleAutoGeneration = async (newEnabled) => {
     // Réinitialiser les messages
@@ -270,9 +350,64 @@ function PricingPage({ token, userProfile }) {
       // Mettre à jour le timezone
       setAutoPricingTimezone(timezoneToUse);
 
-      // Afficher un message de confirmation
+      // Si le toggle vient d'être activé, générer et appliquer les prix immédiatement
       if (newEnabled) {
-        setAutoPricingSuccess(`Génération automatique activée. Les prix seront générés tous les jours à 00h00 (${timezoneToUse}).`);
+        try {
+          // Déterminer la propriété/groupe à utiliser
+          let propertyIdToAnalyze;
+          let groupToSync = null;
+
+          if (selectedView === 'property') {
+              propertyIdToAnalyze = selectedId;
+          } else { // 'group'
+              const group = allGroups.find(g => g.id === selectedId);
+              if (group) {
+                  if (!group.syncPrices) {
+                      if (!group.mainPropertyId) {
+                          setAutoPricingError("Veuillez définir une propriété principale pour ce groupe avant d'activer la génération automatique.");
+                          setIsAutoGenerationEnabled(false);
+                          return;
+                      }
+                      propertyIdToAnalyze = group.mainPropertyId;
+                      groupToSync = null;
+                  } else {
+                      if (!group.mainPropertyId) {
+                          setAutoPricingError("Veuillez définir une propriété principale pour ce groupe avant d'activer la génération automatique.");
+                          setIsAutoGenerationEnabled(false);
+                          return;
+                      }
+                      propertyIdToAnalyze = group.mainPropertyId;
+                      groupToSync = group;
+                  }
+              } else {
+                  // Si aucun groupe/propriété sélectionné, utiliser la première propriété disponible
+                  if (properties.length > 0) {
+                      propertyIdToAnalyze = properties[0].id;
+                  } else {
+                      setAutoPricingError("Aucune propriété disponible pour générer les prix.");
+                      setIsAutoGenerationEnabled(false);
+                      return;
+                  }
+              }
+          }
+
+          if (!propertyIdToAnalyze) {
+              setAutoPricingError("Veuillez sélectionner une propriété ou un groupe valide.");
+              setIsAutoGenerationEnabled(false);
+              return;
+          }
+
+          // Appliquer la stratégie immédiatement
+          setAutoPricingSuccess('Génération automatique activée. Génération des prix en cours...');
+          const result = await applyPricingStrategy(propertyIdToAnalyze, groupToSync);
+          
+          setAutoPricingSuccess(`Génération automatique activée. Prix mis à jour pour ${result.propertyCount} propriété(s). Les prix seront régénérés tous les jours à 00h00 (${timezoneToUse}).`);
+        } catch (pricingError) {
+          console.error("Erreur lors de la génération immédiate des prix:", pricingError);
+          setAutoPricingError(`Génération automatique activée, mais erreur lors de la génération immédiate: ${pricingError.message}`);
+          // On garde le toggle activé même si la génération immédiate échoue
+          // car la génération automatique quotidienne fonctionnera quand même
+        }
       } else {
         setAutoPricingSuccess('Génération automatique désactivée.');
       }
@@ -297,7 +432,7 @@ function PricingPage({ token, userProfile }) {
 
 
   const fetchCalendarData = useCallback(async () => {
-    if (!selectedId || !db || isLoading) return; 
+    if (!selectedId || isLoading) return; 
     
     let propertyIdToFetch;
     let currentProperty; 
@@ -415,82 +550,16 @@ function PricingPage({ token, userProfile }) {
       setError('Veuillez sélectionner une propriété ou un groupe valide.');
       return;
     }
-    if (!db || !token) {
+    if (!token) {
        setError("Connexion non prête. Veuillez patienter.");
        return;
     }
 
-    setIaLoading(true);
-    setError('');
-
     try {
-      const strategy = await generatePricingStrategy(propertyIdToAnalyze, token);
-      
-      if (!strategy.daily_prices || strategy.daily_prices.length === 0) {
-          throw new Error("La stratégie générée par l'IA est vide ou mal formée.");
-      }
-      
-      let propertyIdsToUpdate = [propertyIdToAnalyze]; 
-      if (groupToSync) {
-          groupToSync.properties.forEach(propId => {
-              if (propId !== propertyIdToAnalyze && !propertyIdsToUpdate.includes(propId)) {
-                  propertyIdsToUpdate.push(propId);
-              }
-          });
-      }
-
-      // Pré-charger les prix verrouillés pour toutes les propriétés concernées
-      const lockedPricesMap = new Map();
-      for (const propId of propertyIdsToUpdate) {
-           try {
-               const overridesData = await getPriceOverrides(propId, token);
-               Object.keys(overridesData).forEach(date => {
-                   if (overridesData[date].isLocked) {
-                       lockedPricesMap.set(`${propId}-${date}`, overridesData[date].price);
-                   }
-               });
-           } catch (err) {
-               console.warn(`Erreur lors de la récupération des prix verrouillés pour ${propId}:`, err);
-           }
-      }
-      
-      console.log(`Trouvé ${lockedPricesMap.size} prix verrouillés pour ${propertyIdsToUpdate.length} propriétés.`);
-
-      // Préparer les overrides à mettre à jour pour chaque propriété
-      for (const propId of propertyIdsToUpdate) {
-          const overridesToUpdate = [];
-          
-          strategy.daily_prices.forEach(dayPrice => {
-            if (!/^\d{4}-\d{2}-\d{2}$/.test(dayPrice.date)) return; 
-            if (typeof dayPrice.price !== 'number' || isNaN(dayPrice.price)) return;
-            
-            // Vérifier si cette date spécifique est verrouillée pour CETTE propriété
-            if (lockedPricesMap.has(`${propId}-${dayPrice.date}`)) {
-                 console.log(`Ignoré ${dayPrice.date} pour ${propId}: prix verrouillé.`);
-                 return; // Ne pas écraser
-            }
-
-            overridesToUpdate.push({
-                date: dayPrice.date,
-                price: dayPrice.price,
-                isLocked: false,
-                reason: dayPrice.reason || "Stratégie IA Groupe"
-            });
-          });
-          
-          // Mettre à jour via l'API backend
-          if (overridesToUpdate.length > 0) {
-              await updatePriceOverrides(propId, overridesToUpdate, token);
-          }
-      }
-      
-      setAlertModal({ isOpen: true, message: `Stratégie IA appliquée avec succès à ${propertyIdsToUpdate.length} propriété(s) ! ${strategy.strategy_summary}`, title: 'Succès' });
-      fetchCalendarData(); // Recharger le calendrier
-
+      const result = await applyPricingStrategy(propertyIdToAnalyze, groupToSync);
+      setAlertModal({ isOpen: true, message: `Stratégie IA appliquée avec succès à ${result.propertyCount} propriété(s) ! ${result.summary || ''}`, title: 'Succès' });
     } catch (err) {
       setError(`Erreur de génération de stratégie: ${err.message}`);
-    } finally {
-      setIaLoading(false);
     }
   };
 
@@ -575,7 +644,7 @@ function PricingPage({ token, userProfile }) {
            propertyIdForBooking = group.mainPropertyId;
        }
        
-      if (!selectionStart || !selectionEnd || !bookingPrice || !propertyIdForBooking || !db) return;
+      if (!selectionStart || !selectionEnd || !bookingPrice || !propertyIdForBooking) return;
       
       const pricePerNightNum = parseInt(bookingPrice, 10);
       if (isNaN(pricePerNightNum) || pricePerNightNum <= 0) {
@@ -649,7 +718,7 @@ function PricingPage({ token, userProfile }) {
           }
       }
 
-      if (!selectionStart || !selectionEnd || !manualPrice || propertyIdsToUpdate.length === 0 || !db) {
+      if (!selectionStart || !selectionEnd || !manualPrice || propertyIdsToUpdate.length === 0) {
           setError("Sélection de dates, prix, et propriété/groupe valide requis.");
           return;
       }
