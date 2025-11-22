@@ -12,3 +12,4 @@ function Pastille({ text, className = '' }) {
 
 export default Pastille;
 
+

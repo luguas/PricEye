@@ -10,3 +10,4 @@ function IconsStateFlCheBas({ className = '', state = 'fl-che-bas', ...props }) 
 
 export default IconsStateFlCheBas;
 
+

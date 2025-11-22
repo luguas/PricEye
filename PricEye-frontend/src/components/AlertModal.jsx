@@ -33,3 +33,4 @@ const AlertModal = ({ isOpen, onClose, title = 'Information', message, buttonTex
 
 export default AlertModal;
 
+

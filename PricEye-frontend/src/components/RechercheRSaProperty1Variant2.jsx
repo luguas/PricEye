@@ -28,3 +28,4 @@ function RechercheRSaProperty1Variant2({ className = '', value = '', onChange, p
 
 export default RechercheRSaProperty1Variant2;
 
+

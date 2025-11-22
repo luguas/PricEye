@@ -16,3 +16,4 @@ export const IconsStateArgent = ({ className = '', state, ...props }) => {
 
 export default IconsStateArgent;
 
+

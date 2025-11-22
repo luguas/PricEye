@@ -38,7 +38,8 @@ const allowedOrigins = [
     'https://priceye.onrender.com',    // L'API elle-même
     'http://localhost:5173',           // Votre app React en local (Vite)
     'http://localhost:3000',
-    'https://priceye.vercel.app'           // Votre app React en local (CRA)
+    'https://priceye.vercel.app',
+    'https://pric-eye.vercel.app'           // Votre app React en local (CRA)
     // 'https://votre-frontend-sur-vercel.app' // << AJOUTEZ L'URL DE VOTRE FRONTEND DÉPLOYÉ ICI
 ];
 

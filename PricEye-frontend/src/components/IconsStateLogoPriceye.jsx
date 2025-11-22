@@ -18,3 +18,4 @@ export const IconsStateLogoPriceye = ({ className = '', state, ...props }) => {
 
 export default IconsStateLogoPriceye;
 
+

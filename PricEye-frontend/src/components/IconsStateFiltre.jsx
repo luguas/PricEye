@@ -10,3 +10,4 @@ function IconsStateFiltre({ className = '', state = 'filtre', ...props }) {
 
 export default IconsStateFiltre;
 
+

@@ -18,3 +18,4 @@ function RechercheEtFiltres({ className = '', searchValue = '', onSearchChange, 
 
 export default RechercheEtFiltres;
 
+

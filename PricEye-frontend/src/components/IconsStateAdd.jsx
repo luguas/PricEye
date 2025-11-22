@@ -12,3 +12,4 @@ function IconsStateAdd({ className = '', state = 'add', visibleComponent = true,
 
 export default IconsStateAdd;
 
+
