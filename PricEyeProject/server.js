@@ -532,6 +532,8 @@ app.put('/api/users/auto-pricing/:userId', authenticateToken, async (req, res) =
             const existingData = userDoc.data();
             if (!existingData.autoPricing || !existingData.autoPricing.enabled) {
                 updateData.autoPricing.enabledAt = admin.firestore.FieldValue.serverTimestamp();
+                // Initialiser le compteur d'échecs à 0 lors de l'activation
+                updateData.autoPricing.failedAttempts = 0;
             } else {
                 // Conserver la date d'activation existante si elle existe
                 updateData.autoPricing.enabledAt = existingData.autoPricing.enabledAt || admin.firestore.FieldValue.serverTimestamp();
@@ -3761,22 +3763,36 @@ async function processAutoPricingForUser(userId, userData) {
             results.push(result);
         }
 
-        // Mettre à jour lastRun dans le profil utilisateur
-        const userRef = db.collection('users').doc(userId);
-        await userRef.update({
-            'autoPricing.lastRun': admin.firestore.FieldValue.serverTimestamp()
-        });
-
         const endTime = new Date();
         const duration = ((endTime - startTime) / 1000).toFixed(2);
 
         const successCount = results.filter(r => r.success).length;
         const failureCount = results.filter(r => !r.success).length;
 
-        console.log(`[Auto-Pricing] Traitement terminé pour ${userId}: ${successCount} succès, ${failureCount} échecs (${duration}s)`);
+        // Mettre à jour lastRun dans le profil utilisateur (toujours, même en cas d'échec)
+        const userRef = db.collection('users').doc(userId);
+        const updateData = {
+            'autoPricing.lastRun': admin.firestore.FieldValue.serverTimestamp(),
+            'autoPricing.lastAttempt': admin.firestore.FieldValue.serverTimestamp()
+        };
+
+        // Si toutes les propriétés ont réussi, mettre à jour lastSuccessfulRun
+        if (failureCount === 0 && results.length > 0) {
+            updateData['autoPricing.lastSuccessfulRun'] = admin.firestore.FieldValue.serverTimestamp();
+            updateData['autoPricing.failedAttempts'] = 0; // Réinitialiser le compteur d'échecs
+            console.log(`[Auto-Pricing] Traitement terminé avec succès pour ${userId}: ${successCount} succès (${duration}s)`);
+        } else if (failureCount > 0) {
+            // Incrémenter le compteur d'échecs
+            const userDoc = await userRef.get();
+            const currentFailedAttempts = (userDoc.data()?.autoPricing?.failedAttempts || 0) + 1;
+            updateData['autoPricing.failedAttempts'] = currentFailedAttempts;
+            console.log(`[Auto-Pricing] Traitement terminé avec échecs pour ${userId}: ${successCount} succès, ${failureCount} échecs (${duration}s) - Tentative ${currentFailedAttempts}`);
+        }
+
+        await userRef.update(updateData);
 
         return {
-            success: true,
+            success: failureCount === 0,
             userId: userId,
             results: results,
             summary: {
@@ -3799,6 +3815,7 @@ async function processAutoPricingForUser(userId, userData) {
 
 /**
  * Vérifie et exécute la génération automatique pour tous les utilisateurs éligibles
+ * Réessaye toutes les heures tant que le pricing n'a pas réussi
  */
 async function checkAndRunAutoPricing() {
     const db = admin.firestore();
@@ -3824,28 +3841,62 @@ async function checkAndRunAutoPricing() {
             const autoPricing = userData.autoPricing || {};
             const timezone = autoPricing.timezone || userData.timezone || 'Europe/Paris';
 
-            // Vérifier si c'est 00h00 dans le fuseau horaire de l'utilisateur
+            // Vérifier si c'est 00h00 dans le fuseau horaire de l'utilisateur (première tentative du jour)
             const { hour, minute } = getCurrentTimeInTimezone(timezone);
+            const isScheduledTime = hour === 0 && minute === 0;
 
-            if (hour === 0 && minute === 0) {
+            // Vérifier si le dernier run a échoué et qu'il faut réessayer
+            const lastSuccessfulRun = autoPricing.lastSuccessfulRun;
+            const lastAttempt = autoPricing.lastAttempt;
+            const failedAttempts = autoPricing.failedAttempts || 0;
+
+            // Si le dernier run a échoué, vérifier si au moins 1 heure s'est écoulée depuis la dernière tentative
+            let shouldRetry = false;
+            if (lastAttempt && failedAttempts > 0) {
+                // Convertir lastAttempt en Date si c'est un Timestamp Firestore
+                let lastAttemptDate;
+                if (lastAttempt.toDate && typeof lastAttempt.toDate === 'function') {
+                    lastAttemptDate = lastAttempt.toDate();
+                } else if (lastAttempt.seconds) {
+                    lastAttemptDate = new Date(lastAttempt.seconds * 1000);
+                } else if (lastAttempt._seconds) {
+                    lastAttemptDate = new Date(lastAttempt._seconds * 1000);
+                } else if (typeof lastAttempt === 'string') {
+                    lastAttemptDate = new Date(lastAttempt);
+                } else {
+                    lastAttemptDate = new Date(lastAttempt);
+                }
+
+                // Vérifier si au moins 1 heure s'est écoulée depuis la dernière tentative
+                const hoursSinceLastAttempt = (now - lastAttemptDate) / (1000 * 60 * 60);
+                shouldRetry = hoursSinceLastAttempt >= 1;
+            }
+
+            // Éligible si c'est l'heure prévue (00h00) OU si on doit réessayer après un échec
+            if (isScheduledTime || shouldRetry) {
                 eligibleUsers.push({
                     userId: doc.id,
                     userData: userData,
-                    timezone: timezone
+                    timezone: timezone,
+                    isRetry: shouldRetry && !isScheduledTime
                 });
-                console.log(`[Auto-Pricing] Utilisateur ${doc.id} (${userData.email || 'N/A'}) éligible - Fuseau: ${timezone}`);
+                const reason = isScheduledTime ? 'Heure prévue (00h00)' : `Réessai après échec (tentative ${failedAttempts})`;
+                console.log(`[Auto-Pricing] Utilisateur ${doc.id} (${userData.email || 'N/A'}) éligible - ${reason} - Fuseau: ${timezone}`);
             }
         });
 
         if (eligibleUsers.length === 0) {
-            console.log(`[Auto-Pricing] Aucun utilisateur éligible à ce moment (00h00 dans leur fuseau horaire).`);
+            console.log(`[Auto-Pricing] Aucun utilisateur éligible à ce moment.`);
             return;
         }
 
         // Traiter chaque utilisateur éligible
-        for (const { userId, userData, timezone } of eligibleUsers) {
+        for (const { userId, userData, timezone, isRetry } of eligibleUsers) {
             try {
-                await processAutoPricingForUser(userId, userData);
+                const result = await processAutoPricingForUser(userId, userData);
+                if (isRetry && result.success) {
+                    console.log(`[Auto-Pricing] ✅ Réessai réussi pour l'utilisateur ${userId} après ${userData.autoPricing?.failedAttempts || 0} tentatives`);
+                }
             } catch (error) {
                 console.error(`[Auto-Pricing] Erreur lors du traitement de l'utilisateur ${userId}:`, error);
             }
