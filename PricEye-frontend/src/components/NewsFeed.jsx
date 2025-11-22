@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { getMarketNews } from '../services/api.js';
+import CustomScrollbar from './CustomScrollbar.jsx';
 
 function NewsFeed({ token }) {
   const [news, setNews] = useState([]);
@@ -103,8 +104,8 @@ function NewsFeed({ token }) {
   };
 
   return (
-    <div className="bg-global-bg-box border border-global-stroke-box rounded-[14px] p-6 h-full shadow-[0_15px_60px_rgba(0,0,0,0.35)]">
-      <div className="flex items-center justify-between gap-4">
+    <div className="bg-global-bg-box border border-global-stroke-box rounded-[14px] p-6 shadow-[0_15px_60px_rgba(0,0,0,0.35)] flex flex-col h-full max-h-[800px]">
+      <div className="flex items-center justify-between gap-4 shrink-0 mb-4">
         <div>
           <p className="text-sm uppercase tracking-[0.3em] text-global-inactive">Insights</p>
           <h2 className="text-2xl font-h2-font-family text-global-blanc">Actualité du marché</h2>
@@ -112,13 +113,15 @@ function NewsFeed({ token }) {
         <button
           type="button"
           onClick={fetchNews}
-          className="text-sm px-4 py-2 rounded-full border border-global-stroke-box text-global-inactive hover:text-global-blanc hover:border-global-content-highlight-2nd transition"
+          className="text-sm px-4 py-2 rounded-full border border-global-stroke-box text-global-inactive hover:text-global-blanc hover:border-global-content-highlight-2nd transition shrink-0"
         >
           Actualiser
         </button>
       </div>
-      <div className="space-y-4 max-h-[600px] overflow-y-auto mt-4 pr-2 custom-scrollbar">
-        {renderContent()}
+      <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
+        <CustomScrollbar className="flex-1 min-h-0">
+          {renderContent()}
+        </CustomScrollbar>
       </div>
     </div>
   );

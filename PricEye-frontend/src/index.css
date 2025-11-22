@@ -93,6 +93,16 @@ input:disabled, select:disabled {
   .all-\[unset\] {
     all: unset;
   }
+  
+  /* Masquer la scrollbar par défaut */
+  .hide-scrollbar {
+    -ms-overflow-style: none;  /* IE and Edge */
+    scrollbar-width: none;  /* Firefox */
+  }
+  
+  .hide-scrollbar::-webkit-scrollbar {
+    display: none;  /* Chrome, Safari and Opera */
+  }
 }
 
 /* Style pour le loader principal (utilisé dans NewsFeed) */

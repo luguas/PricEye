@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 // Importer les fonctions API nécessaires
 import { testConnection, connectPMS, disconnectPMS } from '../services/api.js'; 
-import PropertySyncModal from './PropertySyncModal.jsx'; 
+import PropertySyncModal from './PropertySyncModal.jsx';
+import ConfirmModal from './ConfirmModal.jsx'; 
 
 // Configuration pour chaque PMS géré
 const PMS_CONFIG = {
@@ -44,6 +45,9 @@ function PMSIntegrationPanel({ token, currentIntegration, onConnectionUpdate }) 
   const [testMessage, setTestMessage] = useState({ type: '', text: '' });
   const [connectMessage, setConnectMessage] = useState({ type: '', text: '' });
   // Les états isSyncing et syncMessage sont maintenant gérés par la modale
+
+  // État pour la modale de confirmation
+  const [confirmModal, setConfirmModal] = useState({ isOpen: false, message: '', onConfirm: null });
 
   // Met à jour le formulaire si une intégration existe déjà
   useEffect(() => {
@@ -104,22 +108,25 @@ function PMSIntegrationPanel({ token, currentIntegration, onConnectionUpdate }) 
 
   // Logique pour déconnecter (vide les infos dans Firestore)
   const handleDisconnect = async () => {
-    if (!window.confirm(`Êtes-vous sûr de vouloir déconnecter ${currentIntegration.type} ?`)) {
-      return;
-    }
-    setIsLoading(true);
-    setConnectMessage({ type: 'loading', text: 'Déconnexion...' });
-    try {
-      // CORRECTION: Appeler la nouvelle route DELETE au lieu de connectPMS
-      await disconnectPMS(currentIntegration.type, token); 
-      setConnectMessage({ type: 'success', text: 'Déconnexion réussie.' });
-      setCredentials({});
-      onConnectionUpdate(); // Rafraîchit la page
-    } catch (error) {
-      setConnectMessage({ type: 'error', text: `Échec: ${error.message}` });
-    } finally {
-      setIsLoading(false);
-    }
+    setConfirmModal({
+      isOpen: true,
+      message: `Êtes-vous sûr de vouloir déconnecter ${currentIntegration.type} ?`,
+      onConfirm: async () => {
+        setIsLoading(true);
+        setConnectMessage({ type: 'loading', text: 'Déconnexion...' });
+        try {
+          // CORRECTION: Appeler la nouvelle route DELETE au lieu de connectPMS
+          await disconnectPMS(currentIntegration.type, token); 
+          setConnectMessage({ type: 'success', text: 'Déconnexion réussie.' });
+          setCredentials({});
+          onConnectionUpdate(); // Rafraîchit la page
+        } catch (error) {
+          setConnectMessage({ type: 'error', text: `Échec: ${error.message}` });
+        } finally {
+          setIsLoading(false);
+        }
+      }
+    });
   };
 
   const renderCurrentIntegration = () => {
@@ -255,6 +262,17 @@ function PMSIntegrationPanel({ token, currentIntegration, onConnectionUpdate }) 
           }}
         />
       )}
+
+      {/* Modale de confirmation */}
+      <ConfirmModal
+        isOpen={confirmModal.isOpen}
+        onClose={() => setConfirmModal({ isOpen: false, message: '', onConfirm: null })}
+        onConfirm={confirmModal.onConfirm || (() => {})}
+        title="Confirmation"
+        message={confirmModal.message}
+        confirmText="Confirmer"
+        cancelText="Annuler"
+      />
     </>
   );
 }

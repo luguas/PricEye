@@ -66,20 +66,36 @@ function DateAnalysis({ token, propertyId, date, currentPrice, userProfile }) {
 
   const renderContent = () => {
     if (!date) {
-      return <p className="text-sm text-text-muted text-center">Cliquez sur une date du calendrier pour l'analyser.</p>;
+      return (
+        <div className="border-solid border-global-stroke-box border-t pt-4 flex flex-row gap-6 items-start justify-center self-stretch shrink-0 relative">
+          <div className="text-global-inactive text-left font-h4-font-family text-h4-font-size leading-h4-line-height font-h4-font-weight relative self-stretch">
+            Cliquez sur une date du calendrier pour l'analyser.
+          </div>
+        </div>
+      );
     }
     if (isLoading) {
       return (
         <div className="flex justify-center items-center h-32">
-          <div className="loader-small"></div>
+          <div className="w-8 h-8 border-2 border-global-content-highlight-2nd border-t-transparent rounded-full animate-spin"></div>
         </div>
       );
     }
     if (error) {
-      return <p className="text-sm text-red-400 text-center">{error}</p>;
+      return (
+        <div className="border-solid border-global-stroke-box border-t pt-4">
+          <p className="text-sm text-red-400 text-center">{error}</p>
+        </div>
+      );
     }
     if (!analysis) {
-      return <p className="text-sm text-text-muted text-center">Aucune analyse disponible pour cette date.</p>;
+      return (
+        <div className="border-solid border-global-stroke-box border-t pt-4">
+          <p className="text-global-inactive text-left font-h4-font-family text-h4-font-size leading-h4-line-height font-h4-font-weight">
+            Aucune analyse disponible pour cette date.
+          </p>
+        </div>
+      );
     }
 
     // Calculer l'écart de prix
@@ -87,7 +103,7 @@ function DateAnalysis({ token, propertyId, date, currentPrice, userProfile }) {
     let trend = null;
     if (marketPrice != null && currentPrice != null) {
         const diff = ((currentPrice - marketPrice) / marketPrice) * 100;
-        const trendColor = diff > 5 ? 'text-green-400' : (diff < -5 ? 'text-red-400' : 'text-text-muted');
+        const trendColor = diff > 5 ? 'text-global-positive-impact' : (diff < -5 ? 'text-global-negative-impact' : 'text-global-inactive');
         const trendSign = diff > 0 ? '+' : '';
         trend = (
             <span className={`text-sm font-semibold ${trendColor}`}>
@@ -99,51 +115,51 @@ function DateAnalysis({ token, propertyId, date, currentPrice, userProfile }) {
 
     // Afficher les résultats de l'analyse
     return (
-      <div className="space-y-3">
+      <div className="border-solid border-global-stroke-box border-t pt-4 flex flex-col gap-3 self-stretch">
         <div>
-          <h5 className="text-xs font-bold text-text-muted uppercase tracking-wider">Demande du Marché</h5>
-          <p className="text-lg font-semibold text-text-primary">{analysis.marketDemand || 'N/A'}</p>
+          <h5 className="text-xs font-bold text-global-inactive uppercase tracking-wider mb-1">Demande du Marché</h5>
+          <p className="text-lg font-semibold text-global-blanc">{analysis.marketDemand || 'N/A'}</p>
         </div>
         
-        {/* NOUVEAU: Affichage du prix actuel et de l'écart */}
+        {/* Affichage du prix actuel et de l'écart */}
         <div>
-          <h5 className="text-xs font-bold text-text-muted uppercase tracking-wider">Votre Prix Actuel</h5>
+          <h5 className="text-xs font-bold text-global-inactive uppercase tracking-wider mb-1">Votre Prix Actuel</h5>
           <div className="flex items-baseline gap-2">
-            <p className="text-lg font-semibold text-text-primary">{formatCurrency(currentPrice)}</p>
+            <p className="text-lg font-semibold text-global-blanc">{formatCurrency(currentPrice)}</p>
             {trend}
           </div>
         </div>
 
         <div>
-          <h5 className="text-xs font-bold text-text-muted uppercase tracking-wider">Suggestion de Prix (Marché)</h5>
-          <p className="text-lg font-semibold text-text-primary">{analysis.priceSuggestion || 'N/A'}</p>
+          <h5 className="text-xs font-bold text-global-inactive uppercase tracking-wider mb-1">Suggestion de Prix (Marché)</h5>
+          <p className="text-lg font-semibold text-global-blanc">{analysis.priceSuggestion || 'N/A'}</p>
         </div>
         
         <div>
-          <h5 className="text-xs font-bold text-text-muted uppercase tracking-wider">Événements Locaux</h5>
+          <h5 className="text-xs font-bold text-global-inactive uppercase tracking-wider mb-1">Événements Locaux</h5>
           {analysis.events && analysis.events.length > 0 ? (
-            <ul className="list-disc list-inside text-sm text-text-secondary space-y-1 mt-1">
+            <ul className="list-disc list-inside text-sm text-global-inactive space-y-1 mt-1">
               {analysis.events.map((event, index) => (
                 <li key={index}>{event}</li>
               ))}
             </ul>
           ) : (
-            <p className="text-sm text-text-secondary mt-1">Aucun événement majeur trouvé.</p>
+            <p className="text-sm text-global-inactive mt-1">Aucun événement majeur trouvé.</p>
           )}
         </div>
          <div>
-          <h5 className="text-xs font-bold text-text-muted uppercase tracking-wider">Résumé de l'IA</h5>
-          <p className="text-sm text-text-secondary italic mt-1">"{analysis.analysisSummary || 'Analyse non disponible.'}"</p>
+          <h5 className="text-xs font-bold text-global-inactive uppercase tracking-wider mb-1">Résumé de l'IA</h5>
+          <p className="text-sm text-global-inactive italic mt-1">"{analysis.analysisSummary || 'Analyse non disponible.'}"</p>
         </div>
       </div>
     );
   };
 
   return (
-    <div className="bg-bg-secondary p-4 rounded-lg shadow-lg">
-      <h4 className="text-lg font-semibold text-text-primary mb-3 border-b border-border-primary pb-2">
+    <div className="bg-global-bg-box rounded-[14px] border border-solid border-global-stroke-box p-6 flex flex-col gap-3 items-start justify-start shrink-0 w-full relative">
+      <div className="text-global-blanc text-left font-h2-font-family text-h2-font-size font-h2-font-weight relative">
         Analyse du Marché
-      </h4>
+      </div>
       {renderContent()}
     </div>
   );

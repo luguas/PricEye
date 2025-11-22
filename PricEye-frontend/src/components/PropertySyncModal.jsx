@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { syncProperties, getProperties, importPmsProperties } from '../services/api.js';
+import CustomScrollbar from './CustomScrollbar.jsx';
+import AlertModal from './AlertModal.jsx';
 
 /**
  * Une modale qui gère la synchronisation et l'importation de propriétés
@@ -16,6 +18,9 @@ function PropertySyncModal({ token, pmsType, onClose }) {
   
   const [pmsProperties, setPmsProperties] = useState([]);
   const [priceyeProperties, setPriceyeProperties] = useState([]);
+
+  // État pour la modale d'alerte
+  const [alertModal, setAlertModal] = useState({ isOpen: false, message: '', title: 'Information' });
 
   // Étape 1: Récupérer les deux listes de propriétés au chargement
   useEffect(() => {
@@ -76,8 +81,11 @@ function PropertySyncModal({ token, pmsType, onClose }) {
     
     try {
       const result = await importPmsProperties(stats.newProperties, pmsType, token);
-      alert(result.message || 'Importation réussie !');
-      onClose(true); // Fermer et signaler qu'il faut rafraîchir
+      setAlertModal({ isOpen: true, message: result.message || 'Importation réussie !', title: 'Succès' });
+      // Fermer la modale après confirmation
+      setTimeout(() => {
+        onClose(true); // Fermer et signaler qu'il faut rafraîchir
+      }, 1500);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -132,12 +140,14 @@ function PropertySyncModal({ token, pmsType, onClose }) {
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center p-4 z-50">
-      <div className="bg-bg-secondary rounded-lg shadow-xl w-full max-w-lg p-6 max-h-[90vh] overflow-y-auto">
-        <h3 className="text-xl font-bold mb-6 text-text-primary">Synchroniser les Propriétés</h3>
+      <div className="bg-bg-secondary rounded-lg shadow-xl w-full max-w-lg p-6 max-h-[90vh] flex flex-col">
+        <h3 className="text-xl font-bold mb-6 text-text-primary shrink-0">Synchroniser les Propriétés</h3>
         
-        {renderContent()}
+        <CustomScrollbar className="flex-1 min-h-0">
+          {renderContent()}
+        </CustomScrollbar>
         
-        <div className="flex justify-end gap-4 pt-6 mt-6 border-t border-border-primary">
+        <div className="flex justify-end gap-4 pt-6 mt-6 border-t border-border-primary shrink-0">
           <button 
             type="button" 
             onClick={() => onClose(false)} // Fermer sans rafraîchir
@@ -155,6 +165,15 @@ function PropertySyncModal({ token, pmsType, onClose }) {
           </button>
         </div>
       </div>
+
+      {/* Modale d'alerte */}
+      <AlertModal
+        isOpen={alertModal.isOpen}
+        onClose={() => setAlertModal({ isOpen: false, message: '', title: 'Information' })}
+        title={alertModal.title}
+        message={alertModal.message}
+        buttonText="OK"
+      />
     </div>
   );
 }

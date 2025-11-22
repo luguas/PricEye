@@ -4,6 +4,7 @@ import PropertyModal from '../components/PropertyModal.jsx';
 import GroupsManager from '../components/GroupsManager.jsx';
 import StrategyModal from '../components/StrategyModal.jsx';
 import RulesModal from '../components/RulesModal.jsx';
+import ConfirmModal from '../components/ConfirmModal.jsx';
 import NewsFeed from '../components/NewsFeed.jsx';
 import GroupRecommendations from '../components/GroupRecommendations.jsx'; 
 import { getDatesFromRange } from '../utils/dateUtils.js'; 
@@ -119,7 +120,10 @@ function DashboardPage({ token, userProfile }) {
   const [isRecLoading, setIsRecLoading] = useState(true);
   
   const [selectedStatus, setSelectedStatus] = useState('active'); 
-  const [selectedGroupId, setSelectedGroupId] = useState(''); 
+  const [selectedGroupId, setSelectedGroupId] = useState('');
+
+  // État pour la modale de confirmation
+  const [confirmModal, setConfirmModal] = useState({ isOpen: false, message: '', onConfirm: null }); 
 
 
   const fetchInitialData = useCallback(async () => {
@@ -232,14 +236,18 @@ function DashboardPage({ token, userProfile }) {
 
   const handleDelete = async (propertyId) => {
     setOpenMenuId(null);
-    if (window.confirm("Êtes-vous sûr de vouloir supprimer cette propriété ?")) {
-      try {
-        await deleteProperty(propertyId, token);
-        fetchInitialData(); 
-      } catch (err) {
-        setError(err.message);
+    setConfirmModal({
+      isOpen: true,
+      message: "Êtes-vous sûr de vouloir supprimer cette propriété ?",
+      onConfirm: async () => {
+        try {
+          await deleteProperty(propertyId, token);
+          fetchInitialData(); 
+        } catch (err) {
+          setError(err.message);
+        }
       }
-    }
+    });
   };
   
   const handleSetStatus = async (propertyId, status) => {
@@ -322,21 +330,26 @@ function DashboardPage({ token, userProfile }) {
       {statsCards.map(({ id, title, value, helper, icon: Icon }) => (
         <div
           key={id}
-          className="bg-global-bg-box border border-global-stroke-box rounded-[14px] p-5 flex flex-col gap-4 shadow-sm"
+          className="bg-global-bg-box rounded-[14px] border border-solid border-global-stroke-box p-4 flex flex-col gap-2 items-start justify-center flex-1 relative overflow-hidden"
         >
-          <div className="flex items-center justify-between">
-            <div className="p-3 rounded-2xl bg-global-bg-small-box border border-global-stroke-box text-global-content-highlight-2nd">
-              <Icon />
+          <div className="flex flex-row items-center justify-between self-stretch shrink-0 relative w-full">
+            <div className="flex flex-col gap-0 items-start justify-start flex-1 relative min-w-0">
+              <div className="text-global-inactive text-left font-p1-font-family text-p1-font-size font-p1-font-weight relative">
+                {title}
+              </div>
+              <div className="text-global-blanc text-left font-h1-font-family text-h1-font-size font-h1-font-weight font-bold relative">
+                {value || '—'}
+              </div>
             </div>
-            <span className="text-xs text-global-inactive uppercase tracking-wide text-right">
-              {helper}
-            </span>
-          </div>
-          <div>
-            <p className="text-global-inactive text-sm">{title}</p>
-            <p className="text-global-blanc font-h2-font-family text-2xl md:text-3xl mt-1 font-bold">
-              {value || '—'}
-            </p>
+            <div
+              className="rounded-[10px] border border-solid border-global-stroke-highlight-2nd flex flex-col gap-2.5 items-center justify-center shrink-0 w-[50px] h-[50px] relative"
+              style={{
+                background: 'linear-gradient(90deg, rgba(21, 93, 252, 0.20) 0%, rgba(0, 146, 184, 0.20) 100%)',
+                aspectRatio: '1',
+              }}
+            >
+              <Icon className="w-6 h-6 text-global-content-highlight-2nd" />
+            </div>
           </div>
         </div>
       ))}
@@ -630,7 +643,7 @@ function DashboardPage({ token, userProfile }) {
         )}
 
         {/* Main Content Area */}
-        <div className="grid grid-cols-1 xl:grid-cols-3 gap-8 items-start">
+        <div className="grid grid-cols-1 xl:grid-cols-3 gap-8 items-stretch">
           
           {/* Left Column: Groups & Properties */}
           <div className="xl:col-span-2 flex flex-col gap-8">
@@ -689,7 +702,7 @@ function DashboardPage({ token, userProfile }) {
           </div>
 
           {/* Right Column: News Feed */}
-          <div className="xl:col-span-1">
+          <div className="xl:col-span-1 flex flex-col h-full">
              <NewsFeed token={token} />
           </div>
 
@@ -724,6 +737,15 @@ function DashboardPage({ token, userProfile }) {
           itemType={editingGroup ? 'group' : 'property'} 
         />
       )}
+      <ConfirmModal
+        isOpen={confirmModal.isOpen}
+        onClose={() => setConfirmModal({ isOpen: false, message: '', onConfirm: null })}
+        onConfirm={confirmModal.onConfirm || (() => {})}
+        title="Confirmation"
+        message={confirmModal.message}
+        confirmText="Confirmer"
+        cancelText="Annuler"
+      />
     </div>
   );
 }

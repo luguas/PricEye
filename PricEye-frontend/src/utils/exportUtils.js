@@ -4,11 +4,16 @@ import * as XLSX from 'xlsx';
  * Exporte un tableau de données au format Excel (.xlsx).
  * @param {Array<object>} data - Le tableau d'objets à exporter.
  * @param {string} fileName - Le nom du fichier Excel (sans l'extension).
+ * @param {Function} onError - Fonction de callback appelée en cas d'erreur (optionnel).
+ * @returns {boolean} - Retourne true si l'exportation a réussi, false sinon.
  */
-export function exportToExcel(data, fileName) {
+export function exportToExcel(data, fileName, onError = null) {
   if (!Array.isArray(data) || data.length === 0) {
     console.error("Impossible d'exporter : les données sont vides ou invalides.");
-    return;
+    if (onError) {
+      onError("Impossible d'exporter : les données sont vides ou invalides.");
+    }
+    return false;
   }
 
   try {
@@ -25,8 +30,12 @@ export function exportToExcel(data, fileName) {
     // Générer le fichier Excel et déclencher le téléchargement
     // Le nom du fichier sera "fileName.xlsx"
     XLSX.writeFile(workbook, `${fileName}.xlsx`);
+    return true;
   } catch (error) {
     console.error("Erreur lors de la génération du fichier Excel:", error);
-    alert("Une erreur est survenue lors de l'exportation des données.");
+    if (onError) {
+      onError("Une erreur est survenue lors de l'exportation des données.");
+    }
+    return false;
   }
 }

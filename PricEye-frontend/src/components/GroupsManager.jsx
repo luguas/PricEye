@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { getGroups, createGroup, updateGroup, deleteGroup, addPropertiesToGroup, removePropertiesFromGroup } from '../services/api.js';
+import ConfirmModal from './ConfirmModal.jsx';
 
 // Icônes SVG
 const EditIcon = () => (
@@ -38,6 +39,9 @@ function GroupsManager({ token, properties, onGroupChange, onEditStrategy, onEdi
   const [selectedPropertiesToAdd, setSelectedPropertiesToAdd] = useState([]);
   const [showCreateForm, setShowCreateForm] = useState(false);
 
+  // État pour la modale de confirmation
+  const [confirmModal, setConfirmModal] = useState({ isOpen: false, message: '', onConfirm: null });
+
   const fetchGroups = useCallback(async () => {
     try {
       setIsLoading(true);
@@ -70,15 +74,19 @@ function GroupsManager({ token, properties, onGroupChange, onEditStrategy, onEdi
   };
 
   const handleDeleteGroup = async (groupId) => {
-    if (window.confirm("Êtes-vous sûr de vouloir supprimer ce groupe ? Cette action est irréversible.")) {
-      try {
-        await deleteGroup(groupId, token);
-        fetchGroups(); 
-        onGroupChange();
-      } catch (err) {
-        setError(err.message);
+    setConfirmModal({
+      isOpen: true,
+      message: "Êtes-vous sûr de vouloir supprimer ce groupe ? Cette action est irréversible.",
+      onConfirm: async () => {
+        try {
+          await deleteGroup(groupId, token);
+          fetchGroups(); 
+          onGroupChange();
+        } catch (err) {
+          setError(err.message);
+        }
       }
-    }
+    });
   };
 
   const handleStartEdit = (group) => {
@@ -453,6 +461,17 @@ function GroupsManager({ token, properties, onGroupChange, onEditStrategy, onEdi
       
       {/* Liste des groupes */}
       {renderGroupList()}
+
+      {/* Modale de confirmation */}
+      <ConfirmModal
+        isOpen={confirmModal.isOpen}
+        onClose={() => setConfirmModal({ isOpen: false, message: '', onConfirm: null })}
+        onConfirm={confirmModal.onConfirm || (() => {})}
+        title="Confirmation"
+        message={confirmModal.message}
+        confirmText="Confirmer"
+        cancelText="Annuler"
+      />
     </div>
   );
 }

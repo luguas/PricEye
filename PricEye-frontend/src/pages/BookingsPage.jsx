@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { getProperties, getTeamBookings } from '../services/api.js';
+import Pastille from '../components/Pastille.jsx';
+import RechercheRSa from '../components/RechercheRSa.jsx';
 // import { getDatesFromRange } from '../utils/dateUtils.js'; // Remplacé par une logique locale
 
 /**
@@ -55,30 +57,31 @@ function MultiPropertyFilter({ properties, selectedIds, onChange }) {
       <button
         type="button"
         onClick={() => setIsOpen(!isOpen)}
-        className="form-input bg-bg-secondary border-border-primary rounded-md p-2 text-sm text-text-primary w-full text-left flex justify-between items-center"
+        className="w-full bg-global-bg-small-box border border-global-stroke-box rounded-[10px] px-3 py-2 text-global-blanc font-h4-font-family text-h4-font-size text-left flex justify-between items-center focus:outline-none focus:ring-2 focus:ring-global-content-highlight-2nd"
       >
         <span className="truncate">{getButtonText()}</span>
-        <span className="ml-2">▼</span>
+        <span className="ml-2 text-global-inactive">▼</span>
       </button>
 
       {isOpen && (
-        <div className="absolute z-10 w-full mt-1 bg-bg-tertiary border border-border-primary rounded-md shadow-lg max-h-60 overflow-y-auto">
-          <div className="p-2 border-b border-border-primary">
+        <div className="absolute z-10 w-full mt-1 bg-global-bg-box border border-global-stroke-box rounded-[10px] shadow-lg max-h-60 overflow-y-auto">
+          <div className="p-2 border-b border-global-stroke-box">
             <button
               type="button"
               onClick={handleSelectAll}
-              className="text-xs text-blue-400 hover:text-blue-300"
+              className="text-xs text-global-content-highlight-2nd hover:text-global-blanc font-p1-font-family"
             >
               {selectedIds.length === properties.length ? "Tout désélectionner" : "Tout sélectionner"}
             </button>
           </div>
           <div className="p-2 space-y-1">
             {properties.map(prop => (
-              <label key={prop.id} className="flex items-center gap-2 text-sm text-text-secondary cursor-pointer">
+              <label key={prop.id} className="flex items-center gap-2 text-sm text-global-blanc cursor-pointer font-p1-font-family hover:bg-global-bg-small-box p-1 rounded">
                 <input
                   type="checkbox"
                   checked={selectedIds.includes(prop.id)}
                   onChange={(e) => handleCheckboxChange(e, prop.id)}
+                  className="w-4 h-4 rounded border border-global-stroke-box bg-global-bg-small-box text-global-content-highlight-2nd focus:ring-2 focus:ring-global-content-highlight-2nd"
                 />
                 {prop.address}
               </label>
@@ -107,6 +110,8 @@ function BookingsPage({ token, userProfile }) {
   const [minPrice, setMinPrice] = useState('');
   const [selectedStatus, setSelectedStatus] = useState(''); // NOUVEAU
   const [selectedPricingMethod, setSelectedPricingMethod] = useState(''); // NOUVEAU
+  const [searchQuery, setSearchQuery] = useState(''); // Recherche de propriété
+  const [showFilters, setShowFilters] = useState(false); // Afficher/masquer les filtres
 
   // Créer un map pour un accès rapide aux noms des propriétés
   const propertyMap = useMemo(() => {
@@ -207,6 +212,13 @@ function BookingsPage({ token, userProfile }) {
 
     // 2. Appliquer les filtres de l'utilisateur
     return validBookings.filter(booking => {
+        // Filtre Recherche (par nom de propriété)
+        if (searchQuery) {
+            const propertyName = propertyMap.get(booking.propertyId) || '';
+            if (!propertyName.toLowerCase().includes(searchQuery.toLowerCase())) {
+                return false;
+            }
+        }
         // Filtre Propriété
         if (selectedPropertyIds.length > 0 && !selectedPropertyIds.includes(booking.propertyId)) {
             return false;
@@ -230,7 +242,7 @@ function BookingsPage({ token, userProfile }) {
         
         return true; // La réservation passe tous les filtres
     });
-  }, [allBookings, selectedPropertyIds, propertyMap, selectedChannel, minPrice, selectedStatus, selectedPricingMethod]); // Ajout des dépendances
+  }, [allBookings, selectedPropertyIds, propertyMap, selectedChannel, minPrice, selectedStatus, selectedPricingMethod, searchQuery]); // Ajout de searchQuery
 
   // Helper pour formater la devise
   const formatCurrency = (amount) => {
@@ -249,33 +261,38 @@ function BookingsPage({ token, userProfile }) {
       return Math.ceil(diffTime / (1000 * 60 * 60 * 24)); 
   };
 
-  // NOUVEAU: Helper pour badge de statut
+  // Helper pour formater la date au format DD/MM/YYYY
+  const formatDate = (dateString) => {
+    if (!dateString) return '';
+    const date = new Date(dateString);
+    const day = String(date.getDate()).padStart(2, '0');
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const year = date.getFullYear();
+    return `${day}/${month}/${year}`;
+  };
+
+  // Helper pour badge de statut avec Pastille
   const getStatusBadge = (status) => {
       status = status || 'confirmé'; // Défaut
-      switch(status) {
+      switch(status.toLowerCase()) {
           case 'confirmé':
-              return <span className="px-2 py-0.5 text-xs font-semibold bg-green-700 text-green-100 rounded-full">Confirmé</span>;
+              return <Pastille text="Confirmé" className="!bg-calendrierbg-vert !border-calendrierstroke-vert" />;
           case 'en attente':
-              return <span className="px-2 py-0.5 text-xs font-semibold bg-yellow-700 text-yellow-100 rounded-full">En attente</span>;
+              return <Pastille text="En attente" className="!bg-calendrierbg-bleu !border-calendrierstroke-bleu" />;
           case 'annulée':
-              return <span className="px-2 py-0.5 text-xs font-semibold bg-red-700 text-red-100 rounded-full">Annulée</span>;
+          case 'annulé':
+              return <Pastille text="Annulé" className="!bg-calendrierbg-orange !border-calendrierstroke-orange" />;
           default:
-              return <span className="px-2 py-0.5 text-xs font-semibold bg-gray-600 text-gray-200 rounded-full">{status}</span>;
+              return <Pastille text={status} className="!bg-global-bg-small-box !border-global-stroke-box" />;
       }
   };
   
-  // NOUVEAU: Helper pour badge de méthode de prix
-  const getPricingMethodBadge = (method) => {
-      method = method || 'ia'; // Défaut
-      switch(method) {
-          case 'ia':
-              return <span className="px-2 py-0.5 text-xs font-semibold bg-blue-700 text-blue-100 rounded-full">IA</span>;
-          case 'manuelle':
-              return <span className="px-2 py-0.5 text-xs font-semibold bg-purple-700 text-purple-100 rounded-full">Manuelle</span>;
-          default:
-              return <span className="px-2 py-0.5 text-xs font-semibold bg-gray-600 text-gray-200 rounded-full">{method}</span>;
-      }
+  // Helper pour badge de canal avec Pastille
+  const getChannelBadge = (channel) => {
+      if (!channel) return null;
+      return <Pastille text={channel} className="!bg-global-bg-small-box !border-global-stroke-box" />;
   };
+  
 
 
   return (
@@ -292,17 +309,25 @@ function BookingsPage({ token, userProfile }) {
       <div className="relative z-10 space-y-6 p-4 md:p-6 lg:p-8">
         <h2 className="text-3xl font-bold text-text-primary">Centre de Réservations</h2>
 
+      {/* Barre de Recherche */}
+      <RechercheRSa 
+        value={searchQuery}
+        onChange={setSearchQuery}
+        onFilterClick={() => setShowFilters(!showFilters)}
+      />
+
       {/* Barre de Filtres */}
-      <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-4 p-4 bg-bg-secondary rounded-lg shadow-lg">
+      {showFilters && (
+      <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-4 p-4 bg-global-bg-box border border-global-stroke-box rounded-[14px]">
         <div>
-          <label htmlFor="date-range-selector" className="block text-sm font-medium text-text-secondary mb-1">
+          <label htmlFor="date-range-selector" className="block text-sm font-medium text-global-inactive mb-1 font-p1-font-family">
             Période
           </label>
           <select 
             id="date-range-selector" 
             value={dateRange} 
             onChange={(e) => setDateRange(e.target.value)} 
-            className="form-input w-full"
+            className="w-full bg-global-bg-small-box border border-global-stroke-box rounded-[10px] px-3 py-2 text-global-blanc font-h4-font-family text-h4-font-size focus:outline-none focus:ring-2 focus:ring-global-content-highlight-2nd"
           >
             <option value="next_30d">30 prochains jours</option>
             <option value="next_90d">90 prochains jours</option>
@@ -313,7 +338,7 @@ function BookingsPage({ token, userProfile }) {
         </div>
         
         <div className="lg:col-span-2">
-           <label htmlFor="property-filter" className="block text-sm font-medium text-text-secondary mb-1">
+           <label htmlFor="property-filter" className="block text-sm font-medium text-global-inactive mb-1 font-p1-font-family">
             Propriétés
           </label>
           <MultiPropertyFilter
@@ -325,14 +350,14 @@ function BookingsPage({ token, userProfile }) {
         
         {/* Filtre Canal */}
         <div>
-            <label htmlFor="channel-filter" className="block text-sm font-medium text-text-secondary mb-1">
+            <label htmlFor="channel-filter" className="block text-sm font-medium text-global-inactive mb-1 font-p1-font-family">
               Canal
             </label>
             <select
               id="channel-filter"
               value={selectedChannel}
               onChange={(e) => setSelectedChannel(e.target.value)}
-              className="form-input w-full"
+              className="w-full bg-global-bg-small-box border border-global-stroke-box rounded-[10px] px-3 py-2 text-global-blanc font-h4-font-family text-h4-font-size focus:outline-none focus:ring-2 focus:ring-global-content-highlight-2nd"
             >
               <option value="">Tous les canaux</option>
               {uniqueChannels.map(channel => (
@@ -343,14 +368,14 @@ function BookingsPage({ token, userProfile }) {
         
         {/* Filtre Statut */}
         <div>
-            <label htmlFor="status-filter" className="block text-sm font-medium text-text-secondary mb-1">
+            <label htmlFor="status-filter" className="block text-sm font-medium text-global-inactive mb-1 font-p1-font-family">
               Statut
             </label>
             <select
               id="status-filter"
               value={selectedStatus}
               onChange={(e) => setSelectedStatus(e.target.value)}
-              className="form-input w-full"
+              className="w-full bg-global-bg-small-box border border-global-stroke-box rounded-[10px] px-3 py-2 text-global-blanc font-h4-font-family text-h4-font-size focus:outline-none focus:ring-2 focus:ring-global-content-highlight-2nd"
             >
               <option value="">Tous les statuts</option>
               <option value="confirmé">Confirmé</option>
@@ -361,14 +386,14 @@ function BookingsPage({ token, userProfile }) {
         
         {/* Filtre Tarification */}
         <div>
-            <label htmlFor="pricing-filter" className="block text-sm font-medium text-text-secondary mb-1">
+            <label htmlFor="pricing-filter" className="block text-sm font-medium text-global-inactive mb-1 font-p1-font-family">
               Tarification
             </label>
             <select
               id="pricing-filter"
               value={selectedPricingMethod}
               onChange={(e) => setSelectedPricingMethod(e.target.value)}
-              className="form-input w-full"
+              className="w-full bg-global-bg-small-box border border-global-stroke-box rounded-[10px] px-3 py-2 text-global-blanc font-h4-font-family text-h4-font-size focus:outline-none focus:ring-2 focus:ring-global-content-highlight-2nd"
             >
               <option value="">Toutes</option>
               <option value="ia">IA</option>
@@ -378,7 +403,7 @@ function BookingsPage({ token, userProfile }) {
 
         {/* Filtre Prix */}
         <div className="lg:col-start-5">
-            <label htmlFor="min-price-filter" className="block text-sm font-medium text-text-secondary mb-1">
+            <label htmlFor="min-price-filter" className="block text-sm font-medium text-global-inactive mb-1 font-p1-font-family">
               Prix Total (Min)
             </label>
             <input
@@ -386,60 +411,104 @@ function BookingsPage({ token, userProfile }) {
               id="min-price-filter"
               value={minPrice}
               onChange={(e) => setMinPrice(e.target.value)}
-              className="form-input w-full"
+              className="w-full bg-global-bg-small-box border border-global-stroke-box rounded-[10px] px-3 py-2 text-global-blanc placeholder:text-global-inactive font-h4-font-family text-h4-font-size focus:outline-none focus:ring-2 focus:ring-global-content-highlight-2nd"
               placeholder={`Ex: 100 (${userProfile?.currency || 'EUR'})`}
             />
         </div>
         
       </div>
+      )}
       
       {error && <p className="text-red-400 text-center">{error}</p>}
 
       {/* Tableau des réservations */}
-      <div className="bg-bg-secondary shadow-lg rounded-lg overflow-hidden">
-        <table className="min-w-full divide-y divide-border-primary">
-          <thead className="bg-bg-muted">
-            <tr>
-              <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-text-secondary uppercase tracking-wider">Statut</th>
-              <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-text-secondary uppercase tracking-wider">Date Arrivée</th>
-              <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-text-secondary uppercase tracking-wider">Date Départ</th>
-              <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-text-secondary uppercase tracking-wider">Nuits</th>
-              <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-text-secondary uppercase tracking-wider">Propriété</th>
-              <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-text-secondary uppercase tracking-wider">Prix Total</th>
-              <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-text-secondary uppercase tracking-wider">Canal</th>
-              <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-text-secondary uppercase tracking-wider">Tarification</th>
-            </tr>
-          </thead>
-          <tbody className="bg-bg-secondary divide-y divide-border-primary">
-            {isLoading ? (
-              <tr>
-                <td colSpan="8" className="text-center p-8 text-text-muted">
-                  <div className="loader mx-auto"></div>
-                  Chargement des réservations...
-                </td>
-              </tr>
-            ) : filteredBookings.length === 0 ? (
-              <tr>
-                <td colSpan="8" className="text-center p-8 text-text-muted">
-                  Aucune réservation trouvée pour les filtres sélectionnés.
-                </td>
-              </tr>
-            ) : (
-              filteredBookings.map(booking => (
-                <tr key={booking.id} className="hover:bg-bg-muted">
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-text-primary">{getStatusBadge(booking.status)}</td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-text-primary">{booking.startDate}</td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-text-primary">{booking.endDate}</td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-text-secondary">{calculateNights(booking.startDate, booking.endDate)}</td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-text-primary">{propertyMap.get(booking.propertyId) || 'Propriété inconnue'}</td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-text-secondary">{formatCurrency(booking.totalPrice)}</td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-text-secondary">{booking.channel}</td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-text-secondary">{getPricingMethodBadge(booking.pricingMethod)}</td>
-                </tr>
-              ))
-            )}
-          </tbody>
-        </table>
+      <div className="bg-global-bg-box rounded-[14px] border border-solid border-global-stroke-box flex flex-col gap-0 items-start justify-start self-stretch shrink-0 relative overflow-hidden">
+        {/* En-têtes */}
+        <div className="border border-solid border-global-stroke-box border-b pt-4 pr-6 pb-4 pl-6 flex flex-row items-center justify-between self-stretch shrink-0 relative">
+          <div className="text-global-inactive text-left font-h3-font-family text-h3-font-size font-h3-font-weight relative w-[100px]">
+            Propriété
+          </div>
+          <div className="text-global-inactive text-left font-h3-font-family text-h3-font-size font-h3-font-weight relative w-[100px]">
+            Date arrivée
+          </div>
+          <div className="text-global-inactive text-left font-h3-font-family text-h3-font-size font-h3-font-weight relative w-[100px]">
+            Date départ
+          </div>
+          <div className="text-global-inactive text-left font-h3-font-family text-h3-font-size font-h3-font-weight relative w-[50px]">
+            Nuits
+          </div>
+          <div className="text-global-inactive text-left font-h3-font-family text-h3-font-size font-h3-font-weight relative w-[100px]">
+            Prix Total
+          </div>
+          <div className="text-global-inactive text-left font-h3-font-family text-h3-font-size font-h3-font-weight relative w-[100px]">
+            Tarification
+          </div>
+          <div className="text-global-inactive text-left font-h3-font-family text-h3-font-size font-h3-font-weight relative w-[100px]">
+            Canal
+          </div>
+          <div className="text-global-inactive text-left font-h3-font-family text-h3-font-size font-h3-font-weight relative w-[100px]">
+            Statut
+          </div>
+        </div>
+
+        {/* Contenu */}
+        {isLoading ? (
+          <div className="border border-solid border-global-stroke-box border-b pt-4 pr-6 pb-4 pl-6 flex flex-row items-center justify-center self-stretch shrink-0 relative">
+            <div className="text-center p-8 text-global-inactive">
+              <div className="w-8 h-8 border-2 border-global-content-highlight-2nd border-t-transparent rounded-full animate-spin mx-auto mb-2"></div>
+              Chargement des réservations...
+            </div>
+          </div>
+        ) : filteredBookings.length === 0 ? (
+          <div className="border border-solid border-global-stroke-box border-b pt-4 pr-6 pb-4 pl-6 flex flex-row items-center justify-center self-stretch shrink-0 relative">
+            <div className="text-center p-8 text-global-inactive">
+              Aucune réservation trouvée pour les filtres sélectionnés.
+            </div>
+          </div>
+        ) : (
+          filteredBookings.map((booking, index) => {
+            const propertyName = propertyMap.get(booking.propertyId) || 'Propriété inconnue';
+            const property = allProperties.find(p => p.id === booking.propertyId);
+            const propertyAddress = property?.address || propertyName;
+            
+            return (
+              <div 
+                key={booking.id} 
+                className={`border border-solid border-global-stroke-box ${index < filteredBookings.length - 1 ? 'border-b' : ''} pt-4 pr-6 pb-4 pl-6 flex flex-row items-center justify-between self-stretch shrink-0 relative`}
+              >
+                <div className="flex flex-col gap-0 items-start justify-start shrink-0 w-[100px] relative">
+                  <div className="text-global-blanc text-left font-h3-font-family text-h3-font-size font-h3-font-weight relative">
+                    {propertyName}
+                  </div>
+                  <div className="text-global-inactive text-left font-p1-font-family text-p1-font-size font-p1-font-weight relative self-stretch break-words">
+                    {propertyAddress}
+                  </div>
+                </div>
+                <div className="text-global-blanc text-left font-h3-font-family text-h3-font-size font-h3-font-weight relative w-[100px]">
+                  {formatDate(booking.startDate)}
+                </div>
+                <div className="text-global-blanc text-left font-h3-font-family text-h3-font-size font-h3-font-weight relative w-[100px]">
+                  {formatDate(booking.endDate)}
+                </div>
+                <div className="text-global-blanc text-left font-h3-font-family text-h3-font-size font-h3-font-weight relative w-[50px]">
+                  {calculateNights(booking.startDate, booking.endDate)}
+                </div>
+                <div className="text-global-blanc text-left font-h3-font-family text-h3-font-size font-h3-font-weight relative w-[100px]">
+                  {formatCurrency(booking.totalPrice)}
+                </div>
+                <div className="text-global-blanc text-left font-h3-font-family text-h3-font-size font-h3-font-weight relative w-[100px]">
+                  {formatCurrency(booking.totalPrice)}
+                </div>
+                <div className="shrink-0 w-[100px] h-[26px] relative flex items-center">
+                  {getChannelBadge(booking.channel)}
+                </div>
+                <div className="shrink-0 w-[100px] h-[26px] relative flex items-center">
+                  {getStatusBadge(booking.status)}
+                </div>
+              </div>
+            );
+          })
+        )}
       </div>
       </div>
     </div>

@@ -4,7 +4,9 @@ import { getFirestore, doc, setDoc, writeBatch, collection, query, where, getDoc
 import { jwtDecode } from 'jwt-decode'; 
 import { initializeApp } from "firebase/app"; 
 import PropertyNewsFeed from '../components/PropertyNewsFeed.jsx';
-import DateAnalysis from '../components/DateAnalysis.jsx'; 
+import DateAnalysis from '../components/DateAnalysis.jsx';
+import Bouton from '../components/Bouton.jsx';
+import AlertModal from '../components/AlertModal.jsx'; 
 
 // Assurez-vous que la configuration Firebase est accessible ici
 const firebaseConfig = {
@@ -67,6 +69,9 @@ function PricingPage({ token, userProfile }) {
   const [newsError, setNewsError] = useState('');
 
   const [selectedDateForAnalysis, setSelectedDateForAnalysis] = useState(null);
+
+  // État pour la modale d'alerte
+  const [alertModal, setAlertModal] = useState({ isOpen: false, message: '', title: 'Information' });
 
 
   useEffect(() => {
@@ -414,9 +419,9 @@ function PricingPage({ token, userProfile }) {
              return;
         }
         if (!group.syncPrices) {
-             alert("La synchronisation des prix n'est pas activée pour ce groupe. La stratégie ne sera appliquée qu'à la propriété principale.");
+             setAlertModal({ isOpen: true, message: "La synchronisation des prix n'est pas activée pour ce groupe. La stratégie ne sera appliquée qu'à la propriété principale.", title: 'Information' });
              if (!group.mainPropertyId) {
-                 alert("Veuillez définir une propriété principale pour ce groupe avant de générer une stratégie.");
+                 setAlertModal({ isOpen: true, message: "Veuillez définir une propriété principale pour ce groupe avant de générer une stratégie.", title: 'Attention' });
                  return;
              }
              propertyIdToAnalyze = group.mainPropertyId;
@@ -424,7 +429,7 @@ function PricingPage({ token, userProfile }) {
         } else {
             // Synchro activée
              if (!group.mainPropertyId) {
-                 alert("Veuillez définir une propriété principale pour ce groupe (dans l'onglet Dashboard) avant de générer une stratégie.");
+                 setAlertModal({ isOpen: true, message: "Veuillez définir une propriété principale pour ce groupe (dans l'onglet Dashboard) avant de générer une stratégie.", title: 'Attention' });
                  return;
              }
             propertyIdToAnalyze = group.mainPropertyId;
@@ -499,7 +504,7 @@ function PricingPage({ token, userProfile }) {
       
       await batch.commit();
       
-      alert(`Stratégie IA appliquée avec succès à ${propertyIdsToUpdate.length} propriété(s) ! ${strategy.strategy_summary}`);
+      setAlertModal({ isOpen: true, message: `Stratégie IA appliquée avec succès à ${propertyIdsToUpdate.length} propriété(s) ! ${strategy.strategy_summary}`, title: 'Succès' });
       fetchCalendarData(); // Recharger le calendrier
 
     } catch (err) {
@@ -633,7 +638,7 @@ function PricingPage({ token, userProfile }) {
       try {
           await addBooking(propertyIdForBooking, bookingData, token);
           
-          alert('Réservation ajoutée avec succès !');
+          setAlertModal({ isOpen: true, message: 'Réservation ajoutée avec succès !', title: 'Succès' });
           clearSelection();
           fetchCalendarData(); 
       } catch (err) {
@@ -657,7 +662,7 @@ function PricingPage({ token, userProfile }) {
               return;
           }
           if (!group.syncPrices) {
-              alert("La synchronisation des prix n'est pas activée pour ce groupe. Le prix ne sera appliqué qu'à la propriété principale.");
+              setAlertModal({ isOpen: true, message: "La synchronisation des prix n'est pas activée pour ce groupe. Le prix ne sera appliqué qu'à la propriété principale.", title: 'Information' });
               propertyIdsToUpdate = [group.mainPropertyId].filter(Boolean); 
           } else {
               propertyIdsToUpdate = group.properties || []; 
@@ -700,7 +705,7 @@ function PricingPage({ token, userProfile }) {
           }
           
           await batch.commit();
-          alert(`Prix manuels appliqués à ${propertyIdsToUpdate.length} propriété(s) !`);
+          setAlertModal({ isOpen: true, message: `Prix manuels appliqués à ${propertyIdsToUpdate.length} propriété(s) !`, title: 'Succès' });
           clearSelection();
           fetchCalendarData(); 
       } catch (err) {
@@ -916,111 +921,117 @@ function PricingPage({ token, userProfile }) {
     return grid;
   };
 
-   const renderEditPanel = () => {
-       const currencyLabel = userProfile?.currency || 'EUR';
-       
-       const renderBookingForm = () => (
-            <form onSubmit={handleSaveBooking} className="space-y-3 text-left">
-                <h5 className="text-md font-semibold text-text-primary mb-2">Ajouter Réservation Manuelle</h5>
-                <p className="text-xs text-text-muted">La réservation sera ajoutée à la propriété principale du groupe sélectionné (ou à la propriété unique).</p>
-                <div><label className="text-xs text-text-secondary">Période sélectionnée</label>
-                    <p className="text-sm font-medium bg-bg-muted p-1 rounded mt-1">{selectionStart} au {selectionEnd}</p>
-                </div>
-                <div>
-                    <label className="text-xs text-text-secondary">Prix / Nuit ({currencyLabel})</label>
-                    <input 
-                        type="number" 
-                        value={bookingPrice} 
-                        onChange={(e) => setBookingPrice(e.target.value)}
-                        className="w-full form-input mt-1" 
-                        placeholder="Ex: 150" 
-                        required min="1"
-                    />
-                </div>
-                 <div>
-                    <label className="text-xs text-text-secondary">Canal</label>
-                    <select value={bookingChannel} onChange={(e) => setBookingChannel(e.target.value)} className="w-full form-input mt-1">
-                        <option value="Direct">Direct</option> <option value="Airbnb">Airbnb</option> <option value="Booking">Booking.com</option> <option value="VRBO">VRBO</option> <option value="Autre">Autre</option>
-                    </select>
-                </div>
-                <div className="flex gap-2 pt-2">
-                    <button type="submit" disabled={isLoading} className="flex-grow bg-green-600 hover:bg-green-700 text-white font-semibold py-2 px-4 rounded-lg transition text-sm disabled:bg-gray-500">
-                        {isLoading ? 'Sauvegarde...' : 'Enregistrer Résa.'}
-                    </button>
-                     <button type="button" onClick={clearSelection} className="px-3 py-2 bg-bg-muted hover:bg-border-primary text-text-secondary rounded text-xs">Annuler</button>
-                </div>
-            </form>
-       );
-       
-       const renderPriceForm = () => (
-            <form onSubmit={handleSavePriceOverride} className="space-y-3 text-left">
-                <h5 className="text-md font-semibold text-text-primary mb-2">Définir Prix Manuel</h5>
-                {selectedView === 'group' && <p className="text-xs text-text-muted">Le prix sera appliqué à toutes les propriétés synchronisées de ce groupe.</p>}
-                <div><label className="text-xs text-text-secondary">Période sélectionnée</label>
-                    <p className="text-sm font-medium bg-bg-muted p-1 rounded mt-1">{selectionStart} au {selectionEnd}</p>
-                </div>
-                <div>
-                    <label className="text-xs text-text-secondary">Nouveau Prix / Nuit ({currencyLabel})</label>
-                    <input 
-                        type="number" 
-                        value={manualPrice} 
-                        onChange={(e) => setManualPrice(e.target.value)}
-                        className="w-full form-input mt-1" 
-                        placeholder="Ex: 175" 
-                        required 
-                        min="0" 
-                    />
-                </div>
-                 <div className="flex items-center gap-2 pt-1">
-                    <input
-                        type="checkbox"
-                        id="lockPrice"
-                        checked={isPriceLocked}
-                        onChange={(e) => setIsPriceLocked(e.target.checked)}
-                        className="rounded bg-bg-muted border-border-primary text-blue-500 focus:ring-blue-500"
-                    />
-                    <label htmlFor="lockPrice" className="text-xs text-text-muted">
-                        Verrouiller ce prix (l'IA ne le modifiera pas)
-                    </label>
-                </div>
-                <div className="flex gap-2 pt-2">
-                    <button type="submit" disabled={isLoading} className="flex-grow bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-4 rounded-lg transition text-sm disabled:bg-gray-500">
-                        {isLoading ? 'Sauvegarde...' : 'Appliquer Prix'}
-                    </button>
-                     <button type="button" onClick={clearSelection} className="px-3 py-2 bg-bg-muted hover:bg-border-primary text-text-secondary rounded text-xs">Annuler</button>
-                </div>
-            </form>
-       );
-
-       return (
-            <div className="space-y-4">
-                <div className="flex gap-2">
-                     <button 
-                        onClick={() => { setSelectionMode('booking'); clearSelection(); }}
-                        className={`flex-1 py-2 text-sm rounded-md ${selectionMode === 'booking' ? 'bg-yellow-600 text-white' : 'bg-bg-muted text-text-secondary'}`}
-                     >
-                        Ajouter Réservation
-                     </button>
-                     <button 
-                        onClick={() => { setSelectionMode('price'); clearSelection(); }}
-                        className={`flex-1 py-2 text-sm rounded-md ${selectionMode === 'price' ? 'bg-blue-600 text-white' : 'bg-bg-muted text-text-secondary'}`}
-                     >
-                        Définir Prix
-                     </button>
-                </div>
-                
-                <div className="border-t border-border-primary pt-4">
-                    {!selectionStart ? (
-                        <p>Sélectionnez une période sur le calendrier pour commencer.</p>
-                    ) : selectionMode === 'booking' ? (
-                        renderBookingForm()
-                    ) : (
-                        renderPriceForm()
-                    )}
-                </div>
+   // Fonctions de rendu des formulaires (définies au niveau du composant)
+   const currencyLabel = userProfile?.currency || 'EUR';
+   
+   const renderBookingForm = () => (
+        <form onSubmit={handleSaveBooking} className="flex flex-col gap-3 text-left">
+            <div>
+                <label className="text-xs font-medium text-global-inactive mb-1 block">Période sélectionnée</label>
+                <p className="text-sm font-medium text-global-blanc bg-global-bg-small-box border border-global-stroke-box rounded-[10px] p-2 mt-1">
+                  {selectionStart} au {selectionEnd}
+                </p>
             </div>
-       );
-   };
+            <div>
+                <label className="text-xs font-medium text-global-inactive mb-1 block">Prix / Nuit ({currencyLabel})</label>
+                <input 
+                    type="number" 
+                    value={bookingPrice} 
+                    onChange={(e) => setBookingPrice(e.target.value)}
+                    className="w-full bg-global-bg-small-box border border-global-stroke-box rounded-[10px] px-3 py-2 text-global-blanc placeholder:text-global-inactive focus:outline-none focus:ring-2 focus:ring-global-content-highlight-2nd mt-1" 
+                    placeholder="Ex: 150" 
+                    required min="1"
+                />
+            </div>
+             <div>
+                <label className="text-xs font-medium text-global-inactive mb-1 block">Canal</label>
+                <select 
+                  value={bookingChannel} 
+                  onChange={(e) => setBookingChannel(e.target.value)} 
+                  className="w-full bg-global-bg-small-box border border-global-stroke-box rounded-[10px] px-3 py-2 text-global-blanc focus:outline-none focus:ring-2 focus:ring-global-content-highlight-2nd mt-1"
+                >
+                    <option value="Direct">Direct</option>
+                    <option value="Airbnb">Airbnb</option>
+                    <option value="Booking">Booking.com</option>
+                    <option value="VRBO">VRBO</option>
+                    <option value="Autre">Autre</option>
+                </select>
+            </div>
+            <div className="flex gap-2 pt-2">
+                <button 
+                  type="submit" 
+                  disabled={isLoading} 
+                  className="flex-grow bg-gradient-to-r from-[#155dfc] to-[#12a1d5] hover:opacity-90 text-white font-h3-font-family font-h3-font-weight text-h3-font-size py-2 px-4 rounded-[10px] transition-opacity disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                    {isLoading ? 'Sauvegarde...' : 'Enregistrer Résa.'}
+                </button>
+                 <button 
+                   type="button" 
+                   onClick={clearSelection} 
+                   className="px-3 py-2 bg-transparent border border-global-stroke-highlight-2nd text-global-inactive hover:text-global-blanc rounded-[10px] text-xs transition-colors"
+                 >
+                   Annuler
+                 </button>
+            </div>
+        </form>
+   );
+   
+   const renderPriceForm = () => (
+        <form onSubmit={handleSavePriceOverride} className="flex flex-col gap-3 text-left">
+            {selectedView === 'group' && (
+              <p className="text-xs text-global-inactive font-p1-font-family">
+                Le prix sera appliqué à toutes les propriétés synchronisées de ce groupe.
+              </p>
+            )}
+            <div>
+              <label className="text-xs font-medium text-global-inactive mb-1 block">Période sélectionnée</label>
+              <p className="text-sm font-medium text-global-blanc bg-global-bg-small-box border border-global-stroke-box rounded-[10px] p-2 mt-1">
+                {selectionStart} au {selectionEnd}
+              </p>
+            </div>
+            <div>
+                <label className="text-xs font-medium text-global-inactive mb-1 block">Nouveau Prix / Nuit ({currencyLabel})</label>
+                <input 
+                    type="number" 
+                    value={manualPrice} 
+                    onChange={(e) => setManualPrice(e.target.value)}
+                    className="w-full bg-global-bg-small-box border border-global-stroke-box rounded-[10px] px-3 py-2 text-global-blanc placeholder:text-global-inactive focus:outline-none focus:ring-2 focus:ring-global-content-highlight-2nd mt-1" 
+                    placeholder="Ex: 175" 
+                    required 
+                    min="0" 
+                />
+            </div>
+             <div className="flex items-center gap-2 pt-1">
+                <input
+                    type="checkbox"
+                    id="lockPrice"
+                    checked={isPriceLocked}
+                    onChange={(e) => setIsPriceLocked(e.target.checked)}
+                    className="w-5 h-5 rounded border border-global-content-highlight-2nd bg-transparent text-global-content-highlight-2nd focus:ring-2 focus:ring-global-content-highlight-2nd cursor-pointer"
+                />
+                <label htmlFor="lockPrice" className="text-xs text-global-inactive font-p1-font-family cursor-pointer">
+                    Verrouiller ce prix (l'IA ne le modifiera pas)
+                </label>
+            </div>
+            <div className="flex gap-2 pt-2">
+                <button 
+                  type="submit" 
+                  disabled={isLoading} 
+                  className="flex-grow bg-gradient-to-r from-[#155dfc] to-[#12a1d5] hover:opacity-90 text-white font-h3-font-family font-h3-font-weight text-h3-font-size py-2 px-4 rounded-[10px] transition-opacity disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                    {isLoading ? 'Sauvegarde...' : 'Appliquer Prix'}
+                </button>
+                 <button 
+                   type="button" 
+                   onClick={clearSelection} 
+                   className="px-3 py-2 bg-transparent border border-global-stroke-highlight-2nd text-global-inactive hover:text-global-blanc rounded-[10px] text-xs transition-colors"
+                 >
+                   Annuler
+                 </button>
+            </div>
+        </form>
+   );
+
    
    const handleViewChange = (e) => {
        const [type, id] = e.target.value.split('-');
@@ -1071,30 +1082,21 @@ function PricingPage({ token, userProfile }) {
           {/* Header avec sélecteur et navigation mois */}
           <header className="flex items-center justify-between relative self-stretch w-full flex-[0_0_auto]">
             {/* Sélecteur de propriété */}
-            <button
-              onClick={() => {}}
-              className="flex w-80 h-9 items-center justify-between px-3 py-0 relative bg-global-bg-small-box rounded-lg border border-solid border-global-stroke-box cursor-pointer hover:opacity-90 transition-opacity"
-              aria-label="Select address"
+            <select 
+              id="view-selector" 
+              value={getSelectedValue()} 
+              onChange={handleViewChange}
+              className="w-80 h-9 bg-global-bg-small-box rounded-lg border border-solid border-global-stroke-box px-3 py-0 text-center font-h3-font-family font-h3-font-weight text-global-blanc text-h3-font-size leading-h3-line-height appearance-none cursor-pointer focus:outline-none hover:opacity-90 transition-opacity"
+              disabled={isLoading || iaLoading}
             >
-              <select 
-                id="view-selector" 
-                value={getSelectedValue()} 
-                onChange={handleViewChange}
-                className="flex-1 bg-transparent text-center font-h3-font-family font-h3-font-weight text-global-blanc text-h3-font-size leading-h3-line-height appearance-none cursor-pointer focus:outline-none border-none"
-                disabled={isLoading || iaLoading}
-              >
-                <option value="">-- Sélectionnez --</option>
-                <optgroup label="Groupes">
-                  {allGroups.map(g => <option key={g.id} value={`group-${g.id}`}>{g.name}</option>)}
-                </optgroup>
-                <optgroup label="Propriétés Individuelles">
-                  {properties.map(p => <option key={p.id} value={`property-${p.id}`}>{p.address}</option>)}
-                </optgroup>
-              </select>
-              <div className="pointer-events-none">
-                <ArrowDownIcon />
-              </div>
-            </button>
+              <option value="">-- Sélectionnez --</option>
+              <optgroup label="Groupes">
+                {allGroups.map(g => <option key={g.id} value={`group-${g.id}`}>{g.name}</option>)}
+              </optgroup>
+              <optgroup label="Propriétés Individuelles">
+                {properties.map(p => <option key={p.id} value={`property-${p.id}`}>{p.address}</option>)}
+              </optgroup>
+            </select>
             
             {/* Navigation mois */}
             <nav
@@ -1170,155 +1172,106 @@ function PricingPage({ token, userProfile }) {
           </section>
         </div>
         
-        {/* 4. Afficher le composant dans la barre latérale */}
-        <div id="edit-panel" className="w-full md:w-80 bg-bg-secondary p-4 rounded-lg mt-6 md:mt-0 shadow-lg">
-          <h4 className="font-semibold mb-4 text-text-primary">Outils</h4>
-          <div className="space-y-4">
-            
-            <div id="news-feed-section" className="border-b border-border-primary pb-4">
-                <h5 className="text-md font-semibold text-text-primary mb-2">Infos Marché (Propriété)</h5>
-                <PropertyNewsFeed 
-                    token={token} 
-                    propertyId={propertyIdForAnalysis} 
-                />
-            </div>
+        {/* Zone Outils - Layout Figma */}
+        <div id="edit-panel" className="flex flex-col gap-1 items-start justify-start self-stretch shrink-0 relative w-full md:w-[394px]">
+          {/* 1. Analyse du Marché */}
+          <DateAnalysis
+            token={token}
+            date={selectedDateForAnalysis}
+            propertyId={propertyIdForAnalysis}
+            currentPrice={currentPriceForAnalysis}
+            userProfile={userProfile}
+          />
 
-            {/* Panneau d'Analyse de Date */}
-            <div id="date-analysis-section" className="border-b border-border-primary pb-4">
-                <DateAnalysis
-                    token={token}
-                    date={selectedDateForAnalysis} // Passe la date sélectionnée
-                    propertyId={propertyIdForAnalysis}
-                    currentPrice={currentPriceForAnalysis} // NOUVELLE PROP
-                    userProfile={userProfile} // NOUVELLE PROP
-                />
+          {/* 2. Stratégie IA (Prix) */}
+          <div className="bg-global-bg-box rounded-[14px] border border-solid border-global-stroke-box p-6 flex flex-col gap-3 items-start justify-start shrink-0 w-full relative">
+            <div className="text-global-blanc text-left font-h2-font-family text-h2-font-size font-h2-font-weight relative">
+              Stratégie IA (Prix)
             </div>
-          
-            <div id="ia-strategy-section">
-              <h5 className="text-md font-semibold text-text-primary mb-2">Stratégie IA (Prix)</h5>
-              
-              {/* Indicateur visuel de statut */}
-              <div className="mb-3 flex items-center gap-2">
+            <div className="text-global-inactive text-left font-h4-font-family text-h4-font-size leading-h4-line-height font-h4-font-weight relative self-stretch">
+              Générez et appliquez des prix suggérés sur 6 mois.
+            </div>
+            
+            {/* Toggle "Automatiser le pricing" */}
+            <div 
+              className={`bg-global-stroke-highlight-2nd rounded-[10px] border border-solid border-global-content-highlight-2nd pt-2 pr-3 pb-2 pl-3 flex flex-row gap-3 items-center justify-center self-stretch shrink-0 h-[46px] relative cursor-pointer hover:opacity-90 transition-opacity ${isAutoGenerationEnabled ? 'opacity-100' : 'opacity-70'}`}
+              onClick={() => handleToggleAutoGeneration(!isAutoGenerationEnabled)}
+            >
+              <div className={`relative w-5 h-5 shrink-0`}>
                 {isAutoGenerationEnabled ? (
-                  <div className="inline-flex items-center gap-2 px-3 py-1.5 bg-global-positive-impact/20 border border-global-positive-impact/40 rounded-lg">
-                    <div className="w-2 h-2 bg-global-positive-impact rounded-full animate-pulse" />
-                    <span className="font-p1-font-family font-p1-font-weight text-global-positive-impact text-p1-font-size leading-p1-line-height">
-                      Actif
-                    </span>
-                    {getNextGenerationTime && (
-                      <span className="font-p1-font-family font-p1-font-weight text-global-inactive text-xs leading-p1-line-height">
-                        • Prochaine : {getNextGenerationTime}
-                      </span>
-                    )}
+                  <div className="w-5 h-5 bg-global-content-highlight-2nd rounded flex items-center justify-center">
+                    <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                      <path d="M10 3L4.5 8.5L2 6" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                    </svg>
                   </div>
                 ) : (
-                  <div className="inline-flex items-center gap-2 px-3 py-1.5 bg-global-inactive/20 border border-global-inactive/40 rounded-lg">
-                    <div className="w-2 h-2 bg-global-inactive rounded-full" />
-                    <span className="font-p1-font-family font-p1-font-weight text-global-inactive text-p1-font-size leading-p1-line-height">
-                      Inactif
-                    </span>
-                  </div>
+                  <div className="w-5 h-5 border border-global-content-highlight-2nd rounded bg-transparent" />
                 )}
               </div>
-
-              {/* Affichage de la dernière génération */}
-              {formatLastRun && (
-                <div className="mb-3 p-2 bg-global-bg-small-box border border-global-stroke-box rounded-lg">
-                  <p className="text-xs text-global-inactive">
-                    Dernière génération : <span className="text-global-blanc font-medium">{formatLastRun}</span>
-                  </p>
-                </div>
-              )}
-
-              <p className="text-xs text-text-muted mb-3">
-                {isAutoGenerationEnabled 
-                  ? 'La génération automatique des prix est activée. Les prix seront générés tous les jours à 00h00.'
-                  : 'Activez la génération automatique pour que les prix soient générés tous les jours à 00h00.'}
-              </p>
-
-              {/* Messages de succès et d'erreur */}
-              {autoPricingSuccess && (
-                <div className="mb-3 p-3 bg-green-900/40 border border-green-500/40 rounded-lg">
-                  <p className="text-sm text-green-300">{autoPricingSuccess}</p>
-                </div>
-              )}
-              {autoPricingError && (
-                <div className="mb-3 p-3 bg-red-900/40 border border-red-500/40 rounded-lg">
-                  <p className="text-sm text-red-300">{autoPricingError}</p>
-                </div>
-              )}
-              
-              {/* Toggle Switch */}
-              <div className="flex items-center justify-between p-4 bg-global-bg-small-box rounded-[10px] border border-solid border-global-stroke-box">
-                <div className="flex items-center gap-3 flex-1">
-                  <div className="relative inline-block w-12 h-6">
-                    <input
-                      type="checkbox"
-                      id="auto-generation-toggle"
-                      checked={isAutoGenerationEnabled}
-                      disabled={isLoadingAutoPricing}
-                      onChange={(e) => handleToggleAutoGeneration(e.target.checked)}
-                      className="sr-only"
-                    />
-                    <label
-                      htmlFor="auto-generation-toggle"
-                      className={`block h-6 w-12 rounded-full cursor-pointer transition-all duration-300 ${
-                        isAutoGenerationEnabled
-                          ? 'bg-gradient-to-r from-[#155dfc] to-[#12a1d5]'
-                          : 'bg-global-stroke-box'
-                      }`}
-                    >
-                      <span
-                        className={`absolute top-0.5 left-0.5 h-5 w-5 rounded-full bg-white transition-all duration-300 transform ${
-                          isAutoGenerationEnabled ? 'translate-x-6' : 'translate-x-0'
-                        }`}
-                      />
-                    </label>
-                  </div>
-                  
-                  <div className="flex items-center gap-2">
-                    {isAutoGenerationEnabled ? (
-                      <>
-                        <div className="w-2 h-2 bg-global-positive-impact rounded-full animate-pulse" />
-                        <span className="font-p1-font-family font-p1-font-weight text-global-positive-impact text-p1-font-size leading-p1-line-height">
-                          Génération automatique activée
-                        </span>
-                      </>
-                    ) : (
-                      <>
-                        <div className="w-2 h-2 bg-global-inactive rounded-full" />
-                        <span className="font-p1-font-family font-p1-font-weight text-global-inactive text-p1-font-size leading-p1-line-height">
-                          Génération automatique désactivée
-                        </span>
-                      </>
-                    )}
-                  </div>
-                </div>
-                
-                {/* Bouton de génération manuelle (toujours disponible) */}
-                <button 
-                  id="generate-ia-strategy-btn" 
-                  onClick={handleGenerateStrategy}
-                  disabled={iaLoading || !selectedId || !db}
-                  className="ml-4 px-4 py-2 bg-gradient-to-r from-[#155dfc] to-[#12a1d5] hover:opacity-90 text-white font-h3-font-family font-h3-font-weight text-h3-font-size rounded-[10px] transition-opacity disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-                >
-                  <span id="ia-btn-text">{iaLoading ? 'Analyse...' : 'Générer maintenant'}</span>
-                  {iaLoading && (
-                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                  )}
-                </button>
+              <div className="text-global-blanc text-left font-h3-font-family text-h3-font-size font-h3-font-weight relative">
+                Automatiser le pricing
               </div>
             </div>
-            
-            <div className="pt-4">
-              <div id="booking-panel-content" className="text-center text-text-muted text-sm">
-                 {renderEditPanel()}
-              </div>
+
+            {/* Boutons Ajouter Réservation et Définir Prix */}
+            <div className="flex flex-row gap-3 items-start justify-start self-stretch shrink-0 relative">
+              <Bouton
+                state="principal"
+                text="Ajouter Réservation"
+                onClick={() => { setSelectionMode('booking'); clearSelection(); }}
+                className={selectionMode === 'booking' ? 'opacity-100' : 'opacity-70'}
+              />
+              
+              <button
+                onClick={() => { setSelectionMode('price'); clearSelection(); }}
+                className={`inline-flex items-center justify-center gap-2 px-3 py-2 relative flex-1 rounded-[10px] border border-solid border-global-stroke-highlight-2nd cursor-pointer hover:opacity-90 transition-opacity ${
+                  selectionMode === 'price' 
+                    ? 'bg-global-stroke-highlight-2nd text-global-blanc' 
+                    : 'bg-transparent text-global-inactive'
+                }`}
+              >
+                <svg width="20" height="20" viewBox="0 0 20 20" fill="none" className="w-5 h-5">
+                  <path d="M10 2L2 7L10 12L18 7L10 2Z" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                  <path d="M2 13L10 18L18 13" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                  <path d="M2 10L10 15L18 10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                </svg>
+                <span className="relative w-fit font-h3-font-family font-h3-font-weight text-h3-font-size leading-h3-line-height">
+                  Définir Prix
+                </span>
+              </button>
+            </div>
+
+            {/* Zone de formulaire (réservation ou prix) */}
+            <div className="border-t border-solid border-global-stroke-box pt-4 flex flex-row gap-6 items-start justify-center self-stretch shrink-0 relative">
+              {!selectionStart ? (
+                <div className="text-global-inactive text-left font-h4-font-family text-h4-font-size leading-h4-line-height font-h4-font-weight relative self-stretch">
+                  Sélectionnez une période sur le calendrier pour commencer.
+                </div>
+              ) : (
+                <div className="self-stretch w-full">
+                  {selectionMode === 'booking' ? renderBookingForm() : renderPriceForm()}
+                </div>
+              )}
             </div>
           </div>
+
+          {/* 3. Actualité du marché */}
+          <PropertyNewsFeed 
+            token={token} 
+            propertyId={propertyIdForAnalysis} 
+          />
         </div>
       </div>
       </div>
+
+      {/* Modale d'alerte */}
+      <AlertModal
+        isOpen={alertModal.isOpen}
+        onClose={() => setAlertModal({ isOpen: false, message: '', title: 'Information' })}
+        title={alertModal.title}
+        message={alertModal.message}
+        buttonText="OK"
+      />
     </div>
   );
 }

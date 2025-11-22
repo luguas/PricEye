@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { addProperty, updateProperty, syncPropertyData } from '../services/api.js';
+import CustomScrollbar from './CustomScrollbar.jsx';
 
 // Liste des équipements disponibles
 const availableAmenities = [
@@ -126,12 +127,12 @@ function PropertyModal({ token, onClose, onSave, property }) {
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center p-4 z-50">
-        <div className="bg-bg-secondary rounded-lg shadow-xl w-full max-w-lg p-6 max-h-[90vh] overflow-y-auto">
-            <h3 className="text-xl font-bold mb-6 text-text-primary">{isEditing ? 'Modifier la propriété' : 'Ajouter une nouvelle propriété'}</h3>
+        <div className="bg-bg-secondary rounded-lg shadow-xl w-full max-w-lg p-6 max-h-[90vh] flex flex-col">
+            <h3 className="text-xl font-bold mb-6 text-text-primary shrink-0">{isEditing ? 'Modifier la propriété' : 'Ajouter une nouvelle propriété'}</h3>
             
             {/* Bouton de Synchronisation (uniquement en mode édition) */}
             {isEditing && (
-              <div className="border-b border-border-primary pb-4 mb-4">
+              <div className="border-b border-border-primary pb-4 mb-4 shrink-0">
                 <button
                     type="button"
                     onClick={handleSyncData}
@@ -151,7 +152,8 @@ function PropertyModal({ token, onClose, onSave, property }) {
               </div>
             )}
 
-            <form onSubmit={handleSubmit} className="space-y-4">
+            <CustomScrollbar className="flex-1 min-h-0">
+              <form onSubmit={handleSubmit} className="space-y-4 pr-2">
                 <div>
                   <label htmlFor="address" className="block text-sm font-medium text-text-secondary">Adresse</label>
                   <input name="address" id="address" type="text" placeholder="Adresse" value={formData.address} onChange={handleChange} className="w-full bg-bg-muted border-border-primary text-text-primary p-2 rounded-md mt-1" required />
@@ -214,7 +216,8 @@ function PropertyModal({ token, onClose, onSave, property }) {
                         {isLoading ? 'Sauvegarde...' : 'Sauvegarder'}
                     </button>
                 </div>
-            </form>
+              </form>
+            </CustomScrollbar>
         </div>
     </div>
   );

@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { updatePropertyRules, updateGroupRules } from '../services/api.js';
+import CustomScrollbar from './CustomScrollbar.jsx';
 
 function RulesModal({ token, onClose, onSave, item, itemType }) {
   const [formData, setFormData] = useState({
@@ -63,11 +64,12 @@ function RulesModal({ token, onClose, onSave, item, itemType }) {
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center p-4 z-50">
-      <div className="bg-bg-secondary rounded-lg shadow-xl w-full max-w-2xl p-6"> 
-        <h3 className="text-xl font-bold mb-2 text-text-primary">Définir les Règles Personnalisées</h3>
-        <p className="text-sm text-text-muted mb-6">Pour : {itemName}</p>
+      <div className="bg-bg-secondary rounded-lg shadow-xl w-full max-w-2xl p-6 flex flex-col max-h-[90vh]"> 
+        <h3 className="text-xl font-bold mb-2 text-text-primary shrink-0">Définir les Règles Personnalisées</h3>
+        <p className="text-sm text-text-muted mb-6 shrink-0">Pour : {itemName}</p>
         
-        <form onSubmit={handleSubmit} className="space-y-6">
+        <CustomScrollbar className="flex-1 min-h-0">
+          <form onSubmit={handleSubmit} className="space-y-6 pr-2">
           <fieldset className="border border-border-secondary p-4 rounded-md">
             <legend className="text-lg font-semibold px-2 text-text-primary">Durée de Séjour</legend>
             <div className="grid grid-cols-2 gap-4 mt-2">
@@ -115,7 +117,8 @@ function RulesModal({ token, onClose, onSave, item, itemType }) {
               {isLoading ? 'Sauvegarde...' : 'Sauvegarder les Règles'}
             </button>
           </div>
-        </form>
+          </form>
+        </CustomScrollbar>
       </div>
     </div>
   );
