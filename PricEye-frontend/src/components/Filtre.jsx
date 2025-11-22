@@ -11,24 +11,30 @@ export const Filtre = ({ text, text2, className = '', value, onChange, options =
       )}
       <div className="bg-global-bg-small-box rounded-lg border-solid border-global-stroke-box border pt-[7px] pr-3 pb-[7px] pl-3 flex flex-row gap-3 items-center justify-start self-stretch shrink-0 h-[38px] relative">
         {options.length > 0 ? (
-          <select
-            value={value || ''}
-            onChange={onChange}
-            className="flex-1 bg-transparent border-none outline-none text-global-inactive font-h4-font-family text-h4-font-size leading-h4-line-height font-h4-font-weight appearance-none cursor-pointer"
-          >
-            <option value="">{text2 || 'Sélectionner...'}</option>
-            {options.map((option) => (
-              <option key={typeof option === 'string' ? option : option.value} value={typeof option === 'string' ? option : option.value}>
-                {typeof option === 'string' ? option : option.label}
-              </option>
-            ))}
-          </select>
+          <>
+            <select
+              value={value || ''}
+              onChange={onChange}
+              className="flex-1 bg-transparent border-none outline-none text-global-inactive font-h4-font-family text-h4-font-size leading-h4-line-height font-h4-font-weight appearance-none cursor-pointer relative z-10"
+              style={{ WebkitAppearance: 'none', MozAppearance: 'none' }}
+            >
+              <option value="">{text2 || 'Sélectionner...'}</option>
+              {options.map((option) => (
+                <option key={typeof option === 'string' ? option : option.value} value={typeof option === 'string' ? option : option.value}>
+                  {typeof option === 'string' ? option : (option.label || option.value)}
+                </option>
+              ))}
+            </select>
+            <IconsStateFlCheBas className="!w-5 !h-5 shrink-0 pointer-events-none absolute right-3" state="fl-che-bas" />
+          </>
         ) : (
-          <div className="text-global-inactive text-left font-h4-font-family text-h4-font-size leading-h4-line-height font-h4-font-weight relative">
-            {text2 || 'Sélectionner...'}
-          </div>
+          <>
+            <div className="text-global-inactive text-left font-h4-font-family text-h4-font-size leading-h4-line-height font-h4-font-weight relative flex-1">
+              {text2 || 'Sélectionner...'}
+            </div>
+            <IconsStateFlCheBas className="!w-5 !h-5 shrink-0 pointer-events-none" state="fl-che-bas" />
+          </>
         )}
-        <IconsStateFlCheBas className="!w-5 !h-5 shrink-0" state="fl-che-bas" />
       </div>
     </div>
   );

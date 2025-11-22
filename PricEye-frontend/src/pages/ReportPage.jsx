@@ -933,6 +933,26 @@ function ReportPage({ token, userProfile }) {
             ) : (
               <>
                 <Filtre
+                  text="Période"
+                  text2={dateRange === '7d' ? '7 derniers jours' : 
+                        dateRange === '1m' ? '1 mois' :
+                        dateRange === '6m' ? '6 mois' :
+                        dateRange === 'ytd' ? 'Année en cours' :
+                        dateRange === '1y' ? '1 an' :
+                        dateRange === 'all' ? 'Tout' : '1 mois'}
+                  value={dateRange}
+                  onChange={(e) => setDateRange(e.target.value)}
+                  options={[
+                    { value: '7d', label: '7 derniers jours' },
+                    { value: '1m', label: '1 mois' },
+                    { value: '6m', label: '6 mois' },
+                    { value: 'ytd', label: 'Année en cours' },
+                    { value: '1y', label: '1 an' },
+                    { value: 'all', label: 'Tout' }
+                  ]}
+                  className="!shrink-0"
+                />
+                <Filtre
                   text="Type de propriété"
                   text2={propertyType ? allProperties.find(p => p.property_type === propertyType)?.property_type || 'Tous types' : 'Tous types'}
                   value={propertyType}
@@ -948,7 +968,14 @@ function ReportPage({ token, userProfile }) {
                   options={[...new Set(allProperties.map(p => p.channel))].filter(Boolean)}
                   className="!shrink-0"
                 />
-                <Filtre className="!shrink-0"></Filtre>
+                <Filtre
+                  text="Statut"
+                  text2={status ? status : 'Tous les statuts'}
+                  value={status}
+                  onChange={(e) => setStatus(e.target.value)}
+                  options={[...new Set(allProperties.map(p => p.status))].filter(Boolean)}
+                  className="!shrink-0"
+                />
                 <div className="flex flex-col gap-2 items-start justify-start shrink-0 relative">
                   <div className="text-global-blanc text-left font-p1-font-family text-p1-font-size font-p1-font-weight relative self-stretch">
                     Pays / Ville / Adresse{" "}
