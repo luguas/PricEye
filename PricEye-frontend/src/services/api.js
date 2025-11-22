@@ -506,3 +506,22 @@ export function enableAutoPricing(userId, enabled, timezone, token) {
     });
 }
 
+// GET /api/properties/:id/price-overrides - Récupérer les price overrides
+export function getPriceOverrides(propertyId, token, startDate, endDate) {
+    const params = new URLSearchParams();
+    if (startDate) params.append('startDate', startDate);
+    if (endDate) params.append('endDate', endDate);
+    return apiRequest(`/api/properties/${propertyId}/price-overrides?${params.toString()}`, {
+        token,
+    });
+}
+
+// PUT /api/properties/:id/price-overrides - Mettre à jour les price overrides en batch
+export function updatePriceOverrides(propertyId, overrides, token) {
+    return apiRequest(`/api/properties/${propertyId}/price-overrides`, {
+        method: 'PUT',
+        token,
+        body: JSON.stringify({ overrides }),
+    });
+}
+

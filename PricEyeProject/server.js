@@ -3499,6 +3499,122 @@ cron.schedule('0 * * * *', () => {
 
 console.log('[Auto-Pricing] Service de planification démarré. Vérification toutes les heures.');
 
+// --- ENDPOINTS POUR LES PRICE OVERRIDES ---
+
+// GET /api/properties/:id/price-overrides - Récupérer les price overrides pour une période
+app.get('/api/properties/:id/price-overrides', authenticateToken, async (req, res) => {
+    try {
+        const db = admin.firestore();
+        const propertyId = req.params.id;
+        const userId = req.user.uid;
+        const { startDate, endDate } = req.query;
+
+        // Vérifier que la propriété appartient à l'utilisateur
+        const propertyRef = db.collection('properties').doc(propertyId);
+        const propertyDoc = await propertyRef.get();
+        
+        if (!propertyDoc.exists) {
+            return res.status(404).send({ error: 'Propriété non trouvée.' });
+        }
+
+        const propertyData = propertyDoc.data();
+        const userProfileRef = db.collection('users').doc(userId);
+        const userProfileDoc = await userProfileRef.get();
+        const propertyTeamId = propertyData.teamId || propertyData.ownerId;
+        
+        if (!userProfileDoc.exists || userProfileDoc.data().teamId !== propertyTeamId) {
+            return res.status(403).send({ error: 'Action non autorisée.' });
+        }
+
+        // Construire la requête
+        const overridesCol = db.collection(`properties/${propertyId}/price_overrides`);
+        let query = overridesCol;
+
+        if (startDate) {
+            query = query.where('date', '>=', startDate);
+        }
+        if (endDate) {
+            query = query.where('date', '<=', endDate);
+        }
+
+        const snapshot = await query.get();
+        const overrides = {};
+        
+        snapshot.forEach(doc => {
+            const data = doc.data();
+            overrides[data.date] = {
+                price: data.price,
+                isLocked: data.isLocked || false,
+                date: data.date
+            };
+        });
+
+        res.status(200).json(overrides);
+    } catch (error) {
+        console.error('Erreur lors de la récupération des price overrides:', error);
+        res.status(500).send({ error: 'Erreur lors de la récupération des price overrides.' });
+    }
+});
+
+// PUT /api/properties/:id/price-overrides - Mettre à jour les price overrides en batch
+app.put('/api/properties/:id/price-overrides', authenticateToken, async (req, res) => {
+    try {
+        const db = admin.firestore();
+        const propertyId = req.params.id;
+        const userId = req.user.uid;
+        const { overrides } = req.body; // Array of { date, price, isLocked }
+
+        if (!Array.isArray(overrides)) {
+            return res.status(400).send({ error: 'Le paramètre "overrides" doit être un tableau.' });
+        }
+
+        // Vérifier que la propriété appartient à l'utilisateur
+        const propertyRef = db.collection('properties').doc(propertyId);
+        const propertyDoc = await propertyRef.get();
+        
+        if (!propertyDoc.exists) {
+            return res.status(404).send({ error: 'Propriété non trouvée.' });
+        }
+
+        const propertyData = propertyDoc.data();
+        const userProfileRef = db.collection('users').doc(userId);
+        const userProfileDoc = await userProfileRef.get();
+        const propertyTeamId = propertyData.teamId || propertyData.ownerId;
+        
+        if (!userProfileDoc.exists || userProfileDoc.data().teamId !== propertyTeamId) {
+            return res.status(403).send({ error: 'Action non autorisée.' });
+        }
+
+        // Utiliser un batch pour les mises à jour
+        const batch = db.batch();
+        const overridesCol = db.collection(`properties/${propertyId}/price_overrides`);
+
+        for (const override of overrides) {
+            if (!override.date) continue;
+            
+            const docRef = overridesCol.doc(override.date);
+            const dataToSet = {
+                date: override.date,
+                price: Number(override.price),
+                isLocked: override.isLocked !== undefined ? Boolean(override.isLocked) : false,
+                updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+                updatedBy: userId
+            };
+            
+            batch.set(docRef, dataToSet, { merge: true });
+        }
+
+        await batch.commit();
+
+        res.status(200).send({ 
+            message: `${overrides.length} price override(s) mis à jour avec succès.`,
+            count: overrides.length
+        });
+    } catch (error) {
+        console.error('Erreur lors de la mise à jour des price overrides:', error);
+        res.status(500).send({ error: 'Erreur lors de la mise à jour des price overrides.' });
+    }
+});
 
 // --- DÉMARRAGE DU SERVEUR ---
 app.listen(port, () => {

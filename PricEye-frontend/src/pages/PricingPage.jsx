@@ -1,35 +1,14 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { getProperties, generatePricingStrategy, addBooking, getBookingsForMonth, getGroups, updateGroup, getUserProfile, getPropertySpecificNews, getAutoPricingStatus, enableAutoPricing } from '../services/api.js';
-import { getFirestore, doc, setDoc, writeBatch, collection, query, where, getDocs, addDoc } from "firebase/firestore";
+import { getProperties, generatePricingStrategy, addBooking, getBookingsForMonth, getGroups, updateGroup, getUserProfile, getPropertySpecificNews, getAutoPricingStatus, enableAutoPricing, getPriceOverrides, updatePriceOverrides } from '../services/api.js';
 import { jwtDecode } from 'jwt-decode'; 
-import { initializeApp } from "firebase/app"; 
+// Firebase n'est plus utilisé directement 
 import PropertyNewsFeed from '../components/PropertyNewsFeed.jsx';
 import DateAnalysis from '../components/DateAnalysis.jsx';
 import Bouton from '../components/Bouton.jsx';
 import AlertModal from '../components/AlertModal.jsx'; 
 
-// Assurez-vous que la configuration Firebase est accessible ici
-const firebaseConfig = {
-    apiKey: "AIzaSyCqdbT96st3gc9bQ9A4Yk7uxU-Dfuzyiuc",
-    authDomain: "priceye-6f81a.firebaseapp.com",
-    databaseURL: "https://priceye-6f81a-default-rtdb.europe-west1.firebasedatabase.app",
-    projectId: "priceye-6f81a",
-    storageBucket: "priceye-6f81a.appspot.com",
-    messagingSenderId: "244431363759",
-    appId: "1:244431363759:web:c2f600581f341fbca63e5a",
-    measurementId: "G-QC6JW8HXBE"
-};
-
-let db;
-let firebaseInitializationError = null; 
-try {
-    const app = initializeApp(firebaseConfig);
-    db = getFirestore(app);
-    console.log("Firebase initialisé dans PricingPage."); 
-} catch (error) {
-    console.error("Erreur d'initialisation Firebase dans PricingPage:", error);
-    firebaseInitializationError = error; 
-}
+// Firebase n'est plus utilisé directement côté client pour les price_overrides
+// On utilise maintenant l'API backend
 
 
 function PricingPage({ token, userProfile }) {
@@ -74,12 +53,7 @@ function PricingPage({ token, userProfile }) {
   const [alertModal, setAlertModal] = useState({ isOpen: false, message: '', title: 'Information' });
 
 
-  useEffect(() => {
-    if (firebaseInitializationError) {
-        setError(`Erreur critique Firebase: ${firebaseInitializationError.message}. Vérifiez la configuration.`);
-        setIsLoading(false); 
-    }
-  }, []);
+  // Plus besoin de vérifier l'initialisation Firebase
 
   // Fonction pour charger toutes les données initiales (profil, propriétés, groupes)
   const fetchInitialData = useCallback(async () => {
@@ -353,12 +327,12 @@ function PricingPage({ token, userProfile }) {
       const startOfMonth = `${year}-${String(month + 1).padStart(2, '0')}-01`;
       const endOfMonth = `${year}-${String(month + 1).padStart(2, '0')}-31`;
       
-      // Fetch Overrides
-      const overridesCol = collection(db, `properties/${propertyIdToFetch}/price_overrides`);
-      const qOverrides = query(overridesCol, where("date", ">=", startOfMonth), where("date", "<=", endOfMonth));
-      const snapshotOverrides = await getDocs(qOverrides);
+      // Fetch Overrides via API backend
+      const overridesData = await getPriceOverrides(propertyIdToFetch, token, startOfMonth, endOfMonth);
       const newOverrides = {};
-      snapshotOverrides.forEach(docSnap => newOverrides[docSnap.data().date] = docSnap.data().price);
+      Object.keys(overridesData).forEach(date => {
+        newOverrides[date] = overridesData[date].price;
+      });
       setPriceOverrides(newOverrides);
 
       // Fetch Bookings
@@ -456,8 +430,6 @@ function PricingPage({ token, userProfile }) {
           throw new Error("La stratégie générée par l'IA est vide ou mal formée.");
       }
       
-      const batch = writeBatch(db);
-      
       let propertyIdsToUpdate = [propertyIdToAnalyze]; 
       if (groupToSync) {
           groupToSync.properties.forEach(propId => {
@@ -470,39 +442,47 @@ function PricingPage({ token, userProfile }) {
       // Pré-charger les prix verrouillés pour toutes les propriétés concernées
       const lockedPricesMap = new Map();
       for (const propId of propertyIdsToUpdate) {
-           const overridesCol = collection(db, `properties/${propId}/price_overrides`);
-           const lockedSnapshot = await getDocs(query(overridesCol, where('isLocked', '==', true)));
-           lockedSnapshot.forEach(doc => {
-               // Clé = "propertyId-YYYY-MM-DD"
-               lockedPricesMap.set(`${propId}-${doc.id}`, doc.data().price); 
-           });
+           try {
+               const overridesData = await getPriceOverrides(propId, token);
+               Object.keys(overridesData).forEach(date => {
+                   if (overridesData[date].isLocked) {
+                       lockedPricesMap.set(`${propId}-${date}`, overridesData[date].price);
+                   }
+               });
+           } catch (err) {
+               console.warn(`Erreur lors de la récupération des prix verrouillés pour ${propId}:`, err);
+           }
       }
       
       console.log(`Trouvé ${lockedPricesMap.size} prix verrouillés pour ${propertyIdsToUpdate.length} propriétés.`);
 
-      strategy.daily_prices.forEach(dayPrice => {
-        if (!/^\d{4}-\d{2}-\d{2}$/.test(dayPrice.date)) return; 
-        if (typeof dayPrice.price !== 'number' || isNaN(dayPrice.price)) return;
-        
-        propertyIdsToUpdate.forEach(propId => {
+      // Préparer les overrides à mettre à jour pour chaque propriété
+      for (const propId of propertyIdsToUpdate) {
+          const overridesToUpdate = [];
+          
+          strategy.daily_prices.forEach(dayPrice => {
+            if (!/^\d{4}-\d{2}-\d{2}$/.test(dayPrice.date)) return; 
+            if (typeof dayPrice.price !== 'number' || isNaN(dayPrice.price)) return;
+            
             // Vérifier si cette date spécifique est verrouillée pour CETTE propriété
             if (lockedPricesMap.has(`${propId}-${dayPrice.date}`)) {
                  console.log(`Ignoré ${dayPrice.date} pour ${propId}: prix verrouillé.`);
                  return; // Ne pas écraser
             }
 
-            const dataToSet = { 
-                date: dayPrice.date, 
-                price: dayPrice.price, 
-                reason: dayPrice.reason || "Stratégie IA Groupe",
-                isLocked: false // Les prix de l'IA ne sont pas verrouillés
-            };
-            const docRef = doc(db, `properties/${propId}/price_overrides`, dayPrice.date);
-            batch.set(docRef, dataToSet);
-        });
-      });
-      
-      await batch.commit();
+            overridesToUpdate.push({
+                date: dayPrice.date,
+                price: dayPrice.price,
+                isLocked: false,
+                reason: dayPrice.reason || "Stratégie IA Groupe"
+            });
+          });
+          
+          // Mettre à jour via l'API backend
+          if (overridesToUpdate.length > 0) {
+              await updatePriceOverrides(propId, overridesToUpdate, token);
+          }
+      }
       
       setAlertModal({ isOpen: true, message: `Stratégie IA appliquée avec succès à ${propertyIdsToUpdate.length} propriété(s) ! ${strategy.strategy_summary}`, title: 'Succès' });
       fetchCalendarData(); // Recharger le calendrier
@@ -683,28 +663,30 @@ function PricingPage({ token, userProfile }) {
       setIsLoading(true);
       setError('');
       try {
-          const batch = writeBatch(db);
+          // Préparer les overrides pour chaque propriété
           let currentDate = new Date(selectionStart);
           const endDate = new Date(selectionEnd);
           
-          while(currentDate <= endDate) {
-              const dateStr = currentDate.toISOString().split('T')[0];
-              const dataToSet = { 
-                  date: dateStr, 
-                  price: priceNum, 
-                  reason: "Manuel",
-                  isLocked: isPriceLocked 
-              };
+          // Mettre à jour chaque propriété via l'API backend
+          for (const propId of propertyIdsToUpdate) {
+              const overridesToUpdate = [];
+              let dateIterator = new Date(selectionStart);
               
-              propertyIdsToUpdate.forEach(propId => {
-                  const docRef = doc(db, `properties/${propId}/price_overrides`, dateStr);
-                  batch.set(docRef, dataToSet);
-              });
+              while(dateIterator <= endDate) {
+                  const dateStr = dateIterator.toISOString().split('T')[0];
+                  overridesToUpdate.push({
+                      date: dateStr,
+                      price: priceNum,
+                      isLocked: isPriceLocked,
+                      reason: "Manuel"
+                  });
+                  dateIterator.setDate(dateIterator.getDate() + 1);
+              }
               
-              currentDate.setDate(currentDate.getDate() + 1);
+              if (overridesToUpdate.length > 0) {
+                  await updatePriceOverrides(propId, overridesToUpdate, token);
+              }
           }
-          
-          await batch.commit();
           setAlertModal({ isOpen: true, message: `Prix manuels appliqués à ${propertyIdsToUpdate.length} propriété(s) !`, title: 'Succès' });
           clearSelection();
           fetchCalendarData(); 
