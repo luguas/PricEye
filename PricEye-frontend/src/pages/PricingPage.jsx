@@ -1210,7 +1210,7 @@ function PricingPage({ token, userProfile }) {
               {renderCalendar()}
               {/* Overlay de chargement sur le calendrier */}
               {iaLoading && (
-                <div className="absolute inset-0 bg-black/30 backdrop-blur-sm rounded-[10px] flex items-center justify-center z-10">
+                <div className="absolute inset-0 bg-black/70 backdrop-blur-sm rounded-[10px] flex items-center justify-center z-10">
                   <div className="bg-global-bg-box border border-global-content-highlight-2nd rounded-[10px] p-4 flex flex-col items-center gap-3">
                     <svg className="animate-spin w-8 h-8 text-global-content-highlight-2nd" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                       <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />

@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import NotificationsMenu from './NotificationsMenu.jsx';
+import logoPriceye from '../../Images/logo priceye.png';
 
 const BellIcon = ({ className = '' }) => (
   <svg
@@ -142,13 +143,13 @@ function PageTopBar({
         </div>
 
         <div
-          className="rounded-full w-11 h-11 flex items-center justify-center"
-          style={{
-            background:
-              'linear-gradient(90deg, rgba(21, 93, 252, 1) 0%, rgba(18, 161, 213, 1) 100%)',
-          }}
+          className="rounded-full w-11 h-11 flex items-center justify-center bg-white p-1"
         >
-          <UserIcon className="text-white" />
+          <img 
+            src={logoPriceye} 
+            alt="PricEye Logo" 
+            className="w-full h-full object-contain rounded-full"
+          />
         </div>
       </div>
     </div>

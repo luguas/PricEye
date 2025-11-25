@@ -4,7 +4,7 @@ const AlertModal = ({ isOpen, onClose, title = 'Information', message, buttonTex
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center p-4 z-50" onClick={onClose}>
+    <div className="fixed inset-0 bg-black bg-opacity-90 flex items-center justify-center p-4 z-50" onClick={onClose}>
       <div 
         className="bg-global-bg-box rounded-[14px] border border-solid border-global-stroke-box p-6 flex flex-col gap-4 items-start justify-start w-full max-w-md relative"
         onClick={(e) => e.stopPropagation()}

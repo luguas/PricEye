@@ -54,9 +54,9 @@ function StrategyModal({ token, onClose, onSave, item, itemType }) {
     if (item) {
       setFormData({
         strategy: item.strategy || 'Équilibré',
-        floor_price: item.floor_price || '',
-        base_price: item.base_price || '',
-        ceiling_price: item.ceiling_price || '',
+        floor_price: item.floor_price != null ? String(item.floor_price) : '',
+        base_price: item.base_price != null ? String(item.base_price) : '',
+        ceiling_price: item.ceiling_price != null ? String(item.ceiling_price) : '',
       });
     }
   }, [item]);
@@ -101,7 +101,7 @@ function StrategyModal({ token, onClose, onSave, item, itemType }) {
   };
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center p-4 z-50">
+    <div className="fixed inset-0 bg-black bg-opacity-90 flex items-center justify-center p-4 z-50">
       <div className="bg-global-bg-box rounded-[14px] border border-solid border-global-stroke-box p-6 flex flex-col gap-3 items-start justify-start w-full max-w-lg relative max-h-[90vh]">
         {/* Titre */}
         <div className="text-global-blanc text-left font-h2-font-family text-h2-font-size font-h2-font-weight relative shrink-0">

@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { createPortal } from 'react-dom';
 import { createGroup, addPropertiesToGroup } from '../services/api.js';
 
 /**
@@ -58,15 +59,25 @@ function NotificationsMenu({ isOpen, onClose, recommendations, token, onGroupCre
 
   const hasNotifications = recommendations && recommendations.length > 0;
 
-  return (
-    <div
-      ref={menuRef}
-      className="notifications-menu fixed bg-global-bg-box border border-global-stroke-box rounded-[14px] shadow-xl z-50 w-[400px] max-h-[600px] overflow-hidden flex flex-col"
-      style={{
-        top: position?.top || '60px',
-        right: position?.right || '20px',
-      }}
-    >
+  const menuContent = (
+    <>
+      {/* Overlay de fond */}
+      <div 
+        className="fixed inset-0 bg-transparent z-[10000]"
+        onClick={onClose}
+        style={{ pointerEvents: 'auto' }}
+      />
+      {/* Menu de notifications */}
+      <div
+        className="notifications-menu fixed border border-global-stroke-box rounded-[14px] shadow-xl z-[10001] w-[400px] max-h-[600px] overflow-hidden flex flex-col backdrop-blur-md"
+        style={{
+          top: position?.top || '60px',
+          right: position?.right || '20px',
+          backgroundColor: 'rgba(15, 23, 43, 0.98)',
+          pointerEvents: 'auto',
+        }}
+        onClick={(e) => e.stopPropagation()}
+      >
       {/* En-tête du menu */}
       <div className="flex items-center justify-between p-4 border-b border-global-stroke-box">
         <h3 className="text-global-blanc font-h3-font-family font-h3-font-weight text-h3-font-size">
@@ -160,7 +171,11 @@ function NotificationsMenu({ isOpen, onClose, recommendations, token, onGroupCre
         )}
       </div>
     </div>
+    </>
   );
+
+  // Utiliser React Portal pour rendre le menu directement dans le body
+  return createPortal(menuContent, document.body);
 }
 
 export default NotificationsMenu;

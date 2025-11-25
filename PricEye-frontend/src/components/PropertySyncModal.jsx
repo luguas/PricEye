@@ -149,7 +149,7 @@ function PropertySyncModal({ token, pmsType, onClose }) {
   };
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center p-4 z-50">
+    <div className="fixed inset-0 bg-black bg-opacity-90 flex items-center justify-center p-4 z-50">
       <div className="bg-bg-secondary rounded-lg shadow-xl w-full max-w-lg p-6 max-h-[90vh] flex flex-col">
         <h3 className="text-xl font-bold mb-6 text-text-primary shrink-0">Synchroniser les Propriétés</h3>
         

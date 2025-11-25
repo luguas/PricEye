@@ -1,4 +1,5 @@
 import React from 'react';
+import logoPriceye from '../../Images/logo priceye.png';
 
 const IconDashboard = ({ className = '' }) => (
   <svg
@@ -149,11 +150,13 @@ export const NavBar = ({
       <div className="bg-global-bg-box border-r border-global-stroke-box flex flex-col items-stretch justify-between w-full min-h-screen relative">
         <div className={`border-b border-global-stroke-box h-[70px] flex items-center justify-between ${isCollapsed ? 'px-4' : 'px-8'}`}>
           <div className="flex items-center gap-3">
-            <div className="w-[27px] h-10 rounded-lg bg-global-content-highlight-2nd text-global-blanc font-bold flex items-center justify-center text-base">
-              P
-            </div>
+            <img 
+              src={logoPriceye} 
+              alt="PricEye Logo" 
+              className="w-[27px] h-10 object-contain"
+            />
             {!isCollapsed && (
-              <div className="text-global-blanc font-h2-font-family text-h2-font-size font-h2-font-weight">
+              <div className="text-global-blanc text-left font-['Avenir-Heavy',sans-serif] text-xl leading-6 font-normal relative">
                 PricEye
               </div>
             )}

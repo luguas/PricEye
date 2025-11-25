@@ -2130,6 +2130,11 @@ app.put('/api/groups/:id/strategy', authenticateToken, async (req, res) => {
         }
         
         const batch = db.batch();
+        
+        // Mettre à jour le document du groupe lui-même avec la stratégie
+        batch.update(groupRef, strategyData);
+        
+        // Mettre à jour toutes les propriétés du groupe
         propertiesInGroup.forEach(propId => {
             const propRef = db.collection('properties').doc(propId);
             batch.update(propRef, strategyData);
@@ -2139,7 +2144,7 @@ app.put('/api/groups/:id/strategy', authenticateToken, async (req, res) => {
         
         await batch.commit();
         
-        res.status(200).send({ message: `Stratégie appliquée à ${propertiesInGroup.length} propriétés.` });
+        res.status(200).send({ message: `Stratégie appliquée au groupe et à ${propertiesInGroup.length} propriété(s).` });
         
     } catch (error) {
         console.error('Erreur lors de la mise à jour de la stratégie de groupe:', error);
