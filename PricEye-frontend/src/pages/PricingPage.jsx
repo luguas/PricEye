@@ -882,6 +882,11 @@ function PricingPage({ token, userProfile }) {
     const month = currentCalendarDate.getMonth();
     const grid = [];
 
+    // Obtenir la date d'aujourd'hui au format YYYY-MM-DD pour comparaison
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+
     const firstDayOfMonth = new Date(year, month, 1);
     const firstDayWeekday = firstDayOfMonth.getDay(); 
     const daysInMonth = new Date(year, month + 1, 0).getDate();
@@ -913,14 +918,18 @@ function PricingPage({ token, userProfile }) {
         const currency = userProfile?.currency || 'EUR';
         const priceFormatted = price != null ? `${Math.round(price)}${currency === 'EUR' ? '€' : currency === 'USD' ? '$US' : currency}` : '';
         
+        // Vérifier si la date est antérieure à aujourd'hui
+        const isPastDate = dateStr < todayStr;
+        
         let bgClass = 'bg-global-bg-small-box';
         let borderClass = 'border-global-stroke-box';
         let textColor = 'text-global-blanc';
         let isInSelection = false;
         let isDisabled = false;
+        let opacity = 1;
         
         // Vérifier si dans la sélection
-        if (selectionStart && selectionEnd) {
+        if (selectionStart && selectionEnd && !isPastDate) {
              const dayTime = new Date(dateStr).getTime();
              const startTime = new Date(selectionStart).getTime();
              const endTime = new Date(selectionEnd).getTime();
@@ -944,6 +953,11 @@ function PricingPage({ token, userProfile }) {
             bgClass = 'bg-calendrierbg-orange';
             borderClass = 'border-calendrierstroke-orange';
             isDisabled = true;
+        } else if (isPastDate) {
+            // Jours passés = grisés
+            isDisabled = true;
+            opacity = 0.4;
+            textColor = 'text-global-inactive';
         } else if (!isInSelection && !isBooked) {
             // Par défaut, fond normal
             bgClass = 'bg-global-bg-small-box';
@@ -955,6 +969,7 @@ function PricingPage({ token, userProfile }) {
                 key={dateStr} 
                 data-date={dateStr} 
                 className={`w-full h-full flex flex-col items-center justify-center ${priceFormatted ? 'gap-1' : ''} ${bgClass} rounded-[10px] border border-solid ${borderClass} ${textColor} ${isDisabled ? 'cursor-not-allowed' : 'cursor-pointer'} transition-colors relative`}
+                style={{ opacity }}
                 onMouseDown={!isDisabled ? () => handleMouseDown(dateStr) : undefined}
                 onMouseEnter={!isDisabled ? () => handleMouseOver(dateStr) : undefined}
             >
@@ -962,7 +977,7 @@ function PricingPage({ token, userProfile }) {
                   {day}
                 </div>
                 {priceFormatted && (
-                  <div className={`relative w-fit font-h4-font-family font-h4-font-weight text-global-blanc text-h4-font-size text-center leading-h4-line-height whitespace-nowrap`}>
+                  <div className={`relative w-fit font-h4-font-family font-h4-font-weight ${isPastDate ? 'text-global-inactive' : 'text-global-blanc'} text-h4-font-size text-center leading-h4-line-height whitespace-nowrap`}>
                     {priceFormatted}
                   </div>
                 )}
@@ -1322,13 +1337,27 @@ function PricingPage({ token, userProfile }) {
               <Bouton
                 state="principal"
                 text="Ajouter Réservation"
-                onClick={iaLoading ? undefined : () => { setSelectionMode('booking'); clearSelection(); }}
+                onClick={iaLoading ? undefined : () => { 
+                  setSelectionMode('booking');
+                  // Réinitialiser uniquement les champs du formulaire, pas la sélection
+                  setBookingPrice('');
+                  setBookingChannel('Direct');
+                  setManualPrice('');
+                  setIsPriceLocked(true);
+                }}
                 className={iaLoading ? 'opacity-50 cursor-not-allowed' : selectionMode === 'booking' ? 'opacity-100' : 'opacity-70'}
                 disabled={iaLoading}
               />
               
               <button
-                onClick={iaLoading ? undefined : () => { setSelectionMode('price'); clearSelection(); }}
+                onClick={iaLoading ? undefined : () => { 
+                  setSelectionMode('price');
+                  // Réinitialiser uniquement les champs du formulaire, pas la sélection
+                  setBookingPrice('');
+                  setBookingChannel('Direct');
+                  setManualPrice('');
+                  setIsPriceLocked(true);
+                }}
                 disabled={iaLoading}
                 className={`inline-flex items-center justify-center gap-2 px-3 py-2 relative flex-1 rounded-[10px] border border-solid border-global-stroke-highlight-2nd transition-opacity ${
                   iaLoading 

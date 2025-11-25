@@ -1,4 +1,5 @@
-import React from 'react';
+import React, { useState, useRef, useEffect } from 'react';
+import NotificationsMenu from './NotificationsMenu.jsx';
 
 const BellIcon = ({ className = '' }) => (
   <svg
@@ -34,13 +35,69 @@ function PageTopBar({
   className = '',
   userName = 'Utilisateur',
   propertyCount = null,
-  onNotificationsClick,
+  notifications = [],
+  token = null,
+  onNotificationsUpdate,
   ...props
 }) {
+  const [isNotificationsMenuOpen, setIsNotificationsMenuOpen] = useState(false);
+  const buttonRef = useRef(null);
+
   const formattedPropertyCount =
     typeof propertyCount === 'number'
       ? `${propertyCount} ${propertyCount > 1 ? 'propriétés' : 'propriété'}`
       : '—';
+
+  // Vérifier s'il y a des notifications
+  const hasNotifications = notifications && notifications.length > 0;
+
+  const handleNotificationsClick = () => {
+    setIsNotificationsMenuOpen(!isNotificationsMenuOpen);
+  };
+
+  const handleCloseMenu = () => {
+    setIsNotificationsMenuOpen(false);
+  };
+
+  const handleGroupCreated = () => {
+    if (onNotificationsUpdate) {
+      onNotificationsUpdate();
+    }
+    // Le menu se fermera automatiquement après la création
+  };
+
+  // Calculer la position du menu
+  const getMenuPosition = () => {
+    if (buttonRef.current) {
+      const rect = buttonRef.current.getBoundingClientRect();
+      return {
+        top: `${rect.bottom + 8}px`,
+        right: `${window.innerWidth - rect.right}px`,
+      };
+    }
+    return { top: '60px', right: '20px' };
+  };
+
+  // Fermer le menu si on clique en dehors
+  useEffect(() => {
+    if (!isNotificationsMenuOpen) return;
+
+    const handleClickOutside = (event) => {
+      // Ne pas fermer si on clique sur le bouton de notification ou dans le menu
+      if (
+        buttonRef.current?.contains(event.target) ||
+        document.querySelector('.notifications-menu')?.contains(event.target)
+      ) {
+        return;
+      }
+      setIsNotificationsMenuOpen(false);
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [isNotificationsMenuOpen]);
 
   return (
     <div
@@ -49,14 +106,29 @@ function PageTopBar({
     >
       <div className="flex items-center gap-4">
         <button
+          ref={buttonRef}
           type="button"
-          onClick={onNotificationsClick}
+          onClick={handleNotificationsClick}
           className="relative w-10 h-10 flex items-center justify-center rounded-full border border-transparent text-global-inactive hover:text-global-blanc hover:border-global-stroke-box transition"
           aria-label="Notifications"
         >
-          <span className="absolute top-2 right-2 w-2 h-2 bg-global-content-highlight-2nd rounded-full" />
+          {hasNotifications && (
+            <span className="absolute top-2 right-2 w-2 h-2 bg-global-content-highlight-2nd rounded-full" />
+          )}
           <BellIcon />
         </button>
+
+        {/* Menu de notifications */}
+        {isNotificationsMenuOpen && (
+          <NotificationsMenu
+            isOpen={isNotificationsMenuOpen}
+            onClose={handleCloseMenu}
+            recommendations={notifications}
+            token={token}
+            onGroupCreated={handleGroupCreated}
+            position={getMenuPosition()}
+          />
+        )}
 
         <div className="hidden sm:block w-px h-8 bg-white/10" aria-hidden="true" />
 

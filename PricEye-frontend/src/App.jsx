@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import LoginPage from './pages/LoginPage.jsx';
 import RegisterPage from './pages/RegisterPage.jsx';
 import DashboardPage from './pages/DashboardPage.jsx';
@@ -6,7 +6,7 @@ import PricingPage from './pages/PricingPage.jsx';
 import SettingsPage from './pages/SettingsPage.jsx';
 import ReportPage from './pages/ReportPage.jsx'; 
 import BookingsPage from './pages/BookingsPage.jsx'; // NOUVELLE PAGE
-import { getUserProfile } from './services/api.js'; 
+import { getUserProfile, getGroupRecommendations } from './services/api.js'; 
 import NavBar from './components/NavBar.jsx';
 import PageTopBar from './components/PageTopBar.jsx';
 
@@ -32,12 +32,41 @@ function App() {
   const [userProfile, setUserProfile] = useState(null); 
   const [isLoadingProfile, setIsLoadingProfile] = useState(true);
   const [isNavCollapsed, setIsNavCollapsed] = useState(false);
+  const [notifications, setNotifications] = useState([]);
+  const [isLoadingNotifications, setIsLoadingNotifications] = useState(false);
 
   // Gérer le changement de thème
   const handleThemeChange = (newTheme) => {
     setUserProfile(prev => ({ ...prev, theme: newTheme }));
     applyTheme(newTheme);
   };
+
+  // Fonction pour charger les notifications
+  const fetchNotifications = useCallback(async (authToken) => {
+    if (!authToken) {
+      setNotifications([]);
+      return;
+    }
+
+    try {
+      setIsLoadingNotifications(true);
+      const recs = await getGroupRecommendations(authToken);
+      setNotifications(recs || []);
+    } catch (err) {
+      console.error("Erreur lors du chargement des notifications:", err);
+      setNotifications([]);
+    } finally {
+      setIsLoadingNotifications(false);
+    }
+  }, []);
+
+  const handleLogout = useCallback(() => {
+    setToken(null);
+    setUserProfile(null);
+    setNotifications([]);
+    localStorage.removeItem('authToken');
+    setCurrentView('login'); 
+  }, []);
 
   // Effet pour charger le token et le profil au démarrage
   useEffect(() => {
@@ -51,6 +80,8 @@ function App() {
         .then(profile => {
           setUserProfile(profile);
           applyTheme(profile.theme || 'auto'); // Appliquer le thème sauvegardé
+          // Charger les notifications après le profil
+          fetchNotifications(storedToken);
         })
         .catch(err => {
           console.error("Erreur de chargement du profil:", err);
@@ -65,8 +96,9 @@ function App() {
       setCurrentView('login');
       setIsLoadingProfile(false);
       applyTheme('auto'); // Appliquer le thème système par défaut si déconnecté
+      setNotifications([]);
     }
-  }, [token]); // Relancé si le token change (ex: connexion)
+  }, [token, fetchNotifications, handleLogout]); // Relancé si le token change (ex: connexion)
 
   const handleLoginSuccess = (newToken) => {
     setToken(newToken); // Déclenchera le useEffect ci-dessus pour charger le profil
@@ -74,12 +106,12 @@ function App() {
     setCurrentView('dashboard'); 
   };
 
-  const handleLogout = () => {
-    setToken(null);
-    setUserProfile(null);
-    localStorage.removeItem('authToken');
-    setCurrentView('login'); 
-  };
+  // Fonction pour rafraîchir les notifications
+  const handleNotificationsUpdate = useCallback(() => {
+    if (token) {
+      fetchNotifications(token);
+    }
+  }, [token, fetchNotifications]);
 
   const navigateTo = (view) => {
     setCurrentView(view);
@@ -131,6 +163,9 @@ function App() {
             <PageTopBar
               userName={userProfile?.name || userProfile?.email || 'Utilisateur'}
               propertyCount={userProfile?.stats?.propertyCount}
+              notifications={notifications}
+              token={token}
+              onNotificationsUpdate={handleNotificationsUpdate}
             />
           </div>
           <nav className="bg-bg-sidebar md:hidden p-4 flex-shrink-0 flex flex-col rounded-b-3xl border border-border-primary">
