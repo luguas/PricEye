@@ -24,7 +24,7 @@ const PlusIcon = () => (
 );
 
 // Accepter onGroupChange, onEditStrategy, onEditRules
-function GroupsManager({ token, properties, onGroupChange, onEditStrategy, onEditRules, userProfile }) {
+function GroupsManager({ token, properties, onGroupChange, onEditStrategy, onEditRules, userProfile, refreshKey }) {
   const [groups, setGroups] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState('');
@@ -57,7 +57,7 @@ function GroupsManager({ token, properties, onGroupChange, onEditStrategy, onEdi
 
   useEffect(() => {
     fetchGroups();
-  }, [fetchGroups]);
+  }, [fetchGroups, refreshKey]);
 
   const handleCreateGroup = async (e) => {
     e.preventDefault();

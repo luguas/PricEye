@@ -13,7 +13,7 @@ import { jwtDecode } from 'jwt-decode';
 import PMSIntegrationPanel from '../components/PMSIntegrationPanel.jsx'; // NOUVEL IMPORT
 import ConfirmModal from '../components/ConfirmModal.jsx';
 
-function SettingsPage({ token, userProfile: initialProfile, onThemeChange }) {
+function SettingsPage({ token, userProfile: initialProfile, onThemeChange, onLogout }) {
   const [profile, setProfile] = useState({
     name: '',
     email: '',
@@ -699,6 +699,25 @@ function SettingsPage({ token, userProfile: initialProfile, onThemeChange }) {
           </div>
         </div>
       )}
+
+      {/* Bouton de déconnexion */}
+      <div className="bg-global-bg-box rounded-[14px] border border-solid border-global-stroke-box p-6 flex flex-col gap-3 items-start justify-start relative">
+        <h2 className="text-global-blanc text-left font-h2-font-family text-h2-font-size font-h2-font-weight relative border-b border-global-stroke-box pb-2 mb-4 w-full">
+          Déconnexion
+        </h2>
+        <p className="text-global-inactive text-sm mb-4">
+          Vous pouvez vous déconnecter de votre compte à tout moment. Vous devrez vous reconnecter pour accéder à nouveau à l'application.
+        </p>
+        <div className="flex justify-end pt-4 w-full">
+          <button 
+            type="button"
+            onClick={onLogout}
+            className="px-6 py-2 font-semibold text-white rounded-[10px] bg-red-600 hover:bg-red-700 transition-colors"
+          >
+            Se déconnecter
+          </button>
+        </div>
+      </div>
 
       {/* Modale de confirmation */}
       <ConfirmModal

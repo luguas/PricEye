@@ -36,7 +36,7 @@ const PriceyeIcon = ({ className = '' }) => (
   </svg>
 );
 
-function StrategyModal({ token, onClose, onSave, item, itemType }) {
+function StrategyModal({ token, onClose, onSave, item, itemType, onGroupStrategyUpdated }) {
   const [formData, setFormData] = useState({
     strategy: 'Équilibré',
     floor_price: '',
@@ -87,12 +87,20 @@ function StrategyModal({ token, onClose, onSave, item, itemType }) {
       // Appeler la bonne API en fonction du type (propriété ou groupe)
       if (itemType === 'group') {
         await updateGroupStrategy(item.id, strategyData, token);
+        // Appeler le callback pour mettre à jour immédiatement le groupe
+        if (onGroupStrategyUpdated) {
+          await onGroupStrategyUpdated({ ...item, ...strategyData });
+        }
       } else {
         await updatePropertyStrategy(item.id, strategyData, token);
       }
 
-      onSave();
+      // Fermer le modal et déclencher le rafraîchissement
       onClose();
+      // Appeler onSave après un petit délai pour laisser le modal se fermer
+      setTimeout(() => {
+        onSave();
+      }, 100);
     } catch (err) {
       setError(err.message);
     } finally {

@@ -90,21 +90,6 @@ const IconSettings = ({ className = '' }) => (
   </svg>
 );
 
-const IconLogout = ({ className = '' }) => (
-  <svg
-    viewBox="0 0 24 24"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth="1.6"
-    strokeLinecap="round"
-    strokeLinejoin="round"
-    className={`w-5 h-5 ${className}`}
-  >
-    <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
-    <polyline points="16 17 21 12 16 7" />
-    <line x1="21" y1="12" x2="9" y2="12" />
-  </svg>
-);
 
 const IconArrow = ({ direction = 'left', className = '' }) => {
   const isLeft = direction === 'left';
@@ -134,7 +119,6 @@ const navItems = [
 export const NavBar = ({
   currentView,
   onNavigate,
-  onLogout,
   isCollapsed = false,
   onToggleCollapse,
   className = '',
@@ -197,17 +181,6 @@ export const NavBar = ({
           })}
         </div>
 
-        <div className={`p-4 border-t border-global-stroke-box ${isCollapsed ? 'flex justify-center' : ''}`}>
-          <button
-            type="button"
-            onClick={onLogout}
-            className={`w-full flex items-center ${isCollapsed ? 'justify-center' : 'gap-3 justify-start'} px-4 py-3 rounded-2xl border border-global-stroke-box text-global-blanc hover:border-global-content-highlight-2nd transition`}
-            aria-label={isCollapsed ? 'Déconnexion' : undefined}
-          >
-            <IconLogout className="text-global-content-highlight-2nd" />
-            {!isCollapsed && <span>Déconnexion</span>}
-          </button>
-        </div>
 
         {isCollapsed && (
           <button

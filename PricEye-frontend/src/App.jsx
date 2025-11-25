@@ -131,8 +131,8 @@ function App() {
         return <PricingPage token={token} userProfile={userProfile} />;
       case 'bookings': // NOUVELLE VUE
         return <BookingsPage token={token} userProfile={userProfile} />;
-      case 'settings': 
-        return <SettingsPage token={token} userProfile={userProfile} onThemeChange={handleThemeChange} />;
+      case 'settings':
+        return <SettingsPage token={token} userProfile={userProfile} onThemeChange={handleThemeChange} onLogout={handleLogout} />;
       case 'report': 
         return <ReportPage token={token} userProfile={userProfile} />;
       default:
@@ -153,7 +153,6 @@ function App() {
         <NavBar
           currentView={currentView}
           onNavigate={navigateTo}
-          onLogout={handleLogout}
           isCollapsed={isNavCollapsed}
           onToggleCollapse={() => setIsNavCollapsed((prev) => !prev)}
         />
@@ -179,14 +178,6 @@ function App() {
                   <li><button disabled className="w-full text-left block py-2.5 px-4 rounded-xl text-gray-600 cursor-not-allowed bg-gray-800/40 border border-gray-700/60">Concurrents (Bientôt)</button></li>
                   <li><button onClick={() => navigateTo('settings')} className={`w-full text-left block py-2.5 px-4 rounded-xl transition duration-200 hover:bg-global-bg-box ${currentView === 'settings' ? 'bg-global-stroke-highlight-2nd/30 text-text-sidebar-active' : 'text-text-sidebar'}`}>Paramètres</button></li> 
                 </ul>
-            </div>
-            <div className="mt-6 pt-6 border-t border-border-primary">
-               <button
-                  onClick={handleLogout}
-                  className="w-full px-4 py-2.5 font-semibold text-white bg-red-600 rounded-xl hover:bg-red-700"
-                >
-                  Déconnexion
-                </button>
             </div>
           </nav>
 

@@ -101,7 +101,8 @@ function DashboardPage({ token, userProfile }) {
   const [error, setError] = useState('');
   
   const [editingProperty, setEditingProperty] = useState(null);
-  const [editingGroup, setEditingGroup] = useState(null); 
+  const [editingGroup, setEditingGroup] = useState(null);
+  const [groupsRefreshKey, setGroupsRefreshKey] = useState(0); 
   const [isPropertyModalOpen, setIsPropertyModalOpen] = useState(false);
   const [isStrategyModalOpen, setIsStrategyModalOpen] = useState(false);
   const [isRulesModalOpen, setIsRulesModalOpen] = useState(false);
@@ -125,6 +126,22 @@ function DashboardPage({ token, userProfile }) {
   // État pour la modale de confirmation
   const [confirmModal, setConfirmModal] = useState({ isOpen: false, message: '', onConfirm: null }); 
 
+
+  // Fonction de rafraîchissement des groupes et propriétés (sans condition de modale)
+  const refreshGroupsAndProperties = useCallback(async () => {
+    if (!token) return;
+    try {
+      const [propertiesData, groupsData] = await Promise.all([
+          getProperties(token),
+          getGroups(token) 
+      ]);
+      
+      setProperties(propertiesData);
+      setAllGroups(groupsData); 
+    } catch (err) {
+      console.error('Erreur lors du rafraîchissement:', err);
+    }
+  }, [token]);
 
   const fetchInitialData = useCallback(async () => {
     if (isPropertyModalOpen || isStrategyModalOpen || isRulesModalOpen) return;
@@ -214,14 +231,26 @@ function DashboardPage({ token, userProfile }) {
     setOpenMenuId(null); 
   };
 
-  const handleOpenStrategyModal = (item) => {
-    if (item.address) { 
+  const handleOpenStrategyModal = async (item) => {
+    setOpenMenuId(null);
+    // Si c'est un groupe, récupérer les données les plus récentes depuis le serveur
+    if (!item.address && item.id) {
+      try {
+        const groups = await getGroups(token);
+        const updatedGroup = groups.find(g => g.id === item.id);
+        if (updatedGroup) {
+          setEditingGroup(updatedGroup);
+        } else {
+          setEditingGroup(item);
+        }
+      } catch (err) {
+        console.error('Erreur lors de la récupération du groupe:', err);
+        setEditingGroup(item);
+      }
+    } else {
       setEditingProperty(item);
-    } else { 
-      setEditingGroup(item);
     }
     setIsStrategyModalOpen(true);
-    setOpenMenuId(null);
   };
 
    const handleOpenRulesModal = (item) => {
@@ -261,13 +290,16 @@ function DashboardPage({ token, userProfile }) {
   };
 
 
-  const handleModalSave = () => {
+  const handleModalSave = async () => {
     setIsPropertyModalOpen(false);
     setIsStrategyModalOpen(false);
     setIsRulesModalOpen(false);
     setEditingProperty(null); 
     setEditingGroup(null);
-    fetchInitialData(); 
+    // Rafraîchir immédiatement les groupes et propriétés
+    await refreshGroupsAndProperties();
+    // Forcer le rafraîchissement de GroupsManager
+    setGroupsRefreshKey(prev => prev + 1);
   };
   
   const handleModalClose = () => {
@@ -656,6 +688,7 @@ function DashboardPage({ token, userProfile }) {
               onEditStrategy={handleOpenStrategyModal}
               onEditRules={handleOpenRulesModal}
               userProfile={userProfile}
+              refreshKey={groupsRefreshKey}
             />
 
             {/* Properties List */}
@@ -725,7 +758,13 @@ function DashboardPage({ token, userProfile }) {
           onClose={handleModalClose}
           onSave={handleModalSave}
           item={editingGroup || editingProperty} 
-          itemType={editingGroup ? 'group' : 'property'} 
+          itemType={editingGroup ? 'group' : 'property'}
+          onGroupStrategyUpdated={editingGroup ? async (updatedGroup) => {
+            // Rafraîchir les données depuis le serveur
+            await refreshGroupsAndProperties();
+            // Forcer le rafraîchissement de GroupsManager
+            setGroupsRefreshKey(prev => prev + 1);
+          } : undefined}
         />
       )}
       {isRulesModalOpen && (
