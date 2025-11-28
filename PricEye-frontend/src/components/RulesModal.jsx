@@ -1,8 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { updatePropertyRules, updateGroupRules } from '../services/api.js';
 import CustomScrollbar from './CustomScrollbar.jsx';
+import { useLanguage } from '../contexts/LanguageContext.jsx';
 
 function RulesModal({ token, onClose, onSave, item, itemType }) {
+  const { t } = useLanguage();
   const [formData, setFormData] = useState({
     min_stay: '',
     max_stay: '',
@@ -14,7 +16,7 @@ function RulesModal({ token, onClose, onSave, item, itemType }) {
   const [isLoading, setIsLoading] = useState(false);
 
   // Déterminer le nom à afficher (Propriété ou Groupe)
-  const itemName = item?.address || item?.name || 'Élément';
+  const itemName = item?.address || item?.name || t('rulesModal.for');
 
   useEffect(() => {
     if (item) {
@@ -65,45 +67,45 @@ function RulesModal({ token, onClose, onSave, item, itemType }) {
   return (
     <div className="fixed inset-0 bg-black bg-opacity-90 flex items-center justify-center p-4 z-50">
       <div className="bg-bg-secondary rounded-lg shadow-xl w-full max-w-2xl p-6 flex flex-col max-h-[90vh]"> 
-        <h3 className="text-xl font-bold mb-2 text-text-primary shrink-0">Définir les Règles Personnalisées</h3>
-        <p className="text-sm text-text-muted mb-6 shrink-0">Pour : {itemName}</p>
+        <h3 className="text-xl font-bold mb-2 text-text-primary shrink-0">{t('rulesModal.title')}</h3>
+        <p className="text-sm text-text-muted mb-6 shrink-0">{t('rulesModal.for')}: {itemName}</p>
         
         <CustomScrollbar className="flex-1 min-h-0">
           <form onSubmit={handleSubmit} className="space-y-6 pr-2">
           <fieldset className="border border-border-secondary p-4 rounded-md">
-            <legend className="text-lg font-semibold px-2 text-text-primary">Durée de Séjour</legend>
+            <legend className="text-lg font-semibold px-2 text-text-primary">{t('rulesModal.stayDuration')}</legend>
             <div className="grid grid-cols-2 gap-4 mt-2">
               <div>
-                <label htmlFor="min_stay" className="block text-sm font-medium text-text-secondary">Minimum (nuits)</label>
+                <label htmlFor="min_stay" className="block text-sm font-medium text-text-secondary">{t('rulesModal.minStay')}</label>
                 <input name="min_stay" type="number" placeholder="Ex: 2" value={formData.min_stay} onChange={handleChange} className="w-full form-input mt-1" min="0" />
               </div>
               <div>
-                <label htmlFor="max_stay" className="block text-sm font-medium text-text-secondary">Maximum (nuits)</label>
+                <label htmlFor="max_stay" className="block text-sm font-medium text-text-secondary">{t('rulesModal.maxStay')}</label>
                 <input name="max_stay" type="number" placeholder="Ex: 90" value={formData.max_stay} onChange={handleChange} className="w-full form-input mt-1" min="0" />
               </div>
             </div>
           </fieldset>
 
           <fieldset className="border border-border-secondary p-4 rounded-md">
-            <legend className="text-lg font-semibold px-2 text-text-primary">Réductions Longue Durée</legend>
+            <legend className="text-lg font-semibold px-2 text-text-primary">{t('rulesModal.longTermDiscounts')}</legend>
             <div className="grid grid-cols-2 gap-4 mt-2">
               <div>
-                <label htmlFor="weekly_discount_percent" className="block text-sm font-medium text-text-secondary">Hebdomadaire (%)</label>
+                <label htmlFor="weekly_discount_percent" className="block text-sm font-medium text-text-secondary">{t('rulesModal.weeklyDiscount')}</label>
                 <input name="weekly_discount_percent" type="number" placeholder="Ex: 10" value={formData.weekly_discount_percent} onChange={handleChange} className="w-full form-input mt-1" min="0" max="100" />
               </div>
               <div>
-                <label htmlFor="monthly_discount_percent" className="block text-sm font-medium text-text-secondary">Mensuelle (%)</label>
+                <label htmlFor="monthly_discount_percent" className="block text-sm font-medium text-text-secondary">{t('rulesModal.monthlyDiscount')}</label>
                 <input name="monthly_discount_percent" type="number" placeholder="Ex: 20" value={formData.monthly_discount_percent} onChange={handleChange} className="w-full form-input mt-1" min="0" max="100" />
               </div>
             </div>
           </fieldset>
           
            <fieldset className="border border-border-secondary p-4 rounded-md">
-            <legend className="text-lg font-semibold px-2 text-text-primary">Majorations</legend>
+            <legend className="text-lg font-semibold px-2 text-text-primary">{t('rulesModal.markups')}</legend>
              <div>
-                <label htmlFor="weekend_markup_percent" className="block text-sm font-medium text-text-secondary">Week-end (%)</label>
+                <label htmlFor="weekend_markup_percent" className="block text-sm font-medium text-text-secondary">{t('rulesModal.weekendMarkup')}</label>
                 <input name="weekend_markup_percent" type="number" placeholder="Ex: 15" value={formData.weekend_markup_percent} onChange={handleChange} className="w-full form-input mt-1" min="0"/>
-                 <p className="text-xs text-text-muted mt-1">Majoration appliquée aux nuits du Vendredi et Samedi.</p>
+                 <p className="text-xs text-text-muted mt-1">{t('rulesModal.weekendMarkupNote')}</p>
               </div>
           </fieldset>
 
@@ -111,10 +113,10 @@ function RulesModal({ token, onClose, onSave, item, itemType }) {
           
           <div className="flex justify-end gap-4 pt-4">
             <button type="button" onClick={onClose} className="px-4 py-2 font-semibold text-text-secondary bg-bg-muted rounded-md hover:bg-border-primary">
-              Annuler
+              {t('rulesModal.cancel')}
             </button>
             <button type="submit" disabled={isLoading} className="px-4 py-2 font-semibold text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:bg-gray-500">
-              {isLoading ? 'Sauvegarde...' : 'Sauvegarder les Règles'}
+              {isLoading ? t('common.saving') : t('rulesModal.save')}
             </button>
           </div>
           </form>

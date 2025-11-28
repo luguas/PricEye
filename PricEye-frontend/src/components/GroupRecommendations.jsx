@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { createGroup, addPropertiesToGroup } from '../services/api.js';
+import { useLanguage } from '../contexts/LanguageContext.jsx';
 
 /**
  * Affiche les suggestions de regroupement de propriétés.
@@ -9,6 +10,7 @@ import { createGroup, addPropertiesToGroup } from '../services/api.js';
  * @param {Function} props.onGroupCreated - Callback pour rafraîchir le dashboard.
  */
 function GroupRecommendations({ token, recommendations, onGroupCreated }) {
+  const { t } = useLanguage();
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -18,7 +20,7 @@ function GroupRecommendations({ token, recommendations, onGroupCreated }) {
 
   const handleCreateGroup = async (recommendation) => {
     if (!recommendation || !recommendation.properties || recommendation.properties.length < 2) {
-      setError("Recommandation invalide.");
+      setError(t('groupRecommendations.invalidRecommendation'));
       return;
     }
     
@@ -28,7 +30,7 @@ function GroupRecommendations({ token, recommendations, onGroupCreated }) {
     try {
       // 1. Créer un nom de groupe (ex: "Groupe Similaire - Paris")
       const firstPropAddress = recommendation.properties[0].address;
-      const groupName = `Groupe Similaire (${firstPropAddress.split(',')[0]})`;
+      const groupName = `${t('groupRecommendations.groupNamePrefix')} (${firstPropAddress.split(',')[0]})`;
       
       // 2. Créer le groupe
       const newGroup = await createGroup({ name: groupName }, token);
@@ -63,7 +65,7 @@ function GroupRecommendations({ token, recommendations, onGroupCreated }) {
           >
             <div className="text-sm text-global-inactive">
               <p className="text-global-blanc font-semibold mb-1">
-                {rec.properties.length} propriétés similaires détectées
+                {rec.properties.length} {t('groupRecommendations.similarProperties')}
               </p>
               <ul className="list-disc list-inside text-xs space-y-1">
                 {rec.properties.map((p) => (
@@ -76,7 +78,7 @@ function GroupRecommendations({ token, recommendations, onGroupCreated }) {
               disabled={isLoading}
               className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-[10px] font-semibold text-white bg-gradient-to-r from-[#155dfc] to-[#12a1d5] shadow-lg hover:opacity-90 disabled:opacity-50"
             >
-              {isLoading ? 'Création...' : 'Créer le groupe'}
+              {isLoading ? t('groupRecommendations.creating') : t('groupRecommendations.createGroup')}
             </button>
           </div>
         ))}

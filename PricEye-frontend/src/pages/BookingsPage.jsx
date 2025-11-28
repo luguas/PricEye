@@ -2,12 +2,14 @@ import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { getProperties, getTeamBookings } from '../services/api.js';
 import Pastille from '../components/Pastille.jsx';
 import RechercheRSa from '../components/RechercheRSa.jsx';
+import { useLanguage } from '../contexts/LanguageContext.jsx';
 // import { getDatesFromRange } from '../utils/dateUtils.js'; // Remplacé par une logique locale
 
 /**
  * Composant pour le filtre multi-sélection de propriétés
  */
 function MultiPropertyFilter({ properties, selectedIds, onChange }) {
+  const { t } = useLanguage();
   const [isOpen, setIsOpen] = useState(false);
   const dropdownRef = useRef(null);
 
@@ -43,13 +45,13 @@ function MultiPropertyFilter({ properties, selectedIds, onChange }) {
 
   const getButtonText = () => {
     if (selectedIds.length === 0 || selectedIds.length === properties.length) {
-      return "Toutes les propriétés";
+      return t('bookings.allProperties');
     }
     if (selectedIds.length === 1) {
       const prop = properties.find(p => p.id === selectedIds[0]);
-      return prop?.address || "1 propriété";
+      return prop?.address || t('bookings.oneProperty');
     }
-    return `${selectedIds.length} propriétés sélectionnées`;
+    return `${selectedIds.length} ${t('bookings.propertiesSelected')}`;
   };
 
   return (
@@ -71,7 +73,7 @@ function MultiPropertyFilter({ properties, selectedIds, onChange }) {
               onClick={handleSelectAll}
               className="text-xs text-global-content-highlight-2nd hover:text-global-blanc font-p1-font-family"
             >
-              {selectedIds.length === properties.length ? "Tout désélectionner" : "Tout sélectionner"}
+              {selectedIds.length === properties.length ? t('bookings.deselectAll') : t('bookings.selectAll')}
             </button>
           </div>
           <div className="p-2 space-y-1">
@@ -98,6 +100,7 @@ function MultiPropertyFilter({ properties, selectedIds, onChange }) {
  * Page principale des Réservations
  */
 function BookingsPage({ token, userProfile }) {
+  const { t, language } = useLanguage();
   const [allProperties, setAllProperties] = useState([]);
   const [allBookings, setAllBookings] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -192,11 +195,11 @@ function BookingsPage({ token, userProfile }) {
       setAllBookings(bookingsData);
       
     } catch (err) {
-      setError(`Erreur de chargement: ${err.message}`);
+      setError(t('bookings.errors.loadError', { message: err.message }));
     } finally {
       setIsLoading(false);
     }
-  }, [token, dateRange, userProfile]);
+  }, [token, dateRange, userProfile, t]);
 
   useEffect(() => {
     fetchData();
@@ -246,7 +249,8 @@ function BookingsPage({ token, userProfile }) {
 
   // Helper pour formater la devise
   const formatCurrency = (amount) => {
-    return (amount || 0).toLocaleString('fr-FR', { 
+    const locale = language === 'en' ? 'en-US' : 'fr-FR';
+    return (amount || 0).toLocaleString(locale, { 
         style: 'currency', 
         currency: userProfile?.currency || 'EUR',
         minimumFractionDigits: 2
@@ -261,29 +265,47 @@ function BookingsPage({ token, userProfile }) {
       return Math.ceil(diffTime / (1000 * 60 * 60 * 24)); 
   };
 
-  // Helper pour formater la date au format DD/MM/YYYY
+  // Helper pour formater la date au format DD/MM/YYYY ou MM/DD/YYYY selon la langue
   const formatDate = (dateString) => {
     if (!dateString) return '';
     const date = new Date(dateString);
     const day = String(date.getDate()).padStart(2, '0');
     const month = String(date.getMonth() + 1).padStart(2, '0');
     const year = date.getFullYear();
+    if (language === 'en') {
+      return `${month}/${day}/${year}`;
+    }
     return `${day}/${month}/${year}`;
   };
 
   // Helper pour badge de statut avec Pastille
   const getStatusBadge = (status) => {
       status = status || 'confirmé'; // Défaut
-      switch(status.toLowerCase()) {
+      const statusLower = status.toLowerCase();
+      let statusText = status;
+      
+      // Traduire les statuts connus
+      if (statusLower === 'confirmé' || statusLower === 'confirmed') {
+          statusText = t('bookings.confirmed');
+      } else if (statusLower === 'en attente' || statusLower === 'pending') {
+          statusText = t('bookings.pending');
+      } else if (statusLower === 'annulée' || statusLower === 'annulé' || statusLower === 'cancelled') {
+          statusText = t('bookings.cancelled');
+      }
+      
+      switch(statusLower) {
           case 'confirmé':
-              return <Pastille text="Confirmé" className="!bg-calendrierbg-vert !border-calendrierstroke-vert" />;
+          case 'confirmed':
+              return <Pastille text={statusText} className="!bg-calendrierbg-vert !border-calendrierstroke-vert" />;
           case 'en attente':
-              return <Pastille text="En attente" className="!bg-calendrierbg-bleu !border-calendrierstroke-bleu" />;
+          case 'pending':
+              return <Pastille text={statusText} className="!bg-calendrierbg-bleu !border-calendrierstroke-bleu" />;
           case 'annulée':
           case 'annulé':
-              return <Pastille text="Annulé" className="!bg-calendrierbg-orange !border-calendrierstroke-orange" />;
+          case 'cancelled':
+              return <Pastille text={statusText} className="!bg-calendrierbg-orange !border-calendrierstroke-orange" />;
           default:
-              return <Pastille text={status} className="!bg-global-bg-small-box !border-global-stroke-box" />;
+              return <Pastille text={statusText} className="!bg-global-bg-small-box !border-global-stroke-box" />;
       }
   };
   
@@ -307,7 +329,7 @@ function BookingsPage({ token, userProfile }) {
         }}
       />
       <div className="relative z-10 space-y-6 p-4 md:p-6 lg:p-8">
-        <h2 className="text-3xl font-bold text-text-primary">Centre de Réservations</h2>
+        <h2 className="text-3xl font-bold text-text-primary">{t('bookings.title')}</h2>
 
       {/* Barre de Recherche */}
       <RechercheRSa 
@@ -321,7 +343,7 @@ function BookingsPage({ token, userProfile }) {
       <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-4 p-4 bg-global-bg-box border border-global-stroke-box rounded-[14px]">
         <div>
           <label htmlFor="date-range-selector" className="block text-sm font-medium text-global-inactive mb-1 font-p1-font-family">
-            Période
+            {t('bookings.period')}
           </label>
           <select 
             id="date-range-selector" 
@@ -329,17 +351,17 @@ function BookingsPage({ token, userProfile }) {
             onChange={(e) => setDateRange(e.target.value)} 
             className="w-full bg-global-bg-small-box border border-global-stroke-box rounded-[10px] px-3 py-2 text-global-blanc font-h4-font-family text-h4-font-size focus:outline-none focus:ring-2 focus:ring-global-content-highlight-2nd"
           >
-            <option value="next_30d">30 prochains jours</option>
-            <option value="next_90d">90 prochains jours</option>
-            <option value="this_month">Ce mois-ci</option>
-            <option value="last_7d">7 derniers jours</option>
-            <option value="last_30d">30 derniers jours</option>
+            <option value="next_30d">{t('bookings.next30Days')}</option>
+            <option value="next_90d">{t('bookings.next90Days')}</option>
+            <option value="this_month">{t('bookings.thisMonth')}</option>
+            <option value="last_7d">{t('bookings.last7Days')}</option>
+            <option value="last_30d">{t('bookings.last30Days')}</option>
           </select>
         </div>
         
         <div className="lg:col-span-2">
            <label htmlFor="property-filter" className="block text-sm font-medium text-global-inactive mb-1 font-p1-font-family">
-            Propriétés
+            {t('bookings.properties')}
           </label>
           <MultiPropertyFilter
             properties={allProperties}
@@ -351,7 +373,7 @@ function BookingsPage({ token, userProfile }) {
         {/* Filtre Canal */}
         <div>
             <label htmlFor="channel-filter" className="block text-sm font-medium text-global-inactive mb-1 font-p1-font-family">
-              Canal
+              {t('bookings.channel')}
             </label>
             <select
               id="channel-filter"
@@ -359,7 +381,7 @@ function BookingsPage({ token, userProfile }) {
               onChange={(e) => setSelectedChannel(e.target.value)}
               className="w-full bg-global-bg-small-box border border-global-stroke-box rounded-[10px] px-3 py-2 text-global-blanc font-h4-font-family text-h4-font-size focus:outline-none focus:ring-2 focus:ring-global-content-highlight-2nd"
             >
-              <option value="">Tous les canaux</option>
+              <option value="">{t('bookings.allChannels')}</option>
               {uniqueChannels.map(channel => (
                 <option key={channel} value={channel}>{channel}</option>
               ))}
@@ -369,7 +391,7 @@ function BookingsPage({ token, userProfile }) {
         {/* Filtre Statut */}
         <div>
             <label htmlFor="status-filter" className="block text-sm font-medium text-global-inactive mb-1 font-p1-font-family">
-              Statut
+              {t('bookings.status')}
             </label>
             <select
               id="status-filter"
@@ -377,17 +399,17 @@ function BookingsPage({ token, userProfile }) {
               onChange={(e) => setSelectedStatus(e.target.value)}
               className="w-full bg-global-bg-small-box border border-global-stroke-box rounded-[10px] px-3 py-2 text-global-blanc font-h4-font-family text-h4-font-size focus:outline-none focus:ring-2 focus:ring-global-content-highlight-2nd"
             >
-              <option value="">Tous les statuts</option>
-              <option value="confirmé">Confirmé</option>
-              <option value="en attente">En attente</option>
-              <option value="annulée">Annulée</option>
+              <option value="">{t('bookings.allStatuses')}</option>
+              <option value="confirmé">{t('bookings.confirmed')}</option>
+              <option value="en attente">{t('bookings.pending')}</option>
+              <option value="annulée">{t('bookings.cancelled')}</option>
             </select>
         </div>
         
         {/* Filtre Tarification */}
         <div>
             <label htmlFor="pricing-filter" className="block text-sm font-medium text-global-inactive mb-1 font-p1-font-family">
-              Tarification
+              {t('bookings.pricing')}
             </label>
             <select
               id="pricing-filter"
@@ -395,16 +417,16 @@ function BookingsPage({ token, userProfile }) {
               onChange={(e) => setSelectedPricingMethod(e.target.value)}
               className="w-full bg-global-bg-small-box border border-global-stroke-box rounded-[10px] px-3 py-2 text-global-blanc font-h4-font-family text-h4-font-size focus:outline-none focus:ring-2 focus:ring-global-content-highlight-2nd"
             >
-              <option value="">Toutes</option>
-              <option value="ia">IA</option>
-              <option value="manuelle">Manuelle</option>
+              <option value="">{t('bookings.all')}</option>
+              <option value="ia">{t('bookings.ai')}</option>
+              <option value="manuelle">{t('bookings.manual')}</option>
             </select>
         </div>
 
         {/* Filtre Prix */}
         <div className="lg:col-start-5">
             <label htmlFor="min-price-filter" className="block text-sm font-medium text-global-inactive mb-1 font-p1-font-family">
-              Prix Total (Min)
+              {t('bookings.minPrice')}
             </label>
             <input
               type="number"
@@ -426,28 +448,28 @@ function BookingsPage({ token, userProfile }) {
         {/* En-têtes */}
         <div className="border border-solid border-global-stroke-box border-b pt-4 pr-6 pb-4 pl-6 flex flex-row items-center justify-between self-stretch shrink-0 relative">
           <div className="text-global-inactive text-left font-h3-font-family text-h3-font-size font-h3-font-weight relative w-[100px]">
-            Propriété
+            {t('bookings.property')}
           </div>
           <div className="text-global-inactive text-left font-h3-font-family text-h3-font-size font-h3-font-weight relative w-[100px]">
-            Date arrivée
+            {t('bookings.arrivalDate')}
           </div>
           <div className="text-global-inactive text-left font-h3-font-family text-h3-font-size font-h3-font-weight relative w-[100px]">
-            Date départ
+            {t('bookings.departureDate')}
           </div>
           <div className="text-global-inactive text-left font-h3-font-family text-h3-font-size font-h3-font-weight relative w-[50px]">
-            Nuits
+            {t('bookings.nights')}
           </div>
           <div className="text-global-inactive text-left font-h3-font-family text-h3-font-size font-h3-font-weight relative w-[100px]">
-            Prix Total
+            {t('bookings.totalPrice')}
           </div>
           <div className="text-global-inactive text-left font-h3-font-family text-h3-font-size font-h3-font-weight relative w-[100px]">
-            Tarification
+            {t('bookings.pricing')}
           </div>
           <div className="text-global-inactive text-left font-h3-font-family text-h3-font-size font-h3-font-weight relative w-[100px]">
-            Canal
+            {t('bookings.channel')}
           </div>
           <div className="text-global-inactive text-left font-h3-font-family text-h3-font-size font-h3-font-weight relative w-[100px]">
-            Statut
+            {t('bookings.status')}
           </div>
         </div>
 
@@ -456,18 +478,18 @@ function BookingsPage({ token, userProfile }) {
           <div className="border border-solid border-global-stroke-box border-b pt-4 pr-6 pb-4 pl-6 flex flex-row items-center justify-center self-stretch shrink-0 relative">
             <div className="text-center p-8 text-global-inactive">
               <div className="w-8 h-8 border-2 border-global-content-highlight-2nd border-t-transparent rounded-full animate-spin mx-auto mb-2"></div>
-              Chargement des réservations...
+              {t('bookings.loading')}
             </div>
           </div>
         ) : filteredBookings.length === 0 ? (
           <div className="border border-solid border-global-stroke-box border-b pt-4 pr-6 pb-4 pl-6 flex flex-row items-center justify-center self-stretch shrink-0 relative">
             <div className="text-center p-8 text-global-inactive">
-              Aucune réservation trouvée pour les filtres sélectionnés.
+              {t('bookings.noBookings')}
             </div>
           </div>
         ) : (
           filteredBookings.map((booking, index) => {
-            const propertyName = propertyMap.get(booking.propertyId) || 'Propriété inconnue';
+            const propertyName = propertyMap.get(booking.propertyId) || t('bookings.unknownProperty');
             const property = allProperties.find(p => p.id === booking.propertyId);
             const propertyAddress = property?.address || propertyName;
             

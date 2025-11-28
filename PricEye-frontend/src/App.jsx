@@ -6,9 +6,10 @@ import PricingPage from './pages/PricingPage.jsx';
 import SettingsPage from './pages/SettingsPage.jsx';
 import ReportPage from './pages/ReportPage.jsx'; 
 import BookingsPage from './pages/BookingsPage.jsx'; // NOUVELLE PAGE
-import { getUserProfile, getGroupRecommendations } from './services/api.js'; 
+import { getUserProfile, getGroupRecommendations, getProperties } from './services/api.js'; 
 import NavBar from './components/NavBar.jsx';
 import PageTopBar from './components/PageTopBar.jsx';
+import { LanguageProvider, useLanguage } from './contexts/LanguageContext.jsx';
 
 /**
  * Applique le thème (clair/sombre/auto) à l'élément <html>.
@@ -26,7 +27,7 @@ function applyTheme(theme) {
   }
 }
 
-function App() {
+function AppContent() {
   const [token, setToken] = useState(null);
   const [currentView, setCurrentView] = useState(localStorage.getItem('authToken') ? 'dashboard' : 'login'); 
   const [userProfile, setUserProfile] = useState(null); 
@@ -34,6 +35,7 @@ function App() {
   const [isNavCollapsed, setIsNavCollapsed] = useState(false);
   const [notifications, setNotifications] = useState([]);
   const [isLoadingNotifications, setIsLoadingNotifications] = useState(false);
+  const [propertyCount, setPropertyCount] = useState(null);
 
   // Gérer le changement de thème
   const handleThemeChange = (newTheme) => {
@@ -60,13 +62,43 @@ function App() {
     }
   }, []);
 
+  // Fonction pour charger le nombre de propriétés
+  const fetchPropertyCount = useCallback(async (authToken) => {
+    if (!authToken) {
+      setPropertyCount(null);
+      return;
+    }
+
+    try {
+      const properties = await getProperties(authToken);
+      setPropertyCount(Array.isArray(properties) ? properties.length : 0);
+    } catch (err) {
+      console.error("Erreur lors du chargement des propriétés:", err);
+      setPropertyCount(null);
+    }
+  }, []);
+
   const handleLogout = useCallback(() => {
     setToken(null);
     setUserProfile(null);
     setNotifications([]);
+    setPropertyCount(null);
     localStorage.removeItem('authToken');
     setCurrentView('login'); 
   }, []);
+
+  // Effet pour écouter les événements d'expiration de token
+  useEffect(() => {
+    const handleTokenExpired = () => {
+      handleLogout();
+    };
+
+    window.addEventListener('tokenExpired', handleTokenExpired);
+
+    return () => {
+      window.removeEventListener('tokenExpired', handleTokenExpired);
+    };
+  }, [handleLogout]);
 
   // Effet pour charger le token et le profil au démarrage
   useEffect(() => {
@@ -80,13 +112,19 @@ function App() {
         .then(profile => {
           setUserProfile(profile);
           applyTheme(profile.theme || 'auto'); // Appliquer le thème sauvegardé
-          // Charger les notifications après le profil
+          // Mettre à jour la langue dans localStorage et déclencher l'événement
+          if (profile.language) {
+            localStorage.setItem('userLanguage', profile.language);
+            window.dispatchEvent(new CustomEvent('languageChanged', { detail: { language: profile.language } }));
+          }
+          // Charger les notifications et le nombre de propriétés après le profil
           fetchNotifications(storedToken);
+          fetchPropertyCount(storedToken);
         })
         .catch(err => {
           console.error("Erreur de chargement du profil:", err);
           // Si le token est invalide (ex: 403), déconnecter l'utilisateur
-          if (err.message.includes('403') || err.message.includes('401')) {
+          if (err.message.includes('403') || err.message.includes('401') || err.message.includes('Jeton invalide') || err.message.includes('Jeton manquant')) {
              handleLogout();
           }
         })
@@ -98,7 +136,7 @@ function App() {
       applyTheme('auto'); // Appliquer le thème système par défaut si déconnecté
       setNotifications([]);
     }
-  }, [token, fetchNotifications, handleLogout]); // Relancé si le token change (ex: connexion)
+  }, [token, fetchNotifications, fetchPropertyCount, handleLogout]); // Relancé si le token change (ex: connexion)
 
   const handleLoginSuccess = (newToken) => {
     setToken(newToken); // Déclenchera le useEffect ci-dessus pour charger le profil
@@ -161,7 +199,7 @@ function App() {
           <div className="hidden md:block">
             <PageTopBar
               userName={userProfile?.name || userProfile?.email || 'Utilisateur'}
-              propertyCount={userProfile?.stats?.propertyCount}
+              propertyCount={propertyCount}
               notifications={notifications}
               token={token}
               onNotificationsUpdate={handleNotificationsUpdate}
@@ -190,6 +228,14 @@ function App() {
   };
 
   return renderApp();
+}
+
+function App() {
+  return (
+    <LanguageProvider userLanguage={localStorage.getItem('userLanguage') || 'fr'}>
+      <AppContent />
+    </LanguageProvider>
+  );
 }
 
 export default App;

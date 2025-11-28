@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { getGroups, createGroup, updateGroup, deleteGroup, addPropertiesToGroup, removePropertiesFromGroup } from '../services/api.js';
 import ConfirmModal from './ConfirmModal.jsx';
+import { useLanguage } from '../contexts/LanguageContext.jsx';
 
 // Icônes SVG
 const EditIcon = () => (
@@ -25,6 +26,7 @@ const PlusIcon = () => (
 
 // Accepter onGroupChange, onEditStrategy, onEditRules
 function GroupsManager({ token, properties, onGroupChange, onEditStrategy, onEditRules, userProfile, refreshKey }) {
+  const { t, language } = useLanguage();
   const [groups, setGroups] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState('');
@@ -76,7 +78,7 @@ function GroupsManager({ token, properties, onGroupChange, onEditStrategy, onEdi
   const handleDeleteGroup = async (groupId) => {
     setConfirmModal({
       isOpen: true,
-      message: "Êtes-vous sûr de vouloir supprimer ce groupe ? Cette action est irréversible.",
+      message: t('groupsManager.deleteConfirm'),
       onConfirm: async () => {
         try {
           await deleteGroup(groupId, token);
@@ -159,7 +161,8 @@ function GroupsManager({ token, properties, onGroupChange, onEditStrategy, onEdi
   // Formater la devise
   const formatCurrency = (amount) => {
     const currency = userProfile?.currency || 'EUR';
-    return (amount || 0).toLocaleString('fr-FR', { 
+    const locale = language === 'en' ? 'en-US' : 'fr-FR';
+    return (amount || 0).toLocaleString(locale, { 
       style: 'currency', 
       currency: currency, 
       minimumFractionDigits: 0, 
@@ -169,10 +172,10 @@ function GroupsManager({ token, properties, onGroupChange, onEditStrategy, onEdi
 
   const renderGroupList = () => {
     if (isLoading) {
-      return <p className="text-sm text-global-inactive">Chargement des groupes...</p>;
+      return <p className="text-sm text-global-inactive">{t('groupsManager.loading')}</p>;
     }
     if (groups.length === 0) {
-      return <p className="text-sm text-global-inactive">Aucun groupe créé pour le moment.</p>;
+      return <p className="text-sm text-global-inactive">{t('groupsManager.noGroups')}</p>;
     }
     return (
       <div className="space-y-4 self-stretch w-full">
@@ -186,22 +189,22 @@ function GroupsManager({ token, properties, onGroupChange, onEditStrategy, onEdi
 
           // Données pour l'affichage
           const pricingStrategyData = [
-            { label: "Plancher", value: formatCurrency(group.floor_price || 0) },
-            { label: "Base", value: formatCurrency(group.base_price || 0) },
-            { label: "Plafond", value: formatCurrency(group.ceiling_price || 0) },
+            { label: t('groupsManager.floor'), value: formatCurrency(group.floor_price || 0) },
+            { label: t('groupsManager.base'), value: formatCurrency(group.base_price || 0) },
+            { label: t('groupsManager.ceiling'), value: formatCurrency(group.ceiling_price || 0) },
           ];
 
           const stayDurationData = [
-            { label: "Minimum", value: `${group.min_stay_duration || 0} nuit(s)` },
-            { label: "Maximum", value: `${group.max_stay_duration || 0} nuit(s)` },
+            { label: t('groupsManager.minimum'), value: `${group.min_stay_duration || 0} ${t('groupsManager.nights')}` },
+            { label: t('groupsManager.maximum'), value: `${group.max_stay_duration || 0} ${t('groupsManager.nights')}` },
           ];
 
           const pricingRulesData = [
-            { label: "Réduction longue durée", value: group.long_stay_discount ? `-${group.long_stay_discount}%` : "-" },
-            { label: "Majorations", value: group.markup ? `+${group.markup}%` : "-" },
+            { label: t('groupsManager.longStayDiscount'), value: group.long_stay_discount ? `-${group.long_stay_discount}%` : "-" },
+            { label: t('groupsManager.markups'), value: group.markup ? `+${group.markup}%` : "-" },
           ];
 
-          const strategyLabel = group.strategy || 'Équilibré';
+          const strategyLabel = group.strategy || t('strategyModal.balanced');
 
           return (
             <article key={group.id} className="flex flex-col items-start gap-4 p-6 relative bg-[#1d293d80] rounded-[10px] border border-solid border-[#31415780] self-stretch w-full">
@@ -228,14 +231,14 @@ function GroupsManager({ token, properties, onGroupChange, onEditStrategy, onEdi
                     </span>
                   </div>
                   <p className="relative w-fit font-p1-font-family font-p1-font-weight text-global-inactive text-p1-font-size leading-p1-line-height">
-                    {propertiesInGroup.length} propriété(s)
+                    {propertiesInGroup.length} {propertiesInGroup.length > 1 ? t('common.properties') : t('common.property')}
                   </p>
                 </div>
                 <div className="h-8 items-start justify-end gap-2 flex-1 grow flex relative">
                   {editingGroupId === group.id ? (
                     <div className="flex gap-2">
-                      <button onClick={() => handleSaveEdit(group.id)} className="px-3 py-1 bg-gradient-to-r from-[#155dfc] to-[#12a1d5] text-white rounded-lg text-sm">OK</button>
-                      <button onClick={handleCancelEdit} className="px-3 py-1 bg-white/10 text-global-inactive rounded-lg text-sm">Annuler</button>
+                      <button onClick={() => handleSaveEdit(group.id)} className="px-3 py-1 bg-gradient-to-r from-[#155dfc] to-[#12a1d5] text-white rounded-lg text-sm">{t('groupsManager.ok')}</button>
+                      <button onClick={handleCancelEdit} className="px-3 py-1 bg-white/10 text-global-inactive rounded-lg text-sm">{t('groupsManager.cancel')}</button>
                     </div>
                   ) : (
                     <>
@@ -243,13 +246,13 @@ function GroupsManager({ token, properties, onGroupChange, onEditStrategy, onEdi
                         className="all-[unset] box-border inline-flex h-8 items-center gap-4 px-3 py-1 relative flex-[0_0_auto] bg-global-bg-small-box rounded-lg border border-solid border-global-stroke-box cursor-pointer"
                         type="button"
                         onClick={() => onEditStrategy(group)}
-                        aria-label="Modifier le groupe"
+                        aria-label={t('groupsManager.edit')}
                       >
                         <span className="relative w-4 h-4" aria-hidden="true">
                           <EditIcon />
                         </span>
                         <span className="relative w-fit font-h4-font-family font-normal text-white text-sm text-center tracking-[0] leading-5 whitespace-nowrap">
-                          Modifier
+                          {t('groupsManager.edit')}
                         </span>
                       </button>
                       <div className="relative action-menu-container">
@@ -264,14 +267,14 @@ function GroupsManager({ token, properties, onGroupChange, onEditStrategy, onEdi
                         {expandedGroupId === group.id && (
                           <div className="absolute right-0 top-full mt-2 w-40 bg-global-bg-box border border-global-stroke-box rounded-lg shadow-xl z-20 py-1 overflow-hidden">
                             <button onClick={() => onEditRules(group)} className="block w-full text-left px-4 py-2 text-xs text-global-inactive hover:bg-global-bg-small-box hover:text-white transition-colors">
-                              Règles
+                              {t('groupsManager.rules')}
                             </button>
                             <button onClick={() => handleStartEdit(group)} className="block w-full text-left px-4 py-2 text-xs text-global-inactive hover:bg-global-bg-small-box hover:text-white transition-colors">
-                              Renommer
+                              {t('groupsManager.rename')}
                             </button>
                             <div className="h-px bg-global-stroke-box my-1" />
                             <button onClick={() => handleDeleteGroup(group.id)} className="block w-full text-left px-4 py-2 text-xs text-red-400 hover:bg-red-500/10 transition-colors">
-                              Supprimer
+                              {t('groupsManager.delete')}
                             </button>
                           </div>
                         )}
@@ -285,7 +288,7 @@ function GroupsManager({ token, properties, onGroupChange, onEditStrategy, onEdi
                 {/* Stratégie de prix */}
                 <section className="flex-col items-start gap-2 p-4 flex-1 self-stretch grow bg-[#0f172b80] rounded-[10px] flex relative">
                   <h3 className="relative w-fit mt-[-1.00px] font-h4-font-family font-h4-font-weight text-global-inactive text-h4-font-size leading-h4-line-height">
-                    Stratégie de prix
+                    {t('groupsManager.pricingStrategy')}
                   </h3>
                   <dl className="flex-col items-start gap-1 self-stretch w-full flex-[0_0_auto] flex relative">
                     {pricingStrategyData.map((item, index) => (
@@ -307,7 +310,7 @@ function GroupsManager({ token, properties, onGroupChange, onEditStrategy, onEdi
                 {/* Durée du séjour */}
                 <section className="flex-col items-start gap-2 pt-4 pb-0 px-4 flex-1 self-stretch grow bg-[#0f172b80] rounded-[10px] flex relative">
                   <h3 className="relative w-fit mt-[-1.00px] font-h4-font-family font-h4-font-weight text-global-inactive text-h4-font-size leading-h4-line-height">
-                    Durée du séjour
+                    {t('groupsManager.stayDuration')}
                   </h3>
                   <dl className="flex flex-col items-start gap-1 relative self-stretch w-full flex-[0_0_auto]">
                     {stayDurationData.map((item, index) => (
@@ -329,7 +332,7 @@ function GroupsManager({ token, properties, onGroupChange, onEditStrategy, onEdi
                 {/* Règles de pricing */}
                 <section className="flex-col items-start gap-2 pt-4 pb-0 px-4 flex-1 self-stretch grow bg-[#0f172b80] rounded-[10px] flex relative">
                   <h3 className="relative w-fit mt-[-1.00px] font-p1-font-family font-p1-font-weight text-global-inactive text-p1-font-size leading-p1-line-height">
-                    Règles de pricing
+                    {t('groupsManager.pricingRules')}
                   </h3>
                   <dl className="flex-col items-start gap-1 self-stretch w-full flex-[0_0_auto] flex relative">
                     {pricingRulesData.map((item, index) => (
@@ -361,11 +364,11 @@ function GroupsManager({ token, properties, onGroupChange, onEditStrategy, onEdi
                       onChange={() => handleToggleSync(group)}
                       className="rounded bg-global-bg-small-box border-global-stroke-box text-blue-500 focus:ring-blue-500"
                     />
-                    Synchroniser les prix de l'IA pour ce groupe
+                    {t('groupsManager.syncPrices')}
                   </label>
                   
                   <div>
-                    <h4 className="font-semibold text-sm mb-2 text-global-blanc">Propriétés dans ce groupe ({propertiesInGroup.length})</h4>
+                    <h4 className="font-semibold text-sm mb-2 text-global-blanc">{t('groupsManager.propertiesInGroup')} ({propertiesInGroup.length})</h4>
                     {propertiesInGroup.length > 0 ? (
                       <ul className="space-y-2">
                         {propertiesInGroup.map(prop => (
@@ -373,21 +376,21 @@ function GroupsManager({ token, properties, onGroupChange, onEditStrategy, onEdi
                             <span className="text-global-inactive">{prop.address}</span>
                             <div className="flex items-center gap-2">
                               {group.mainPropertyId === prop.id ? (
-                                <span className="px-2 py-0.5 bg-blue-600 text-white rounded-full text-[10px] font-bold">Principal</span>
+                                <span className="px-2 py-0.5 bg-blue-600 text-white rounded-full text-[10px] font-bold">{t('groupsManager.main')}</span>
                               ) : (
-                                <button onClick={() => handleSetMainProperty(group.id, prop.id)} className="px-2 py-1 bg-white/10 hover:bg-blue-600 rounded text-[10px] text-white">Définir principal</button>
+                                <button onClick={() => handleSetMainProperty(group.id, prop.id)} className="px-2 py-1 bg-white/10 hover:bg-blue-600 rounded text-[10px] text-white">{t('groupsManager.setMain')}</button>
                               )}
-                              <button onClick={() => handleRemoveProperty(group.id, prop.id)} className="px-2 py-1 bg-red-800 text-white rounded">Retirer</button>
+                              <button onClick={() => handleRemoveProperty(group.id, prop.id)} className="px-2 py-1 bg-red-800 text-white rounded">{t('groupsManager.removeProperty')}</button>
                             </div>
                           </li>
                         ))}
                       </ul>
-                    ) : <p className="text-xs text-global-inactive">Aucune propriété assignée.</p>}
+                    ) : <p className="text-xs text-global-inactive">{t('groupsManager.noProperties')}</p>}
                   </div>
 
                   {availableProperties.length > 0 && (
                     <div>
-                      <h4 className="font-semibold text-sm mb-2 text-global-blanc">Ajouter des propriétés disponibles</h4>
+                      <h4 className="font-semibold text-sm mb-2 text-global-blanc">{t('groupsManager.addProperties')}</h4>
                       <div className="flex gap-2">
                         <select
                           multiple
@@ -397,12 +400,12 @@ function GroupsManager({ token, properties, onGroupChange, onEditStrategy, onEdi
                         >
                           {availableProperties.map(prop => <option key={prop.id} value={prop.id}>{prop.address}</option>)}
                         </select>
-                        <button onClick={() => handleAddProperties(group.id)} className="px-4 py-2 font-semibold text-white bg-gradient-to-r from-[#155dfc] to-[#12a1d5] rounded-md self-start">Ajouter</button>
+                        <button onClick={() => handleAddProperties(group.id)} className="px-4 py-2 font-semibold text-white bg-gradient-to-r from-[#155dfc] to-[#12a1d5] rounded-md self-start">{t('groupsManager.add')}</button>
                       </div>
                     </div>
                   )}
                   {availableProperties.length === 0 && propertiesInGroup.length > 0 && (
-                    <p className="text-xs text-global-inactive mt-2">Toutes vos propriétés sont dans ce groupe.</p>
+                    <p className="text-xs text-global-inactive mt-2">{t('groupsManager.allPropertiesInGroup')}</p>
                   )}
                 </div>
               )}
@@ -418,17 +421,17 @@ function GroupsManager({ token, properties, onGroupChange, onEditStrategy, onEdi
       {/* Header avec titre et bouton de création */}
       <header className="flex items-center justify-between relative self-stretch w-full flex-[0_0_auto]">
         <h1 className="relative w-fit font-h2-font-family font-h2-font-weight text-global-blanc text-h2-font-size leading-h2-line-height">
-          Gestion des groupes
+          {t('groupsManager.title')}
         </h1>
         <button
           type="button"
           onClick={() => setShowCreateForm(!showCreateForm)}
           className="inline-flex items-center justify-center gap-2 px-3 py-2 relative flex-[0_0_auto] rounded-[10px] bg-[linear-gradient(90deg,rgba(21,93,252,1)_0%,rgba(18,161,213,1)_100%)] cursor-pointer border-0 transition-opacity hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[rgba(21,93,252,1)]"
-          aria-label="Créer un nouveau groupe"
+          aria-label={t('groupsManager.createGroup')}
         >
           <PlusIcon />
           <span className="relative w-fit mt-[-1.00px] font-h3-font-family font-h3-font-weight text-global-blanc text-h3-font-size leading-h3-line-height">
-            Créer un nouveau groupe
+            {t('groupsManager.createGroup')}
           </span>
         </button>
       </header>
@@ -442,19 +445,19 @@ function GroupsManager({ token, properties, onGroupChange, onEditStrategy, onEdi
             type="text"
             value={newGroupName}
             onChange={(e) => setNewGroupName(e.target.value)}
-            placeholder="Nom du groupe (ex: Villas de luxe)"
+            placeholder={t('groupsManager.groupNamePlaceholder')}
             className="flex-grow bg-transparent border border-global-stroke-box text-global-blanc placeholder:text-global-inactive rounded-[10px] px-3 py-2 focus:outline-none"
             autoFocus
           />
           <button type="submit" className="px-4 py-2 font-semibold text-white rounded-[10px] bg-gradient-to-r from-[#155dfc] to-[#12a1d5] hover:opacity-90">
-            Créer
+            {t('groupsManager.create')}
           </button>
           <button 
             type="button"
             onClick={() => { setShowCreateForm(false); setNewGroupName(''); }}
             className="px-4 py-2 text-global-inactive hover:text-global-blanc rounded-[10px] border border-global-stroke-box"
           >
-            Annuler
+            {t('groupsManager.cancel')}
           </button>
         </form>
       )}
@@ -467,10 +470,10 @@ function GroupsManager({ token, properties, onGroupChange, onEditStrategy, onEdi
         isOpen={confirmModal.isOpen}
         onClose={() => setConfirmModal({ isOpen: false, message: '', onConfirm: null })}
         onConfirm={confirmModal.onConfirm || (() => {})}
-        title="Confirmation"
+        title={t('confirmModal.title')}
         message={confirmModal.message}
-        confirmText="Confirmer"
-        cancelText="Annuler"
+        confirmText={t('common.confirm')}
+        cancelText={t('common.cancel')}
       />
     </div>
   );

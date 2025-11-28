@@ -7,7 +7,8 @@ import RulesModal from '../components/RulesModal.jsx';
 import ConfirmModal from '../components/ConfirmModal.jsx';
 import NewsFeed from '../components/NewsFeed.jsx';
 import GroupRecommendations from '../components/GroupRecommendations.jsx'; 
-import { getDatesFromRange } from '../utils/dateUtils.js'; 
+import { getDatesFromRange } from '../utils/dateUtils.js';
+import { useLanguage } from '../contexts/LanguageContext.jsx'; 
 
 const fallbackPropertyImages = [
   'https://images.unsplash.com/photo-1505691938895-1758d7feb511?auto=format&fit=crop&w=900&q=60',
@@ -94,6 +95,7 @@ const PlusIcon = ({ className = '' }) => (
 );
 
 function DashboardPage({ token, userProfile }) { 
+  const { t, language } = useLanguage();
   const [properties, setProperties] = useState([]);
   const [allGroups, setAllGroups] = useState([]);
   const [isLoading, setIsLoading] = useState(true); 
@@ -267,7 +269,7 @@ function DashboardPage({ token, userProfile }) {
     setOpenMenuId(null);
     setConfirmModal({
       isOpen: true,
-      message: "Êtes-vous sûr de vouloir supprimer cette propriété ?",
+      message: t('dashboard.property.deleteConfirm'),
       onConfirm: async () => {
         try {
           await deleteProperty(propertyId, token);
@@ -311,7 +313,8 @@ function DashboardPage({ token, userProfile }) {
   }
   
   const formatCurrency = (amount) => {
-      return (amount || 0).toLocaleString('fr-FR', { 
+      const locale = language === 'en' ? 'en-US' : 'fr-FR';
+      return (amount || 0).toLocaleString(locale, { 
           style: 'currency', 
           currency: userProfile?.currency || 'EUR', 
           minimumFractionDigits: 0, 
@@ -319,7 +322,8 @@ function DashboardPage({ token, userProfile }) {
       });
   };
    const formatCurrencyAdr = (amount) => {
-      return (amount || 0).toLocaleString('fr-FR', { 
+      const locale = language === 'en' ? 'en-US' : 'fr-FR';
+      return (amount || 0).toLocaleString(locale, { 
           style: 'currency', 
           currency: userProfile?.currency || 'EUR', 
           minimumFractionDigits: 2 
@@ -329,30 +333,30 @@ function DashboardPage({ token, userProfile }) {
   const statsCards = [
     {
       id: 'totalRevenue',
-      title: 'Revenus totaux (30j réel)',
+      title: t('dashboard.kpi.revenue'),
       value: formatCurrency(kpis.totalRevenue),
-      helper: 'Toutes propriétés confondues',
+      helper: t('dashboard.kpi.revenueHelper'),
       icon: RevenueIcon,
     },
     {
       id: 'avgOccupancy',
-      title: 'Taux d’occupation (Réel)',
+      title: t('dashboard.kpi.occupancy'),
       value: `${(kpis.avgOccupancy || 0).toFixed(1)}%`,
-      helper: '30 derniers jours',
+      helper: t('dashboard.kpi.occupancyHelper'),
       icon: OccupancyIcon,
     },
     {
       id: 'adr',
-      title: 'ADR (Réel)',
+      title: t('dashboard.kpi.adr'),
       value: formatCurrencyAdr(kpis.adr),
-      helper: 'Jours occupés / libres',
+      helper: t('dashboard.kpi.adrHelper'),
       icon: AdrIcon,
     },
     {
       id: 'iaGain',
-      title: 'Gains par l’IA',
+      title: t('dashboard.kpi.iaGain'),
       value: formatCurrency(kpis.iaGain),
-      helper: 'Revenus supplémentaires estimés',
+      helper: t('dashboard.kpi.iaGainHelper'),
       icon: AiIcon,
     },
   ];
@@ -391,19 +395,19 @@ function DashboardPage({ token, userProfile }) {
   const getStatusBadge = (status) => {
       const statusMap = {
         active: {
-          label: 'Active',
+          label: t('dashboard.statusLabels.active'),
           className: 'bg-emerald-500/10 border border-emerald-500/20 text-emerald-400'
         },
         archived: {
-          label: 'Archivée',
+          label: t('dashboard.statusLabels.archived'),
           className: 'bg-gray-500/10 border border-gray-500/20 text-gray-400'
         },
         error: {
-          label: 'Erreur',
+          label: t('dashboard.statusLabels.error'),
           className: 'bg-red-500/10 border border-red-500/20 text-red-400'
         },
         default: {
-          label: 'Inconnue',
+          label: t('dashboard.statusLabels.unknown'),
           className: 'bg-yellow-500/10 border border-yellow-500/20 text-yellow-400'
         }
       };
@@ -417,18 +421,18 @@ function DashboardPage({ token, userProfile }) {
 
   const renderPropertyCards = () => {
     if (isLoading) {
-      return <p className="text-center text-text-muted col-span-full py-8">Chargement des propriétés...</p>;
+      return <p className="text-center text-text-muted col-span-full py-8">{t('dashboard.loadingProperties')}</p>;
     }
 
     if (error && properties.length === 0) { 
-      return <p className="text-center text-red-400 col-span-full py-8">Erreur : {error}</p>;
+      return <p className="text-center text-red-400 col-span-full py-8">{t('common.error')}: {error}</p>;
     }
 
     if (properties.length === 0) {
       return (
         <div className="text-center bg-global-bg-box border border-global-stroke-box p-8 rounded-[14px] col-span-full">
-          <h3 className="text-xl font-semibold text-global-blanc">Aucune propriété trouvée</h3>
-          <p className="text-global-inactive mt-2">Commencez par ajouter votre première propriété !</p>
+          <h3 className="text-xl font-semibold text-global-blanc">{t('dashboard.noProperties')}</h3>
+          <p className="text-global-inactive mt-2">{t('dashboard.noPropertiesMessage')}</p>
         </div>
       );
     }
@@ -436,8 +440,8 @@ function DashboardPage({ token, userProfile }) {
     if (filteredProperties.length === 0) {
        return (
         <div className="text-center bg-global-bg-box border border-global-stroke-box p-8 rounded-[14px] col-span-full">
-          <h3 className="text-xl font-semibold text-global-blanc">Aucune propriété ne correspond à vos filtres</h3>
-          <p className="text-global-inactive mt-2">Essayez de changer votre sélection de groupe ou de statut.</p>
+          <h3 className="text-xl font-semibold text-global-blanc">{t('dashboard.noFilteredProperties')}</h3>
+          <p className="text-global-inactive mt-2">{t('dashboard.noFilteredPropertiesMessage')}</p>
         </div>
       );
     }
@@ -447,7 +451,7 @@ function DashboardPage({ token, userProfile }) {
       const isSynced = group && group.syncPrices;
       const coverImage = prop.coverImage || prop.imageUrl || prop.photoUrl || fallbackPropertyImages[index % fallbackPropertyImages.length];
       const propertyType = prop.property_type || prop.type || 'Villa';
-      const capacityLabel = prop.capacity ? `${prop.capacity} pers.` : 'Capacité N/A';
+      const capacityLabel = prop.capacity ? `${prop.capacity} ${t('dashboard.property.capacity')}` : t('dashboard.property.capacityNA');
       const monthlyRevenue = Number(prop.monthly_revenue ?? prop.monthlyRevenue ?? prop.metrics?.monthlyRevenue ?? (prop.daily_revenue ? prop.daily_revenue * 30 : 0));
       const targetRevenueRaw = Number(prop.target_revenue ?? prop.targetRevenue ?? prop.metrics?.targetRevenue ?? (monthlyRevenue ? monthlyRevenue * 1.15 : 0));
       const targetRevenue = Number.isFinite(targetRevenueRaw) ? targetRevenueRaw : 0;
@@ -481,17 +485,17 @@ function DashboardPage({ token, userProfile }) {
             {isSynced && (
               <div className="absolute top-3 left-3 bg-blue-600/90 backdrop-blur-md px-2.5 py-1 rounded-full text-[10px] font-bold text-white flex items-center gap-1.5 border border-blue-400/30 shadow-lg">
                 <span className="text-xs">⚙️</span>
-                Sync {group?.name}
+                {t('dashboard.property.sync')} {group?.name}
               </div>
             )}
             
             <div className="absolute bottom-3 left-4 right-4">
                <h3 className="text-white font-bold text-lg truncate shadow-black drop-shadow-md">
-                  {prop.address || 'Propriété sans nom'}
+                  {prop.address || t('dashboard.property.propertyNoName')}
                 </h3>
                  <div className="flex items-center gap-2 text-gray-300 text-xs mt-0.5 truncate">
                   <LocationIcon className="w-3 h-3" />
-                  <span>{prop.location || 'Localisation inconnue'}</span>
+                  <span>{prop.location || t('dashboard.property.locationUnknown')}</span>
                 </div>
             </div>
           </div>
@@ -509,13 +513,13 @@ function DashboardPage({ token, userProfile }) {
                     </span>
                 </div>
                 <span className="bg-global-bg-small-box px-2 py-1 rounded text-[10px]">
-                  {prop.amenities?.length || 0} équip.
+                  {prop.amenities?.length || 0} {t('dashboard.property.equipment')}
                 </span>
             </div>
 
             <div className="flex flex-col gap-2">
               <div className="flex items-center justify-between text-sm">
-                <span className="text-global-inactive">Revenu mensuel</span>
+                <span className="text-global-inactive">{t('dashboard.property.monthlyRevenue')}</span>
                 {revenueTrendLabel && (
                   <span className={`flex items-center gap-1 text-xs font-medium ${revenueTrendClass}`}>
                     <TrendIcon className="w-3 h-3" />
@@ -546,13 +550,13 @@ function DashboardPage({ token, userProfile }) {
                 onClick={() => handleOpenStrategyModal(prop)}
                 className="flex-1 bg-global-bg-small-box border border-global-stroke-box hover:border-global-content-highlight-2nd text-global-blanc text-xs font-medium py-2 rounded-[8px] transition-colors"
               >
-                Stratégie IA
+                {t('dashboard.property.strategyAI')}
               </button>
               <button
                 onClick={() => handleOpenRulesModal(prop)}
                 className="flex-1 bg-global-bg-small-box border border-global-stroke-box hover:border-purple-500/50 text-global-blanc text-xs font-medium py-2 rounded-[8px] transition-colors"
               >
-                Règles
+                {t('dashboard.property.rules')}
               </button>
               <div className="relative action-menu-container">
                 <button
@@ -565,24 +569,24 @@ function DashboardPage({ token, userProfile }) {
                 {openMenuId === prop.id && (
                   <div className="absolute right-0 bottom-full mb-2 w-40 bg-global-bg-box border border-global-stroke-box rounded-lg shadow-xl z-20 py-1 overflow-hidden">
                     <button onClick={() => handleOpenEditModal(prop)} className="block w-full text-left px-4 py-2 text-xs text-global-inactive hover:bg-global-bg-small-box hover:text-white transition-colors">
-                        Modifier
+                        {t('dashboard.property.edit')}
                     </button>
                     {prop.status !== 'active' && (
                         <button onClick={() => handleSetStatus(prop.id, 'active')} className="block w-full text-left px-4 py-2 text-xs text-green-400 hover:bg-global-bg-small-box transition-colors">
-                            Activer
+                            {t('dashboard.property.activate')}
                         </button>
                     )}
                      {prop.status === 'active' && (
                         <button onClick={() => handleSetStatus(prop.id, 'archived')} className="block w-full text-left px-4 py-2 text-xs text-global-inactive hover:bg-global-bg-small-box transition-colors">
-                            Archiver
+                            {t('dashboard.property.archive')}
                         </button>
                      )}
                      <button onClick={() => handleSetStatus(prop.id, 'error')} className="block w-full text-left px-4 py-2 text-xs text-yellow-400 hover:bg-global-bg-small-box transition-colors">
-                        Marquer Erreur
+                        {t('dashboard.property.markError')}
                     </button>
                     <div className="h-px bg-global-stroke-box my-1" />
                     <button onClick={() => handleDelete(prop.id)} className="block w-full text-left px-4 py-2 text-xs text-red-400 hover:bg-red-500/10 transition-colors">
-                        Supprimer
+                        {t('dashboard.property.delete')}
                     </button>
                   </div>
                 )}
@@ -610,10 +614,10 @@ function DashboardPage({ token, userProfile }) {
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
           <div>
             <p className="text-xs font-bold uppercase tracking-[0.2em] text-global-inactive mb-1">
-              Aperçu général
+              {t('dashboard.overview')}
             </p>
             <h1 className="text-3xl md:text-4xl font-h1-font-family font-bold text-global-blanc">
-              Dashboard
+              {t('dashboard.title')}
             </h1>
           </div>
           <button
@@ -621,7 +625,7 @@ function DashboardPage({ token, userProfile }) {
             className="inline-flex items-center gap-2 px-5 py-2.5 rounded-[12px] text-white font-semibold bg-gradient-to-r from-[#155dfc] to-[#12a1d5] shadow-lg hover:opacity-90 transition-opacity text-sm"
           >
             <PlusIcon />
-            Ajouter une propriété
+            {t('dashboard.addProperty')}
           </button>
         </div>
         
@@ -651,17 +655,17 @@ function DashboardPage({ token, userProfile }) {
             <div className="flex flex-wrap items-center justify-between gap-4 mb-4">
               <div>
                 <p className="text-xs font-bold uppercase tracking-[0.2em] text-global-inactive mb-1">
-                  Intelligence IA
+                  {t('dashboard.aiRecommendations')}
                 </p>
                 <h2 className="text-xl font-bold text-global-blanc">
-                  Suggestions de regroupement
+                  {t('dashboard.groupSuggestions')}
                 </h2>
               </div>
               <button
                 onClick={fetchInitialData}
                 className="text-xs px-4 py-2 rounded-full border border-global-stroke-box text-global-inactive hover:text-global-blanc hover:border-global-content-highlight-2nd transition-colors"
               >
-                Actualiser
+                {t('dashboard.refresh')}
               </button>
             </div>
             <div>
@@ -696,10 +700,10 @@ function DashboardPage({ token, userProfile }) {
                 <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
                 <div>
                   <p className="text-xs font-bold uppercase tracking-[0.2em] text-global-inactive mb-1">
-                    Inventaire
+                    {t('dashboard.inventory')}
                   </p>
                   <h2 className="text-xl font-bold text-global-blanc">
-                    Mes Propriétés ({filteredProperties.length})
+                    {t('dashboard.propertiesTitle')} ({filteredProperties.length})
                   </h2>
                 </div>
                 <div className="flex flex-wrap gap-3 w-full sm:w-auto">
@@ -708,7 +712,7 @@ function DashboardPage({ token, userProfile }) {
                     onChange={(e) => setSelectedGroupId(e.target.value)}
                     className="flex-1 sm:flex-none bg-global-bg-small-box border border-global-stroke-box rounded-[10px] px-3 py-2 text-xs text-global-blanc focus:outline-none focus:border-global-content-highlight-2nd transition-colors cursor-pointer"
                   >
-                    <option value="">Tous les groupes</option>
+                    <option value="">{t('dashboard.allGroups')}</option>
                     {allGroups.map((g) => (
                       <option key={g.id} value={g.id}>
                         {g.name}
@@ -720,10 +724,10 @@ function DashboardPage({ token, userProfile }) {
                     onChange={(e) => setSelectedStatus(e.target.value)}
                     className="flex-1 sm:flex-none bg-global-bg-small-box border border-global-stroke-box rounded-[10px] px-3 py-2 text-xs text-global-blanc focus:outline-none focus:border-global-content-highlight-2nd transition-colors cursor-pointer"
                   >
-                    <option value="active">Actives</option>
-                    <option value="archived">Archivées</option>
-                    <option value="error">Erreur</option>
-                    <option value="">Toutes</option>
+                    <option value="active">{t('dashboard.status.active')}</option>
+                    <option value="archived">{t('dashboard.status.archived')}</option>
+                    <option value="error">{t('dashboard.status.error')}</option>
+                    <option value="">{t('dashboard.status.all')}</option>
                   </select>
                 </div>
               </div>
@@ -780,10 +784,10 @@ function DashboardPage({ token, userProfile }) {
         isOpen={confirmModal.isOpen}
         onClose={() => setConfirmModal({ isOpen: false, message: '', onConfirm: null })}
         onConfirm={confirmModal.onConfirm || (() => {})}
-        title="Confirmation"
+        title={t('confirmModal.title')}
         message={confirmModal.message}
-        confirmText="Confirmer"
-        cancelText="Annuler"
+        confirmText={t('common.confirm')}
+        cancelText={t('common.cancel')}
       />
     </div>
   );

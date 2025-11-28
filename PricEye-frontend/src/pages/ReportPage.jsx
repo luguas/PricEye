@@ -96,6 +96,7 @@ function ReportPage({ token, userProfile }) {
   const [performanceData, setPerformanceData] = useState(null); // NOUVEAU: Pour le graphique de performance
   const [revparData, setRevparData] = useState(null); // Pour le graphique RevPAR, ADR & Occupation
   const [iaData, setIaData] = useState(null); // Pour le graphique Gain IA & Score IA
+  const [marketData, setMarketData] = useState(null); // Pour le graphique Offre vs Demande
 
   // État pour la modale d'alerte
   const [alertModal, setAlertModal] = useState({ isOpen: false, message: '', title: 'Information' });
@@ -105,10 +106,12 @@ function ReportPage({ token, userProfile }) {
   const marketChartRef = useRef(null);
   const revparChartRef = useRef(null);
   const iaChartRef = useRef(null);
+  const marketTrendChartRef = useRef(null); // NOUVEAU: Pour le graphique Offre vs Demande
   const revenueChartInstance = useRef(null);
   const marketChartInstance = useRef(null);
   const revparChartInstance = useRef(null);
   const iaChartInstance = useRef(null);
+  const marketTrendChartInstance = useRef(null); // NOUVEAU: Instance du graphique Offre vs Demande
   
   // Fonctions de formatage
   const formatCurrency = (amount) => {
@@ -304,6 +307,81 @@ function ReportPage({ token, userProfile }) {
     return { labels, gainIaData, scoreIaData };
   };
 
+  // NOUVEAU: Transformer les données pour le graphique Offre vs Demande
+  const transformToMarketTrendData = (revenueData, perfData) => {
+    if (!revenueData || !revenueData.labels || !Array.isArray(revenueData.labels) || revenueData.labels.length === 0) {
+      return null;
+    }
+    
+    if (!revenueData.supplyData || !Array.isArray(revenueData.supplyData) || revenueData.supplyData.length === 0) {
+      return null;
+    }
+    
+    // Grouper les données par mois
+    const monthlyData = new Map();
+    
+    revenueData.labels.forEach((dateStr, index) => {
+      try {
+        if (!dateStr || typeof dateStr !== 'string') {
+          return;
+        }
+        
+        let date;
+        if (dateStr.match(/^\d{4}-W\d{2}$/)) {
+          const [year, week] = dateStr.split('-W');
+          const jan1 = new Date(parseInt(year), 0, 1);
+          const daysOffset = (parseInt(week) - 1) * 7;
+          date = new Date(jan1);
+          date.setDate(jan1.getDate() + daysOffset);
+        } else {
+          date = new Date(dateStr);
+        }
+        
+        if (isNaN(date.getTime())) {
+          return;
+        }
+        
+        const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+        const monthLabel = date.toLocaleDateString('fr-FR', { month: 'short' });
+        
+        if (!monthlyData.has(monthKey)) {
+          monthlyData.set(monthKey, {
+            label: monthLabel,
+            demande: 0,
+            offre: 0
+          });
+        }
+        
+        const monthData = monthlyData.get(monthKey);
+        // Demande = nombre de nuits réservées (nightsBookedData représente la demande satisfaite)
+        const demandeValue = revenueData.nightsBookedData?.[index] || 0;
+        // Offre = nuits disponibles (supply)
+        const offreValue = revenueData.supplyData?.[index] || 0;
+        
+        monthData.demande += demandeValue;
+        monthData.offre += offreValue;
+      } catch (err) {
+        console.error('Erreur lors du traitement de la date:', dateStr, err);
+      }
+    });
+    
+    if (monthlyData.size === 0) {
+      return null;
+    }
+    
+    const labels = [];
+    const demandeData = [];
+    const offreData = [];
+    
+    Array.from(monthlyData.entries()).sort().forEach(([key, data]) => {
+      labels.push(data.label);
+      demandeData.push(data.demande);
+      offreData.push(data.offre);
+    });
+    
+    return { labels, demandeData, offreData };
+  };
+
   // Fetch all properties (pour les filtres)
   const fetchAllProperties = useCallback(async () => {
     setIsLoading(true);
@@ -364,14 +442,24 @@ function ReportPage({ token, userProfile }) {
               } else {
                 setIaData(null);
               }
+              
+              // NOUVEAU: Créer les données pour Offre vs Demande (groupées par mois)
+              const marketTrendChartData = transformToMarketTrendData(revenueData, perfData);
+              if (marketTrendChartData) {
+                setMarketData(marketTrendChartData);
+              } else {
+                setMarketData(null);
+              }
             } catch (err) {
               console.error('Erreur lors de la transformation des données:', err);
               setRevparData(null);
               setIaData(null);
+              setMarketData(null);
             }
           } else {
             setRevparData(null);
             setIaData(null);
+            setMarketData(null);
           }
           
       } catch (err) {
@@ -383,6 +471,7 @@ function ReportPage({ token, userProfile }) {
           setPerformanceData(null); // NOUVEAU: Réinitialiser en cas d'erreur
           setRevparData(null);
           setIaData(null);
+          setMarketData(null);
       } finally {
           setIsKpiLoading(false);
       }
@@ -415,52 +504,98 @@ function ReportPage({ token, userProfile }) {
 
   // --- Chart Rendering ---
   useEffect(() => {
-    if (revenueChartInstance.current) { revenueChartInstance.current.destroy(); }
-    if (marketChartInstance.current) { marketChartInstance.current.destroy(); }
-    if (revparChartInstance.current) { revparChartInstance.current.destroy(); }
-    if (iaChartInstance.current) { iaChartInstance.current.destroy(); }
+    // Fonction helper pour valider les données
+    const isValidData = (data, requiredFields) => {
+      if (!data) return false;
+      for (const field of requiredFields) {
+        if (!data[field] || !Array.isArray(data[field]) || data[field].length === 0) {
+          return false;
+        }
+      }
+      return true;
+    };
 
-    // Graphique des Revenus (RÉEL)
-    if (revenueChartRef.current && chartData) { 
-        const ctxRevenue = revenueChartRef.current.getContext('2d');
-        revenueChartInstance.current = new Chart(ctxRevenue, { 
-            type: 'line', 
-            data: { 
-                labels: chartData.labels, 
-                datasets: [{ 
-                    label: 'Revenus Réels', 
-                    data: chartData.revenueData, 
-                    borderColor: '#3b82f6', 
-                    backgroundColor: 'rgba(59, 130, 246, 0.1)', 
-                    fill: true, 
-                    tension: 0.4 
-                }] 
-            }, 
-            options: { 
-                scales: { 
-                    y: { 
-                      beginAtZero: true, 
-                      ticks: { 
-                        color: '#9ca3af',
-                        maxTicksLimit: 5
-                      }
-                    },
-                    x: { 
-                      ticks: { 
-                        color: '#9ca3af',
-                        maxTicksLimit: 6
-                      } 
-                    } 
-                },
-                plugins: { legend: { labels: { color: '#9ca3af' }}}
-            } 
-        });
+    // Nettoyer tous les graphiques d'abord
+    const cleanup = () => {
+      if (revenueChartInstance.current) { 
+        try { revenueChartInstance.current.destroy(); } catch(e) {}
+        revenueChartInstance.current = null;
+      }
+      if (marketChartInstance.current) { 
+        try { marketChartInstance.current.destroy(); } catch(e) {}
+        marketChartInstance.current = null;
+      }
+      if (revparChartInstance.current) { 
+        try { revparChartInstance.current.destroy(); } catch(e) {}
+        revparChartInstance.current = null;
+      }
+      if (iaChartInstance.current) { 
+        try { iaChartInstance.current.destroy(); } catch(e) {}
+        iaChartInstance.current = null;
+      }
+      if (marketTrendChartInstance.current) { 
+        try { marketTrendChartInstance.current.destroy(); } catch(e) {}
+        marketTrendChartInstance.current = null;
+      }
+    };
+
+    // Si les données sont en cours de chargement, nettoyer et attendre
+    if (isKpiLoading) {
+      cleanup();
+      return;
     }
 
-    // NOUVEAU: Graphique Performance (RÉEL)
-    if (marketChartRef.current && performanceData) {
-      const ctxMarket = marketChartRef.current.getContext('2d');
-      marketChartInstance.current = new Chart(ctxMarket, {
+    // Utiliser un petit délai pour s'assurer que le DOM est prêt
+    const timeoutId = setTimeout(() => {
+      // Nettoyer d'abord
+      cleanup();
+
+      // Graphique des Revenus (RÉEL)
+      if (revenueChartRef.current && isValidData(chartData, ['labels', 'revenueData'])) {
+        try {
+          const ctxRevenue = revenueChartRef.current.getContext('2d');
+          revenueChartInstance.current = new Chart(ctxRevenue, { 
+            type: 'line', 
+            data: { 
+              labels: chartData.labels, 
+              datasets: [{ 
+                label: 'Revenus Réels', 
+                data: chartData.revenueData, 
+                borderColor: '#3b82f6', 
+                backgroundColor: 'rgba(59, 130, 246, 0.1)', 
+                fill: true, 
+                tension: 0.4 
+              }] 
+            }, 
+            options: { 
+              scales: { 
+                y: { 
+                  beginAtZero: true, 
+                  ticks: { 
+                    color: '#9ca3af',
+                    maxTicksLimit: 5
+                  }
+                },
+                x: { 
+                  ticks: { 
+                    color: '#9ca3af',
+                    maxTicksLimit: 6
+                  } 
+                } 
+              },
+              plugins: { legend: { labels: { color: '#9ca3af' }}}
+            } 
+          });
+        } catch (error) {
+          console.error('Error creating revenue chart:', error);
+        }
+      }
+
+      // NOUVEAU: Graphique Performance (RÉEL)
+      if (marketChartRef.current && isValidData(performanceData, ['labels', 'bookingCounts', 'occupancyRates'])) {
+        try {
+          const ctxMarket = marketChartRef.current.getContext('2d');
+          marketChartInstance.current = new Chart(ctxMarket, {
         type: 'bar', // Type principal en barres
         data: {
           labels: performanceData.labels,
@@ -544,13 +679,18 @@ function ReportPage({ token, userProfile }) {
                 legend: { display: false } // On cache la légende par défaut, on utilise une légende personnalisée
             },
             maintainAspectRatio: false
+          }
+        });
+        } catch (error) {
+          console.error('Error creating market chart:', error);
         }
-      });
-    }
-    // Graphique RevPAR, ADR & Occupation
-    if (revparChartRef.current && revparData) {
-      const ctxRevpar = revparChartRef.current.getContext('2d');
-      revparChartInstance.current = new Chart(ctxRevpar, {
+      }
+
+      // Graphique RevPAR, ADR & Occupation
+      if (revparChartRef.current && isValidData(revparData, ['labels', 'adrData', 'revparData', 'occupancyData'])) {
+        try {
+          const ctxRevpar = revparChartRef.current.getContext('2d');
+          revparChartInstance.current = new Chart(ctxRevpar, {
         type: 'line',
         data: {
           labels: revparData.labels,
@@ -651,10 +791,14 @@ function ReportPage({ token, userProfile }) {
           maintainAspectRatio: false
         }
       });
-    }
+        } catch (error) {
+          console.error('Error creating revpar chart:', error);
+        }
+      }
 
-    // Graphique Gain IA & Score IA
-    if (iaChartRef.current && iaData) {
+      // Graphique Gain IA & Score IA
+      if (iaChartRef.current && isValidData(iaData, ['labels', 'gainIaData', 'scoreIaData'])) {
+        try {
       const ctxIa = iaChartRef.current.getContext('2d');
       iaChartInstance.current = new Chart(ctxIa, {
         type: 'line',
@@ -745,16 +889,101 @@ function ReportPage({ token, userProfile }) {
           maintainAspectRatio: false
         }
       });
-    }
+        } catch (error) {
+          console.error('Error creating IA chart:', error);
+        }
+      }
+
+      // NOUVEAU: Graphique Tendance marché - Offre vs Demande
+      if (marketTrendChartRef.current && isValidData(marketData, ['labels', 'demandeData', 'offreData'])) {
+        try {
+          const ctxMarketTrend = marketTrendChartRef.current.getContext('2d');
+      marketTrendChartInstance.current = new Chart(ctxMarketTrend, {
+        type: 'line',
+        data: {
+          labels: marketData.labels,
+          datasets: [
+            {
+              label: 'Demande',
+              data: marketData.demandeData,
+              borderColor: '#00d3f2',
+              backgroundColor: 'transparent',
+              tension: 0.3,
+              fill: false,
+              pointRadius: 4,
+              pointBackgroundColor: '#00d3f2',
+              pointBorderColor: '#00d3f2',
+              pointBorderWidth: 2,
+              pointHoverRadius: 6,
+            },
+            {
+              label: 'Offre',
+              data: marketData.offreData,
+              borderColor: '#fef137',
+              backgroundColor: 'transparent',
+              tension: 0.3,
+              fill: false,
+              pointRadius: 4,
+              pointBackgroundColor: '#fef137',
+              pointBorderColor: '#fef137',
+              pointBorderWidth: 2,
+              pointHoverRadius: 6,
+            }
+          ]
+        },
+        options: {
+          scales: {
+            x: {
+              ticks: {
+                color: '#94a3b8',
+                font: { family: 'Inter-Regular, sans-serif', size: 12 },
+                padding: 8
+              },
+              grid: { display: false },
+              border: { display: false }
+            },
+            y: {
+              beginAtZero: true,
+              ticks: {
+                color: '#94a3b8',
+                font: { family: 'Inter-Regular, sans-serif', size: 12 },
+                maxTicksLimit: 5,
+                padding: 4,
+                stepSize: 150,
+                callback: function(value) {
+                  return value.toFixed(0);
+                }
+              },
+              grid: {
+                color: 'rgba(148, 163, 184, 0.2)',
+                drawBorder: false,
+                lineWidth: 1
+              },
+              border: { display: false }
+            }
+          },
+          plugins: {
+            legend: { display: false }
+          },
+          maintainAspectRatio: false
+        }
+      });
+        } catch (error) {
+          console.error('Error creating market trend chart:', error);
+        }
+      }
+    }, 100); // Petit délai pour s'assurer que le DOM est prêt
 
      return () => {
+         clearTimeout(timeoutId);
          if (revenueChartInstance.current) { revenueChartInstance.current.destroy(); }
          if (marketChartInstance.current) { marketChartInstance.current.destroy(); }
          if (revparChartInstance.current) { revparChartInstance.current.destroy(); }
          if (iaChartInstance.current) { iaChartInstance.current.destroy(); }
+         if (marketTrendChartInstance.current) { marketTrendChartInstance.current.destroy(); }
      };
 
-  }, [chartData, performanceData, revparData, iaData]); // Se redéclenche si les données des graphiques changent
+  }, [chartData, performanceData, revparData, iaData, marketData, isKpiLoading]); // Se redéclenche si les données des graphiques changent ou si le chargement change
 
   const handleExport = () => {
     if (filteredProperties.length === 0) {
@@ -997,50 +1226,52 @@ function ReportPage({ token, userProfile }) {
 
       {error && <p className="text-red-400 text-center">{error}</p>}
       
-      {/* Graphiques - Performance hebdomadaire d'abord, puis les deux autres en grille */}
+      {/* Graphiques selon l'onglet actif */}
       <div className="flex flex-col gap-3 items-start justify-start self-stretch shrink-0 relative">
-        {/* Performance hebdomadaire - seul */}
-        <div className="bg-global-bg-box rounded-[14px] border-solid border-global-stroke-box border p-6 flex flex-col gap-6 items-start justify-start self-stretch shrink-0 relative">
-          <div className="self-stretch shrink-0 h-7 relative">
-            <div className="text-global-blanc text-left font-['Inter-Medium',_sans-serif] text-xl leading-7 font-medium" style={{ letterSpacing: '-0.45px' }}>
-              Performance hebdomadaire
-            </div>
-          </div>
-          <div className="flex flex-col gap-2.5 items-start justify-start self-stretch shrink-0 relative">
-            <div className="self-stretch shrink-0 h-[261.74px] relative w-full">
-              {isKpiLoading ? (
-                <div className="flex items-center justify-center h-full w-full">
-                  <p className="text-global-inactive">Chargement...</p>
-                </div>
-              ) : (
-                <div className="w-full h-full relative">
-                  <canvas ref={marketChartRef} className="w-full h-full"></canvas>
-                </div>
-              )}
-            </div>
-            {/* Légende personnalisée */}
-            <div className="flex flex-row gap-[34px] items-center justify-center self-stretch shrink-0 relative">
-              <div className="shrink-0 h-6 relative flex items-center gap-2">
-                <div className="w-3.5 h-3.5 rounded-full bg-global-mid-impact shrink-0"></div>
-                <div className="text-global-mid-impact text-center font-['Inter-Regular',_sans-serif] text-base leading-6 font-normal" style={{ letterSpacing: '-0.31px' }}>
-                  Occupation (%)
-                </div>
-              </div>
-              <div className="shrink-0 h-6 relative flex items-center gap-2">
-                <div className="w-3.5 h-3.5 rounded-full bg-global-content-highlight-2nd shrink-0"></div>
-                <div className="text-global-content-highlight-2nd text-center font-['Inter-Regular',_sans-serif] text-base leading-6 font-normal" style={{ letterSpacing: '-0.31px' }}>
-                  Réservations
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Grille avec les deux autres graphiques */}
+        {/* Vue d'ensemble - Performance hebdomadaire + RevPAR/ADR/Occupation + Gain IA */}
         {activeTab === 'overview' && (
-          <div className="self-stretch shrink-0 grid gap-6 relative" style={{ gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gridTemplateRows: 'repeat(1, minmax(0, 1fr))' }}>
-            {/* Graphique RevPAR, ADR & Occupation */}
-            <div className="bg-global-bg-box rounded-[14px] border-solid border-global-stroke-box border p-6 flex flex-col gap-6 items-start justify-start relative" style={{ gridColumn: '1 / span 1', gridRow: '1 / span 1' }}>
+          <>
+            {/* Performance hebdomadaire - seul */}
+            <div className="bg-global-bg-box rounded-[14px] border-solid border-global-stroke-box border p-6 flex flex-col gap-6 items-start justify-start self-stretch shrink-0 relative">
+              <div className="self-stretch shrink-0 h-7 relative">
+                <div className="text-global-blanc text-left font-['Inter-Medium',_sans-serif] text-xl leading-7 font-medium" style={{ letterSpacing: '-0.45px' }}>
+                  Performance hebdomadaire
+                </div>
+              </div>
+              <div className="flex flex-col gap-2.5 items-start justify-start self-stretch shrink-0 relative">
+                <div className="self-stretch shrink-0 h-[261.74px] relative w-full">
+                  {isKpiLoading ? (
+                    <div className="flex items-center justify-center h-full w-full">
+                      <p className="text-global-inactive">Chargement...</p>
+                    </div>
+                  ) : (
+                    <div className="w-full h-full relative">
+                      <canvas ref={marketChartRef} className="w-full h-full"></canvas>
+                    </div>
+                  )}
+                </div>
+                {/* Légende personnalisée */}
+                <div className="flex flex-row gap-[34px] items-center justify-center self-stretch shrink-0 relative">
+                  <div className="shrink-0 h-6 relative flex items-center gap-2">
+                    <div className="w-3.5 h-3.5 rounded-full bg-global-mid-impact shrink-0"></div>
+                    <div className="text-global-mid-impact text-center font-['Inter-Regular',_sans-serif] text-base leading-6 font-normal" style={{ letterSpacing: '-0.31px' }}>
+                      Occupation (%)
+                    </div>
+                  </div>
+                  <div className="shrink-0 h-6 relative flex items-center gap-2">
+                    <div className="w-3.5 h-3.5 rounded-full bg-global-content-highlight-2nd shrink-0"></div>
+                    <div className="text-global-content-highlight-2nd text-center font-['Inter-Regular',_sans-serif] text-base leading-6 font-normal" style={{ letterSpacing: '-0.31px' }}>
+                      Réservations
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Grille avec les deux autres graphiques */}
+            <div className="self-stretch shrink-0 grid gap-6 relative" style={{ gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gridTemplateRows: 'repeat(1, minmax(0, 1fr))' }}>
+              {/* Graphique RevPAR, ADR & Occupation */}
+              <div className="bg-global-bg-box rounded-[14px] border-solid border-global-stroke-box border p-6 flex flex-col gap-6 items-start justify-start relative" style={{ gridColumn: '1 / span 1', gridRow: '1 / span 1' }}>
               <div className="self-stretch shrink-0 h-7 relative">
                 <div className="text-global-blanc text-left font-['Inter-Medium',_sans-serif] text-xl leading-7 font-medium" style={{ letterSpacing: '-0.45px' }}>
                   RevPAR, ADR & Occupation
@@ -1080,10 +1311,10 @@ function ReportPage({ token, userProfile }) {
                   </div>
                 </div>
               </div>
-            </div>
+              </div>
 
-            {/* Graphique Gain IA & Score IA */}
-            <div className="bg-global-bg-box rounded-[14px] border-solid border-global-stroke-box border p-6 flex flex-col gap-6 items-start justify-start relative" style={{ gridColumn: '2 / span 1', gridRow: '1 / span 1' }}>
+              {/* Graphique Gain IA & Score IA */}
+              <div className="bg-global-bg-box rounded-[14px] border-solid border-global-stroke-box border p-6 flex flex-col gap-6 items-start justify-start relative" style={{ gridColumn: '2 / span 1', gridRow: '1 / span 1' }}>
               <div className="self-stretch shrink-0 h-7 relative">
                 <div className="text-global-blanc text-left font-['Inter-Medium',_sans-serif] text-xl leading-7 font-medium" style={{ letterSpacing: '-0.45px' }}>
                   Gain IA & Score IA
@@ -1117,7 +1348,64 @@ function ReportPage({ token, userProfile }) {
                   </div>
                 </div>
               </div>
+              </div>
             </div>
+          </>
+        )}
+
+        {/* Graphique Tendance marché - Offre vs Demande (onglet Marché) */}
+        {activeTab === 'market' && (
+          <div className="bg-[rgba(15,23,43,0.40)] rounded-[14px] border-solid border-[rgba(49,65,88,0.50)] border pt-[25px] pr-[25px] pb-[25px] pl-[25px] flex flex-col gap-6 items-start justify-start self-stretch relative">
+            <div className="self-stretch shrink-0 h-7 relative">
+              <div className="text-[#ffffff] text-left font-['Inter-Medium',_sans-serif] text-xl leading-7 font-medium" style={{ letterSpacing: "-0.45px" }}>
+                Tendance marché - Offre vs Demande
+              </div>
+            </div>
+            <div className="self-stretch shrink-0 h-[350px] relative">
+              {isKpiLoading ? (
+                <div className="flex items-center justify-center h-full w-full">
+                  <p className="text-global-inactive">Chargement...</p>
+                </div>
+              ) : (
+                <div className="w-full h-full relative">
+                  <canvas ref={marketTrendChartRef} className="w-full h-full"></canvas>
+                </div>
+              )}
+            </div>
+            {/* Légende personnalisée */}
+            <div className="flex flex-row gap-6 items-center justify-center self-stretch shrink-0 relative">
+              <div className="shrink-0 h-6 relative flex items-center gap-2">
+                <div className="w-3.5 h-3.5 rounded-full bg-global-content-highlight-2nd shrink-0"></div>
+                <div className="text-global-content-highlight-2nd text-center font-['Inter-Regular',_sans-serif] text-base leading-6 font-normal" style={{ letterSpacing: "-0.31px" }}>
+                  Demande
+                </div>
+              </div>
+              <div className="shrink-0 h-6 relative flex items-center gap-2">
+                <div className="w-3.5 h-3.5 rounded-full bg-global-mid-impact shrink-0"></div>
+                <div className="text-global-mid-impact text-center font-['Inter-Regular',_sans-serif] text-base leading-6 font-normal" style={{ letterSpacing: "-0.31px" }}>
+                  Offre
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Contenu pour les autres onglets (Positionnement, Prévisions, Performance Financière) */}
+        {activeTab === 'positioning' && (
+          <div className="bg-global-bg-box rounded-[14px] border-solid border-global-stroke-box border p-6 flex flex-col gap-6 items-center justify-center self-stretch shrink-0 relative min-h-[400px]">
+            <p className="text-global-inactive text-center">Le contenu de l'onglet Positionnement sera bientôt disponible.</p>
+          </div>
+        )}
+
+        {activeTab === 'forecast' && (
+          <div className="bg-global-bg-box rounded-[14px] border-solid border-global-stroke-box border p-6 flex flex-col gap-6 items-center justify-center self-stretch shrink-0 relative min-h-[400px]">
+            <p className="text-global-inactive text-center">Le contenu de l'onglet Prévisions sera bientôt disponible.</p>
+          </div>
+        )}
+
+        {activeTab === 'financial' && (
+          <div className="bg-global-bg-box rounded-[14px] border-solid border-global-stroke-box border p-6 flex flex-col gap-6 items-center justify-center self-stretch shrink-0 relative min-h-[400px]">
+            <p className="text-global-inactive text-center">Le contenu de l'onglet Performance Financière sera bientôt disponible.</p>
           </div>
         )}
       </div>

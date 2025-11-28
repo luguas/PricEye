@@ -5,13 +5,15 @@ import { jwtDecode } from 'jwt-decode';
 import PropertyNewsFeed from '../components/PropertyNewsFeed.jsx';
 import DateAnalysis from '../components/DateAnalysis.jsx';
 import Bouton from '../components/Bouton.jsx';
-import AlertModal from '../components/AlertModal.jsx'; 
+import AlertModal from '../components/AlertModal.jsx';
+import { useLanguage } from '../contexts/LanguageContext.jsx'; 
 
 // Firebase n'est plus utilisé directement côté client pour les price_overrides
 // On utilise maintenant l'API backend
 
 
 function PricingPage({ token, userProfile }) {
+  const { t, language } = useLanguage();
   const [properties, setProperties] = useState([]);
   const [allGroups, setAllGroups] = useState([]);
   const [selectedView, setSelectedView] = useState('property'); 
@@ -78,11 +80,11 @@ function PricingPage({ token, userProfile }) {
       }
       
     } catch (err) {
-      setError(`Erreur de chargement des données: ${err.message}`);
+      setError(t('pricing.errors.loadData', { message: err.message }));
     } finally {
       setIsLoading(false);
     }
-  }, [token, userProfile]); 
+  }, [token, userProfile, t]); 
 
   useEffect(() => {
     fetchInitialData();
@@ -122,7 +124,7 @@ function PricingPage({ token, userProfile }) {
         setAutoPricingError(''); // Réinitialiser les erreurs
       } catch (err) {
         console.error("Erreur lors du chargement de l'état de génération automatique:", err);
-        setAutoPricingError(`Erreur lors du chargement: ${err.message || 'Impossible de charger l\'état actuel.'}`);
+        setAutoPricingError(t('pricing.autoPricing.loadError', { message: err.message || 'Impossible de charger l\'état actuel.' }));
         // En cas d'erreur, on garde les valeurs par défaut
         setIsAutoGenerationEnabled(false);
         setAutoPricingTimezone(userProfile?.timezone || 'Europe/Paris');
@@ -132,7 +134,7 @@ function PricingPage({ token, userProfile }) {
     };
 
     loadAutoPricingStatus();
-  }, [token, userProfile]);
+  }, [token, userProfile, t]);
 
   // Mettre à jour le fuseau horaire si le profil utilisateur change et que la génération automatique est activée
   useEffect(() => {
@@ -160,7 +162,8 @@ function PricingPage({ token, userProfile }) {
       tomorrow.setUTCHours(0, 0, 0, 0);
 
       // Formater la date selon le fuseau horaire de l'utilisateur
-      const formatter = new Intl.DateTimeFormat('fr-FR', {
+      const locale = language === 'en' ? 'en-US' : 'fr-FR';
+      const formatter = new Intl.DateTimeFormat(locale, {
         timeZone: autoPricingTimezone,
         day: 'numeric',
         month: 'long',
@@ -173,9 +176,9 @@ function PricingPage({ token, userProfile }) {
     } catch (error) {
       console.error("Erreur lors du calcul de la prochaine génération:", error);
       // Fallback simple
-      return 'demain à 00h00';
+      return t('pricing.autoPricing.nextGeneration');
     }
-  }, [isAutoGenerationEnabled, autoPricingTimezone]);
+  }, [isAutoGenerationEnabled, autoPricingTimezone, language, t]);
 
   // Fonction pour formater la date de dernière génération
   const formatLastRun = useMemo(() => {
@@ -214,7 +217,8 @@ function PricingPage({ token, userProfile }) {
       }
 
       // Formater selon le fuseau horaire de l'utilisateur
-      const formatter = new Intl.DateTimeFormat('fr-FR', {
+      const locale = language === 'en' ? 'en-US' : 'fr-FR';
+      const formatter = new Intl.DateTimeFormat(locale, {
         timeZone: autoPricingTimezone || userProfile?.timezone || 'Europe/Paris',
         day: 'numeric',
         month: 'long',
@@ -229,7 +233,7 @@ function PricingPage({ token, userProfile }) {
       console.error("Erreur lors du formatage de la dernière génération:", error, autoPricingLastRun);
       return null;
     }
-  }, [autoPricingLastRun, autoPricingTimezone, userProfile?.timezone]);
+  }, [autoPricingLastRun, autoPricingTimezone, userProfile?.timezone, language]);
 
   // Fonction réutilisable pour appliquer une stratégie de pricing
   const applyPricingStrategy = async (propertyIdToAnalyze, groupToSync = null) => {
@@ -330,13 +334,13 @@ function PricingPage({ token, userProfile }) {
         userId = decodedToken?.user_id || decodedToken?.uid;
       } catch (decodeError) {
         console.error("Erreur de décodage du token:", decodeError);
-        setAutoPricingError("Erreur d'authentification. Veuillez vous reconnecter.");
+        setAutoPricingError(t('pricing.autoPricing.authError'));
         setIsAutoGenerationEnabled(!newEnabled); // Revenir à l'état précédent
         return;
       }
 
       if (!userId) {
-        setAutoPricingError("Impossible de récupérer l'identifiant utilisateur.");
+        setAutoPricingError(t('pricing.autoPricing.userIdError'));
         setIsAutoGenerationEnabled(!newEnabled);
         return;
       }
@@ -364,7 +368,7 @@ function PricingPage({ token, userProfile }) {
               if (group) {
                   if (!group.syncPrices) {
                       if (!group.mainPropertyId) {
-                          setAutoPricingError("Veuillez définir une propriété principale pour ce groupe avant d'activer la génération automatique.");
+                          setAutoPricingError(t('pricing.autoPricing.noMainProperty'));
                           setIsAutoGenerationEnabled(false);
                           return;
                       }
@@ -372,7 +376,7 @@ function PricingPage({ token, userProfile }) {
                       groupToSync = null;
                   } else {
                       if (!group.mainPropertyId) {
-                          setAutoPricingError("Veuillez définir une propriété principale pour ce groupe avant d'activer la génération automatique.");
+                          setAutoPricingError(t('pricing.autoPricing.noMainProperty'));
                           setIsAutoGenerationEnabled(false);
                           return;
                       }
@@ -384,7 +388,7 @@ function PricingPage({ token, userProfile }) {
                   if (properties.length > 0) {
                       propertyIdToAnalyze = properties[0].id;
                   } else {
-                      setAutoPricingError("Aucune propriété disponible pour générer les prix.");
+                      setAutoPricingError(t('pricing.autoPricing.noProperties'));
                       setIsAutoGenerationEnabled(false);
                       return;
                   }
@@ -392,24 +396,24 @@ function PricingPage({ token, userProfile }) {
           }
 
           if (!propertyIdToAnalyze) {
-              setAutoPricingError("Veuillez sélectionner une propriété ou un groupe valide.");
+              setAutoPricingError(t('pricing.autoPricing.invalidSelection'));
               setIsAutoGenerationEnabled(false);
               return;
           }
 
           // Appliquer la stratégie immédiatement
-          setAutoPricingSuccess('Génération automatique activée. Génération des prix en cours...');
+          setAutoPricingSuccess(t('pricing.autoPricing.generating'));
           const result = await applyPricingStrategy(propertyIdToAnalyze, groupToSync);
           
-          setAutoPricingSuccess(`Génération automatique activée. Prix mis à jour pour ${result.propertyCount} propriété(s). Les prix seront régénérés tous les jours à 00h00 (${timezoneToUse}).`);
+          setAutoPricingSuccess(t('pricing.autoPricing.success', { count: result.propertyCount, timezone: timezoneToUse }));
         } catch (pricingError) {
           console.error("Erreur lors de la génération immédiate des prix:", pricingError);
-          setAutoPricingError(`Génération automatique activée, mais erreur lors de la génération immédiate: ${pricingError.message}`);
+          setAutoPricingError(t('pricing.autoPricing.error', { message: pricingError.message }));
           // On garde le toggle activé même si la génération immédiate échoue
           // car la génération automatique quotidienne fonctionnera quand même
         }
       } else {
-        setAutoPricingSuccess('Génération automatique désactivée.');
+        setAutoPricingSuccess(t('pricing.autoPricing.disabled'));
       }
 
       // Effacer le message de succès après 5 secondes
@@ -419,7 +423,7 @@ function PricingPage({ token, userProfile }) {
 
     } catch (err) {
       console.error("Erreur lors de la mise à jour de la génération automatique:", err);
-      setAutoPricingError(`Erreur: ${err.message || 'Impossible de sauvegarder la préférence.'}`);
+      setAutoPricingError(t('pricing.autoPricing.saveError', { message: err.message || 'Impossible de sauvegarder la préférence.' }));
       // Revenir à l'état précédent en cas d'erreur
       setIsAutoGenerationEnabled(!newEnabled);
       
@@ -486,11 +490,11 @@ function PricingPage({ token, userProfile }) {
       
     } catch (err) {
       console.error("Erreur de chargement des données calendrier:", err);
-      setError(`Erreur calendrier: ${err.message}`);
+      setError(t('pricing.errors.calendar', { message: err.message }));
       setPriceOverrides({});
       setBookings({});
     }
-  }, [selectedId, selectedView, currentCalendarDate, token, properties, allGroups, isLoading]); 
+  }, [selectedId, selectedView, currentCalendarDate, token, properties, allGroups, isLoading, t]); 
 
    useEffect(() => {
       fetchCalendarData();
@@ -508,11 +512,11 @@ function PricingPage({ token, userProfile }) {
         const data = await getPropertySpecificNews(propertyId, token);
         setPropertyNews(data);
     } catch (err) {
-        setNewsError(`Erreur actus: ${err.message}`);
+        setNewsError(t('pricing.errors.news', { message: err.message }));
     } finally {
         setIsNewsLoading(false);
     }
-  }, [token]);
+  }, [token, t]);
 
 
   const handleGenerateStrategy = async () => {
@@ -524,13 +528,13 @@ function PricingPage({ token, userProfile }) {
     } else { // 'group'
         const group = allGroups.find(g => g.id === selectedId);
         if (!group) {
-             setError("Groupe non trouvé.");
+             setError(t('pricing.errors.groupNotFound'));
              return;
         }
         if (!group.syncPrices) {
-             setAlertModal({ isOpen: true, message: "La synchronisation des prix n'est pas activée pour ce groupe. La stratégie ne sera appliquée qu'à la propriété principale.", title: 'Information' });
+             setAlertModal({ isOpen: true, message: t('pricing.errors.syncNotEnabled'), title: t('pricing.modal.information') });
              if (!group.mainPropertyId) {
-                 setAlertModal({ isOpen: true, message: "Veuillez définir une propriété principale pour ce groupe avant de générer une stratégie.", title: 'Attention' });
+                 setAlertModal({ isOpen: true, message: t('pricing.errors.noMainProperty'), title: t('pricing.modal.attention') });
                  return;
              }
              propertyIdToAnalyze = group.mainPropertyId;
@@ -538,7 +542,7 @@ function PricingPage({ token, userProfile }) {
         } else {
             // Synchro activée
              if (!group.mainPropertyId) {
-                 setAlertModal({ isOpen: true, message: "Veuillez définir une propriété principale pour ce groupe (dans l'onglet Dashboard) avant de générer une stratégie.", title: 'Attention' });
+                 setAlertModal({ isOpen: true, message: t('pricing.errors.noMainPropertyDashboard'), title: t('pricing.modal.attention') });
                  return;
              }
             propertyIdToAnalyze = group.mainPropertyId;
@@ -547,19 +551,19 @@ function PricingPage({ token, userProfile }) {
     }
     
     if (!propertyIdToAnalyze) {
-      setError('Veuillez sélectionner une propriété ou un groupe valide.');
+      setError(t('pricing.errors.invalidSelection'));
       return;
     }
     if (!token) {
-       setError("Connexion non prête. Veuillez patienter.");
+       setError(t('pricing.errors.connectionNotReady'));
        return;
     }
 
     try {
       const result = await applyPricingStrategy(propertyIdToAnalyze, groupToSync);
-      setAlertModal({ isOpen: true, message: `Stratégie IA appliquée avec succès à ${result.propertyCount} propriété(s) ! ${result.summary || ''}`, title: 'Succès' });
+      setAlertModal({ isOpen: true, message: t('pricing.errors.strategySuccess', { count: result.propertyCount, summary: result.summary || '' }), title: t('pricing.modal.success') });
     } catch (err) {
-      setError(`Erreur de génération de stratégie: ${err.message}`);
+      setError(t('pricing.errors.strategyError', { message: err.message }));
     }
   };
 
@@ -638,7 +642,7 @@ function PricingPage({ token, userProfile }) {
        if (selectedView === 'group') {
            const group = allGroups.find(g => g.id === selectedId);
            if (!group || !group.mainPropertyId) {
-                setError("Veuillez définir une propriété principale pour ce groupe avant d'ajouter une réservation.");
+                setError(t('pricing.errors.bookingNoMainProperty'));
                 return;
            }
            propertyIdForBooking = group.mainPropertyId;
@@ -648,7 +652,7 @@ function PricingPage({ token, userProfile }) {
       
       const pricePerNightNum = parseInt(bookingPrice, 10);
       if (isNaN(pricePerNightNum) || pricePerNightNum <= 0) {
-          setError("Veuillez entrer un prix par nuit valide.");
+          setError(t('pricing.errors.bookingInvalidPrice'));
           return;
       }
       
@@ -659,7 +663,7 @@ function PricingPage({ token, userProfile }) {
        while(currentDateCheck <= end) {
            const dateStr = currentDateCheck.toISOString().split('T')[0];
            if (bookings[dateStr]) {
-               setError(`La période sélectionnée contient des jours déjà réservés (${dateStr}). Veuillez choisir une autre période.`);
+               setError(t('pricing.errors.bookingDateError', { date: dateStr }));
                return;
            }
            currentDateCheck.setDate(currentDateCheck.getDate() + 1);
@@ -669,7 +673,7 @@ function PricingPage({ token, userProfile }) {
        endDateForCalc.setDate(endDateForCalc.getDate() + 1); 
        const nights = Math.round((endDateForCalc - start) / (1000 * 60 * 60 * 24));
        if (nights <= 0) {
-            setError("La date de fin doit être après la date de début.");
+            setError(t('pricing.errors.bookingEndDateError'));
             return;
        }
 
@@ -687,11 +691,11 @@ function PricingPage({ token, userProfile }) {
       try {
           await addBooking(propertyIdForBooking, bookingData, token);
           
-          setAlertModal({ isOpen: true, message: 'Réservation ajoutée avec succès !', title: 'Succès' });
+          setAlertModal({ isOpen: true, message: t('pricing.errors.bookingSuccess'), title: t('pricing.modal.success') });
           clearSelection();
           fetchCalendarData(); 
       } catch (err) {
-          setError(`Erreur lors de l'ajout de la réservation: ${err.message}`);
+          setError(t('pricing.errors.bookingError', { message: err.message }));
       } finally {
           setIsLoading(false);
       }
@@ -707,11 +711,11 @@ function PricingPage({ token, userProfile }) {
       } else { 
           const group = allGroups.find(g => g.id === selectedId);
           if (!group) {
-              setError("Groupe non trouvé.");
+              setError(t('pricing.errors.groupNotFound'));
               return;
           }
           if (!group.syncPrices) {
-              setAlertModal({ isOpen: true, message: "La synchronisation des prix n'est pas activée pour ce groupe. Le prix ne sera appliqué qu'à la propriété principale.", title: 'Information' });
+              setAlertModal({ isOpen: true, message: t('pricing.errors.syncNotEnabledPrice'), title: t('pricing.modal.information') });
               propertyIdsToUpdate = [group.mainPropertyId].filter(Boolean); 
           } else {
               propertyIdsToUpdate = group.properties || []; 
@@ -719,13 +723,13 @@ function PricingPage({ token, userProfile }) {
       }
 
       if (!selectionStart || !selectionEnd || !manualPrice || propertyIdsToUpdate.length === 0) {
-          setError("Sélection de dates, prix, et propriété/groupe valide requis.");
+          setError(t('pricing.errors.bookingRequired'));
           return;
       }
       
       const priceNum = parseInt(manualPrice, 10);
       if (isNaN(priceNum) || priceNum < 0) {
-          setError("Veuillez entrer un prix valide (0 ou plus).");
+          setError(t('pricing.errors.invalidPrice'));
           return;
       }
 
@@ -756,11 +760,11 @@ function PricingPage({ token, userProfile }) {
                   await updatePriceOverrides(propId, overridesToUpdate, token);
               }
           }
-          setAlertModal({ isOpen: true, message: `Prix manuels appliqués à ${propertyIdsToUpdate.length} propriété(s) !`, title: 'Succès' });
+          setAlertModal({ isOpen: true, message: t('pricing.errors.priceSuccess', { count: propertyIdsToUpdate.length }), title: t('pricing.modal.success') });
           clearSelection();
           fetchCalendarData(); 
       } catch (err) {
-          setError(`Erreur lors de la sauvegarde des prix: ${err.message}`);
+          setError(t('pricing.errors.priceError', { message: err.message }));
       } finally {
           setIsLoading(false);
       }
@@ -802,7 +806,8 @@ function PricingPage({ token, userProfile }) {
   // Formatter pour la devise (basé sur le profil utilisateur)
   const formatCurrency = (amount) => {
       const currency = userProfile?.currency || 'EUR'; // EUR par défaut
-      return (amount || 0).toLocaleString('fr-FR', { 
+      const locale = language === 'en' ? 'en-US' : 'fr-FR';
+      return (amount || 0).toLocaleString(locale, { 
           style: 'currency', 
           currency: currency, 
           minimumFractionDigits: 0, 
@@ -875,7 +880,7 @@ function PricingPage({ token, userProfile }) {
     const currentProperty = currentItem;
     
     if (isLoading || !selectedId || !currentProperty) {
-         return <div className="grid grid-cols-7 gap-3"><p className="text-center p-4 text-global-inactive col-span-7">Chargement ou sélection requise...</p></div>;
+         return <div className="grid grid-cols-7 gap-3"><p className="text-center p-4 text-global-inactive col-span-7">{t('pricing.loading')}</p></div>;
     }
     
     const year = currentCalendarDate.getFullYear();
@@ -993,13 +998,13 @@ function PricingPage({ token, userProfile }) {
    const renderBookingForm = () => (
         <form onSubmit={handleSaveBooking} className="flex flex-col gap-3 text-left">
             <div>
-                <label className="text-xs font-medium text-global-inactive mb-1 block">Période sélectionnée</label>
+                <label className="text-xs font-medium text-global-inactive mb-1 block">{t('pricing.selectedPeriod')}</label>
                 <p className="text-sm font-medium text-global-blanc bg-global-bg-small-box border border-global-stroke-box rounded-[10px] p-2 mt-1">
-                  {selectionStart} au {selectionEnd}
+                  {selectionStart} {language === 'en' ? 'to' : 'au'} {selectionEnd}
                 </p>
             </div>
             <div>
-                <label className="text-xs font-medium text-global-inactive mb-1 block">Prix / Nuit ({currencyLabel})</label>
+                <label className="text-xs font-medium text-global-inactive mb-1 block">{t('pricing.pricePerNight')} ({currencyLabel})</label>
                 <input 
                     type="number" 
                     value={bookingPrice} 
@@ -1010,17 +1015,17 @@ function PricingPage({ token, userProfile }) {
                 />
             </div>
              <div>
-                <label className="text-xs font-medium text-global-inactive mb-1 block">Canal</label>
+                <label className="text-xs font-medium text-global-inactive mb-1 block">{t('pricing.channel')}</label>
                 <select 
                   value={bookingChannel} 
                   onChange={(e) => setBookingChannel(e.target.value)} 
                   className="w-full bg-global-bg-small-box border border-global-stroke-box rounded-[10px] px-3 py-2 text-global-blanc focus:outline-none focus:ring-2 focus:ring-global-content-highlight-2nd mt-1"
                 >
-                    <option value="Direct">Direct</option>
-                    <option value="Airbnb">Airbnb</option>
-                    <option value="Booking">Booking.com</option>
-                    <option value="VRBO">VRBO</option>
-                    <option value="Autre">Autre</option>
+                    <option value="Direct">{t('pricing.channels.direct')}</option>
+                    <option value="Airbnb">{t('pricing.channels.airbnb')}</option>
+                    <option value="Booking">{t('pricing.channels.booking')}</option>
+                    <option value="VRBO">{t('pricing.channels.vrbo')}</option>
+                    <option value="Autre">{t('pricing.channels.other')}</option>
                 </select>
             </div>
             <div className="flex gap-2 pt-2">
@@ -1029,14 +1034,14 @@ function PricingPage({ token, userProfile }) {
                   disabled={isLoading} 
                   className="flex-grow bg-gradient-to-r from-[#155dfc] to-[#12a1d5] hover:opacity-90 text-white font-h3-font-family font-h3-font-weight text-h3-font-size py-2 px-4 rounded-[10px] transition-opacity disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                    {isLoading ? 'Sauvegarde...' : 'Enregistrer Résa.'}
+                    {isLoading ? t('pricing.save') : t('pricing.saveBooking')}
                 </button>
                  <button 
                    type="button" 
                    onClick={clearSelection} 
                    className="px-3 py-2 bg-transparent border border-global-stroke-highlight-2nd text-global-inactive hover:text-global-blanc rounded-[10px] text-xs transition-colors"
                  >
-                   Annuler
+                   {t('pricing.cancel')}
                  </button>
             </div>
         </form>
@@ -1046,17 +1051,17 @@ function PricingPage({ token, userProfile }) {
         <form onSubmit={handleSavePriceOverride} className="flex flex-col gap-3 text-left">
             {selectedView === 'group' && (
               <p className="text-xs text-global-inactive font-p1-font-family">
-                Le prix sera appliqué à toutes les propriétés synchronisées de ce groupe.
+                {t('pricing.groupPriceNote')}
               </p>
             )}
             <div>
-              <label className="text-xs font-medium text-global-inactive mb-1 block">Période sélectionnée</label>
+              <label className="text-xs font-medium text-global-inactive mb-1 block">{t('pricing.selectedPeriod')}</label>
               <p className="text-sm font-medium text-global-blanc bg-global-bg-small-box border border-global-stroke-box rounded-[10px] p-2 mt-1">
-                {selectionStart} au {selectionEnd}
+                {selectionStart} {language === 'en' ? 'to' : 'au'} {selectionEnd}
               </p>
             </div>
             <div>
-                <label className="text-xs font-medium text-global-inactive mb-1 block">Nouveau Prix / Nuit ({currencyLabel})</label>
+                <label className="text-xs font-medium text-global-inactive mb-1 block">{t('pricing.newPricePerNight')} ({currencyLabel})</label>
                 <input 
                     type="number" 
                     value={manualPrice} 
@@ -1076,7 +1081,7 @@ function PricingPage({ token, userProfile }) {
                     className="w-5 h-5 rounded border border-global-content-highlight-2nd bg-transparent text-global-content-highlight-2nd focus:ring-2 focus:ring-global-content-highlight-2nd cursor-pointer"
                 />
                 <label htmlFor="lockPrice" className="text-xs text-global-inactive font-p1-font-family cursor-pointer">
-                    Verrouiller ce prix (l'IA ne le modifiera pas)
+                    {t('pricing.lockPrice')}
                 </label>
             </div>
             <div className="flex gap-2 pt-2">
@@ -1085,14 +1090,14 @@ function PricingPage({ token, userProfile }) {
                   disabled={isLoading} 
                   className="flex-grow bg-gradient-to-r from-[#155dfc] to-[#12a1d5] hover:opacity-90 text-white font-h3-font-family font-h3-font-weight text-h3-font-size py-2 px-4 rounded-[10px] transition-opacity disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                    {isLoading ? 'Sauvegarde...' : 'Appliquer Prix'}
+                    {isLoading ? t('pricing.save') : t('pricing.applyPrice')}
                 </button>
                  <button 
                    type="button" 
                    onClick={clearSelection} 
                    className="px-3 py-2 bg-transparent border border-global-stroke-highlight-2nd text-global-inactive hover:text-global-blanc rounded-[10px] text-xs transition-colors"
                  >
-                   Annuler
+                   {t('pricing.cancel')}
                  </button>
             </div>
         </form>
@@ -1119,13 +1124,13 @@ function PricingPage({ token, userProfile }) {
 
 
   const getSelectedPropertyName = () => {
-    if (!selectedId) return 'Sélectionnez une propriété';
+    if (!selectedId) return t('pricing.selectProperty');
     if (selectedView === 'property') {
       const prop = properties.find(p => p.id === selectedId);
-      return prop?.address || 'Propriété inconnue';
+      return prop?.address || t('pricing.unknownProperty');
     } else {
       const group = allGroups.find(g => g.id === selectedId);
-      return group?.name || 'Groupe inconnu';
+      return group?.name || t('pricing.unknownGroup');
     }
   };
 
@@ -1155,11 +1160,11 @@ function PricingPage({ token, userProfile }) {
               className="w-80 h-9 bg-global-bg-small-box rounded-lg border border-solid border-global-stroke-box px-3 py-0 text-center font-h3-font-family font-h3-font-weight text-global-blanc text-h3-font-size leading-h3-line-height appearance-none cursor-pointer focus:outline-none hover:opacity-90 transition-opacity"
               disabled={isLoading || iaLoading}
             >
-              <option value="">-- Sélectionnez --</option>
-              <optgroup label="Groupes">
+              <option value="">{t('pricing.select')}</option>
+              <optgroup label={t('pricing.groups')}>
                 {allGroups.map(g => <option key={g.id} value={`group-${g.id}`}>{g.name}</option>)}
               </optgroup>
-              <optgroup label="Propriétés Individuelles">
+              <optgroup label={t('pricing.individualProperties')}>
                 {properties.map(p => <option key={p.id} value={`property-${p.id}`}>{p.address}</option>)}
               </optgroup>
             </select>
@@ -1178,7 +1183,7 @@ function PricingPage({ token, userProfile }) {
                 <ArrowLeftIcon />
               </button>
               <time className="relative w-[150px] font-h4-font-family font-h4-font-weight text-global-blanc text-h4-font-size text-center leading-h4-line-height">
-                {currentCalendarDate.toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' })}
+                {currentCalendarDate.toLocaleDateString(language === 'en' ? 'en-US' : 'fr-FR', { month: 'long', year: 'numeric' })}
               </time>
               <button 
                 id="next-month-btn" 
@@ -1195,7 +1200,7 @@ function PricingPage({ token, userProfile }) {
           <section className="flex flex-col items-start gap-3 relative self-stretch w-full flex-[0_0_auto]">
             {/* En-têtes jours */}
             <header className="flex items-center justify-between px-9 py-0 relative self-stretch w-full flex-[0_0_auto]">
-              {['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'].map((day, index) => (
+              {(language === 'en' ? ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'] : ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim']).map((day, index) => (
                 <div
                   key={index}
                   className="relative w-fit mt-[-1.00px] font-p1-font-family font-p1-font-weight text-global-inactive text-p1-font-size text-center leading-p1-line-height"
@@ -1217,7 +1222,7 @@ function PricingPage({ token, userProfile }) {
                       <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
                     </svg>
                     <span className="text-global-blanc text-sm font-h3-font-family font-h3-font-weight">
-                      Génération des prix en cours...
+                      {t('pricing.strategy.generating')}
                     </span>
                   </div>
                 </div>
@@ -1234,19 +1239,19 @@ function PricingPage({ token, userProfile }) {
             <div className="inline-flex items-center gap-2 relative flex-[0_0_auto]">
               <div className="w-3 h-3 bg-calendrierbg-vert rounded border border-solid border-calendrierstroke-vert relative" role="img" aria-label="Sélection prix indicator" />
               <span className="relative w-fit mt-[-1.00px] font-p1-font-family font-p1-font-weight text-global-inactive text-p1-font-size leading-p1-line-height">
-                Sélection prix
+                {t('pricing.legend.priceSelection')}
               </span>
             </div>
             <div className="inline-flex items-center gap-2 relative flex-[0_0_auto]">
               <div className="w-3 h-3 bg-calendrierbg-orange rounded border border-solid border-calendrierstroke-orange relative" role="img" aria-label="Réservé indicator" />
               <span className="relative w-fit mt-[-1.00px] font-p1-font-family font-p1-font-weight text-global-inactive text-p1-font-size leading-p1-line-height">
-                Réservé
+                {t('pricing.legend.booked')}
               </span>
             </div>
             <div className="inline-flex items-center gap-2 relative flex-[0_0_auto]">
               <div className="w-3 h-3 bg-calendrierbg-bleu rounded border border-solid border-calendrierstroke-bleu relative" role="img" aria-label="Sélection résa indicator" />
               <span className="relative w-fit mt-[-1.00px] font-p1-font-family font-p1-font-weight text-global-inactive text-p1-font-size leading-p1-line-height">
-                Sélection résa
+                {t('pricing.legend.bookingSelection')}
               </span>
             </div>
           </section>
@@ -1266,10 +1271,10 @@ function PricingPage({ token, userProfile }) {
           {/* 2. Stratégie IA (Prix) */}
           <div className="bg-global-bg-box rounded-[14px] border border-solid border-global-stroke-box p-6 flex flex-col gap-3 items-start justify-start shrink-0 w-full relative">
             <div className="text-global-blanc text-left font-h2-font-family text-h2-font-size font-h2-font-weight relative">
-              Stratégie IA (Prix)
+              {t('pricing.strategy.title')}
             </div>
             <div className="text-global-inactive text-left font-h4-font-family text-h4-font-size leading-h4-line-height font-h4-font-weight relative self-stretch">
-              Générez et appliquez des prix suggérés sur 6 mois.
+              {t('pricing.strategy.description')}
             </div>
             
             {/* Feedback de chargement du pricing */}
@@ -1283,10 +1288,10 @@ function PricingPage({ token, userProfile }) {
                 </div>
                 <div className="flex flex-col gap-1 flex-1">
                   <span className="text-global-blanc text-sm font-h3-font-family font-h3-font-weight">
-                    Génération des prix en cours...
+                    {t('pricing.strategy.generating')}
                   </span>
                   <span className="text-global-inactive text-xs font-p1-font-family">
-                    L'IA analyse le marché et génère une stratégie optimale. Veuillez patienter.
+                    {t('pricing.strategy.generatingDescription')}
                   </span>
                 </div>
               </div>
@@ -1328,7 +1333,7 @@ function PricingPage({ token, userProfile }) {
                 )}
               </div>
               <div className="text-global-blanc text-left font-h3-font-family text-h3-font-size font-h3-font-weight relative">
-                Automatiser le pricing
+                {t('pricing.strategy.automate')}
               </div>
             </div>
 
@@ -1336,7 +1341,7 @@ function PricingPage({ token, userProfile }) {
             <div className="flex flex-row gap-3 items-start justify-start self-stretch shrink-0 relative">
               <Bouton
                 state="principal"
-                text="Ajouter Réservation"
+                text={t('pricing.strategy.addBooking')}
                 onClick={iaLoading ? undefined : () => { 
                   setSelectionMode('booking');
                   // Réinitialiser uniquement les champs du formulaire, pas la sélection
@@ -1373,7 +1378,7 @@ function PricingPage({ token, userProfile }) {
                   <path d="M2 10L10 15L18 10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
                 </svg>
                 <span className="relative w-fit font-h3-font-family font-h3-font-weight text-h3-font-size leading-h3-line-height">
-                  Définir Prix
+                  {t('pricing.strategy.setPrice')}
                 </span>
               </button>
             </div>
@@ -1382,7 +1387,7 @@ function PricingPage({ token, userProfile }) {
             <div className="border-t border-solid border-global-stroke-box pt-4 flex flex-row gap-6 items-start justify-center self-stretch shrink-0 relative">
               {!selectionStart ? (
                 <div className="text-global-inactive text-left font-h4-font-family text-h4-font-size leading-h4-line-height font-h4-font-weight relative self-stretch">
-                  Sélectionnez une période sur le calendrier pour commencer.
+                  {t('pricing.selectPeriod')}
                 </div>
               ) : (
                 <div className="self-stretch w-full">
@@ -1404,10 +1409,10 @@ function PricingPage({ token, userProfile }) {
       {/* Modale d'alerte */}
       <AlertModal
         isOpen={alertModal.isOpen}
-        onClose={() => setAlertModal({ isOpen: false, message: '', title: 'Information' })}
+        onClose={() => setAlertModal({ isOpen: false, message: '', title: t('pricing.modal.information') })}
         title={alertModal.title}
         message={alertModal.message}
-        buttonText="OK"
+        buttonText={t('pricing.modal.ok')}
       />
     </div>
   );

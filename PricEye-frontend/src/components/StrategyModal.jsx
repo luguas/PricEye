@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { updatePropertyStrategy, updateGroupStrategy } from '../services/api.js';
 import CustomScrollbar from './CustomScrollbar.jsx';
+import { useLanguage } from '../contexts/LanguageContext.jsx';
 
 // Composant CheckProperty1On (checkbox avec état on/off)
 const CheckProperty1On = ({ property1 = 'off', className = '' }) => {
@@ -37,8 +38,9 @@ const PriceyeIcon = ({ className = '' }) => (
 );
 
 function StrategyModal({ token, onClose, onSave, item, itemType, onGroupStrategyUpdated }) {
+  const { t } = useLanguage();
   const [formData, setFormData] = useState({
-    strategy: 'Équilibré',
+    strategy: t('strategyModal.balanced'),
     floor_price: '',
     base_price: '',
     ceiling_price: '',
@@ -48,12 +50,12 @@ function StrategyModal({ token, onClose, onSave, item, itemType, onGroupStrategy
   const [isAutoEnabled, setIsAutoEnabled] = useState(false);
 
   // Déterminer le nom à afficher (Propriété ou Groupe)
-  const itemName = item?.address || item?.name || 'Élément';
+  const itemName = item?.address || item?.name || t('strategyModal.for');
 
   useEffect(() => {
     if (item) {
       setFormData({
-        strategy: item.strategy || 'Équilibré',
+        strategy: item.strategy || t('strategyModal.balanced'),
         floor_price: item.floor_price != null ? String(item.floor_price) : '',
         base_price: item.base_price != null ? String(item.base_price) : '',
         ceiling_price: item.ceiling_price != null ? String(item.ceiling_price) : '',
@@ -71,7 +73,7 @@ function StrategyModal({ token, onClose, onSave, item, itemType, onGroupStrategy
     setIsLoading(true);
 
     if (!formData.floor_price || !formData.base_price) {
-        setError('Le prix plancher et le prix de base sont obligatoires.');
+        setError(t('strategyModal.required'));
         setIsLoading(false);
         return;
     }
@@ -113,12 +115,12 @@ function StrategyModal({ token, onClose, onSave, item, itemType, onGroupStrategy
       <div className="bg-global-bg-box rounded-[14px] border border-solid border-global-stroke-box p-6 flex flex-col gap-3 items-start justify-start w-full max-w-lg relative max-h-[90vh]">
         {/* Titre */}
         <div className="text-global-blanc text-left font-h2-font-family text-h2-font-size font-h2-font-weight relative shrink-0">
-          Stratégie IA (Prix)
+          {t('strategyModal.title')}
         </div>
 
         {/* Description */}
         <div className="text-global-inactive text-left font-h4-font-family text-h4-font-size leading-h4-line-height font-h4-font-weight relative self-stretch shrink-0">
-          Générez et appliquez des prix suggérés sur 6 mois.
+          {t('strategyModal.description')}
         </div>
 
         {/* Toggle Automatiser le pricing */}
@@ -128,7 +130,7 @@ function StrategyModal({ token, onClose, onSave, item, itemType, onGroupStrategy
         >
           <CheckProperty1On property1={isAutoEnabled ? 'on' : 'off'} className="!shrink-0" />
           <div className="text-global-blanc text-left font-h3-font-family text-h3-font-size font-h3-font-weight relative">
-            Automatiser le pricing
+            {t('strategyModal.automate')}
           </div>
         </div>
 
@@ -136,22 +138,22 @@ function StrategyModal({ token, onClose, onSave, item, itemType, onGroupStrategy
         <CustomScrollbar className="self-stretch flex-1 min-h-0">
           <form onSubmit={handleSubmit} className="flex flex-col gap-4 pr-2">
           <div>
-            <label htmlFor="strategy" className="block text-sm font-medium text-global-inactive mb-1">Style de l'IA</label>
+            <label htmlFor="strategy" className="block text-sm font-medium text-global-inactive mb-1">{t('strategyModal.strategy')}</label>
             <select 
               name="strategy" 
               value={formData.strategy} 
               onChange={handleChange} 
               className="w-full bg-global-bg-small-box border border-global-stroke-box text-global-blanc rounded-[10px] px-3 py-2 focus:outline-none focus:border-global-content-highlight-2nd"
             >
-              <option value="Prudent">Prudent (maximiser l'occupation)</option>
-              <option value="Équilibré">Équilibré (défaut)</option>
-              <option value="Agressif">Agressif (maximiser le revenu/nuit)</option>
+              <option value="Prudent">{t('strategyModal.prudent')}</option>
+              <option value="Équilibré">{t('strategyModal.balanced')}</option>
+              <option value="Agressif">{t('strategyModal.aggressive')}</option>
             </select>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div>
-              <label htmlFor="floor_price" className="block text-sm font-medium text-global-inactive mb-1">Prix Plancher (€)</label>
+              <label htmlFor="floor_price" className="block text-sm font-medium text-global-inactive mb-1">{t('strategyModal.floorPrice')}</label>
               <input 
                 name="floor_price" 
                 type="number" 
@@ -163,7 +165,7 @@ function StrategyModal({ token, onClose, onSave, item, itemType, onGroupStrategy
               />
             </div>
             <div>
-              <label htmlFor="base_price" className="block text-sm font-medium text-global-inactive mb-1">Prix de Base (€)</label>
+              <label htmlFor="base_price" className="block text-sm font-medium text-global-inactive mb-1">{t('strategyModal.basePrice')}</label>
               <input 
                 name="base_price" 
                 type="number" 
@@ -175,11 +177,11 @@ function StrategyModal({ token, onClose, onSave, item, itemType, onGroupStrategy
               />
             </div>
             <div>
-              <label htmlFor="ceiling_price" className="block text-sm font-medium text-global-inactive mb-1">Prix Plafond (€)</label>
+              <label htmlFor="ceiling_price" className="block text-sm font-medium text-global-inactive mb-1">{t('strategyModal.ceilingPrice')}</label>
               <input 
                 name="ceiling_price" 
                 type="number" 
-                placeholder="Optionnel" 
+                placeholder={t('strategyModal.optional')} 
                 value={formData.ceiling_price} 
                 onChange={handleChange} 
                 className="w-full bg-global-bg-small-box border border-global-stroke-box text-global-blanc rounded-[10px] px-3 py-2 focus:outline-none focus:border-global-content-highlight-2nd placeholder:text-global-inactive" 
@@ -201,14 +203,14 @@ function StrategyModal({ token, onClose, onSave, item, itemType, onGroupStrategy
               className="inline-flex items-center justify-center gap-2 px-3 py-2 border border-solid border-global-stroke-highlight-2nd rounded-[10px] bg-transparent text-global-blanc font-h3-font-family text-h3-font-size font-h3-font-weight hover:opacity-90 transition-opacity shrink-0"
             >
               <AddIcon className="w-5 h-5" />
-              <span>Annuler</span>
+              <span>{t('strategyModal.cancel')}</span>
             </button>
             <button 
               type="submit" 
               disabled={isLoading}
               className="inline-flex items-center justify-center gap-2 px-3 py-2 flex-1 rounded-[10px] bg-gradient-to-r from-[#155dfc] to-[#12a1d5] text-global-blanc font-h3-font-family text-h3-font-size font-h3-font-weight hover:opacity-90 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {isLoading ? 'Sauvegarde...' : 'Sauvegarder la Stratégie'}
+              {isLoading ? t('common.saving') : t('strategyModal.save')}
             </button>
           </div>
           </form>

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { addProperty, updateProperty, syncPropertyData } from '../services/api.js';
 import CustomScrollbar from './CustomScrollbar.jsx';
+import { useLanguage } from '../contexts/LanguageContext.jsx';
 
 // Liste des équipements disponibles
 const availableAmenities = [
@@ -10,6 +11,7 @@ const availableAmenities = [
 ];
 
 function PropertyModal({ token, onClose, onSave, property }) {
+  const { t } = useLanguage();
   const [formData, setFormData] = useState({
     address: '',
     location: '',
@@ -113,7 +115,7 @@ function PropertyModal({ token, onClose, onSave, property }) {
       try {
           // Appelle la nouvelle fonction de l'API
           const result = await syncPropertyData(property.id, token);
-          setSyncMessage(result.message || 'Données synchronisées avec succès !');
+          setSyncMessage(result.message || t('propertyModal.syncSuccess'));
           onSave(); // Force un rafraîchissement des données du dashboard
       } catch (err) {
           setError(err.message); // Affiche l'erreur dans le toast d'erreur principal
@@ -128,7 +130,7 @@ function PropertyModal({ token, onClose, onSave, property }) {
   return (
     <div className="fixed inset-0 bg-black bg-opacity-90 flex items-center justify-center p-4 z-50">
         <div className="bg-bg-secondary rounded-lg shadow-xl w-full max-w-lg p-6 max-h-[90vh] flex flex-col">
-            <h3 className="text-xl font-bold mb-6 text-text-primary shrink-0">{isEditing ? 'Modifier la propriété' : 'Ajouter une nouvelle propriété'}</h3>
+            <h3 className="text-xl font-bold mb-6 text-text-primary shrink-0">{isEditing ? t('propertyModal.editTitle') : t('propertyModal.title')}</h3>
             
             {/* Bouton de Synchronisation (uniquement en mode édition) */}
             {isEditing && (
@@ -142,10 +144,10 @@ function PropertyModal({ token, onClose, onSave, property }) {
                     {isSyncing ? (
                         <>
                             <div className="loader-small"></div>
-                            Synchronisation en cours...
+                            {t('common.loading')}
                         </>
                     ) : (
-                        'Synchroniser les données (ex: iCal/API)'
+                        t('propertyModal.sync')
                     )}
                 </button>
                 {syncMessage && <p className="text-sm text-green-400 mt-2 text-center">{syncMessage}</p>}
@@ -155,41 +157,41 @@ function PropertyModal({ token, onClose, onSave, property }) {
             <CustomScrollbar className="flex-1 min-h-0">
               <form onSubmit={handleSubmit} className="space-y-4 pr-2">
                 <div>
-                  <label htmlFor="address" className="block text-sm font-medium text-text-secondary">Adresse</label>
-                  <input name="address" id="address" type="text" placeholder="Adresse" value={formData.address} onChange={handleChange} className="w-full bg-bg-muted border-border-primary text-text-primary p-2 rounded-md mt-1" required />
+                  <label htmlFor="address" className="block text-sm font-medium text-text-secondary">{t('propertyModal.address')}</label>
+                  <input name="address" id="address" type="text" placeholder={t('propertyModal.address')} value={formData.address} onChange={handleChange} className="w-full bg-bg-muted border-border-primary text-text-primary p-2 rounded-md mt-1" required />
                 </div>
                 <div>
-                  <label htmlFor="location" className="block text-sm font-medium text-text-secondary">Ville, Pays</label>
-                  <input name="location" id="location" type="text" placeholder="Ville, Pays" value={formData.location} onChange={handleChange} className="w-full bg-bg-muted border-border-primary text-text-primary p-2 rounded-md mt-1" required />
+                  <label htmlFor="location" className="block text-sm font-medium text-text-secondary">{t('propertyModal.location')}</label>
+                  <input name="location" id="location" type="text" placeholder={t('propertyModal.location')} value={formData.location} onChange={handleChange} className="w-full bg-bg-muted border-border-primary text-text-primary p-2 rounded-md mt-1" required />
                 </div>
                 
                 <div className="grid grid-cols-2 gap-4">
                     <div>
-                        <label htmlFor="surface" className="block text-sm font-medium text-text-secondary">Surface (m²)</label>
-                        <input name="surface" id="surface" type="number" placeholder="Surface (m²)" value={formData.surface} onChange={handleChange} className="w-full bg-bg-muted border-border-primary text-text-primary p-2 rounded-md mt-1" required />
+                        <label htmlFor="surface" className="block text-sm font-medium text-text-secondary">{t('propertyModal.surface')}</label>
+                        <input name="surface" id="surface" type="number" placeholder={t('propertyModal.surface')} value={formData.surface} onChange={handleChange} className="w-full bg-bg-muted border-border-primary text-text-primary p-2 rounded-md mt-1" required />
                     </div>
                     <div>
-                        <label htmlFor="capacity" className="block text-sm font-medium text-text-secondary">Capacité</label>
-                        <input name="capacity" id="capacity" type="number" placeholder="Capacité d'accueil" value={formData.capacity} onChange={handleChange} className="w-full bg-bg-muted border-border-primary text-text-primary p-2 rounded-md mt-1" required />
+                        <label htmlFor="capacity" className="block text-sm font-medium text-text-secondary">{t('propertyModal.capacity')}</label>
+                        <input name="capacity" id="capacity" type="number" placeholder={t('propertyModal.capacity')} value={formData.capacity} onChange={handleChange} className="w-full bg-bg-muted border-border-primary text-text-primary p-2 rounded-md mt-1" required />
                     </div>
                 </div>
                  <div className="grid grid-cols-3 gap-4">
                      <div>
-                        <label htmlFor="daily_revenue" className="block text-sm font-medium text-text-secondary">Prix/nuit (€)</label>
-                        <input name="daily_revenue" id="daily_revenue" type="number" placeholder="Prix/nuit défaut (€)" value={formData.daily_revenue} onChange={handleChange} className="w-full bg-bg-muted border-border-primary text-text-primary p-2 rounded-md mt-1" required />
+                        <label htmlFor="daily_revenue" className="block text-sm font-medium text-text-secondary">{t('propertyModal.dailyRevenue')}</label>
+                        <input name="daily_revenue" id="daily_revenue" type="number" placeholder={t('propertyModal.dailyRevenue')} value={formData.daily_revenue} onChange={handleChange} className="w-full bg-bg-muted border-border-primary text-text-primary p-2 rounded-md mt-1" required />
                     </div>
                      <div>
-                        <label htmlFor="occupancy" className="block text-sm font-medium text-text-secondary">Occup. %</label>
-                        <input name="occupancy" id="occupancy" type="number" placeholder="Occup. % (ex: 80)" value={formData.occupancy} onChange={handleChange} className="w-full bg-bg-muted border-border-primary text-text-primary p-2 rounded-md mt-1" required />
+                        <label htmlFor="occupancy" className="block text-sm font-medium text-text-secondary">{t('propertyModal.occupancy')}</label>
+                        <input name="occupancy" id="occupancy" type="number" placeholder={t('propertyModal.occupancy')} value={formData.occupancy} onChange={handleChange} className="w-full bg-bg-muted border-border-primary text-text-primary p-2 rounded-md mt-1" required />
                     </div>
                      <div>
-                        <label htmlFor="min_stay" className="block text-sm font-medium text-text-secondary">Séjour min.</label>
-                        <input name="min_stay" id="min_stay" type="number" placeholder="Séjour min. (nuits)" value={formData.min_stay} onChange={handleChange} className="w-full bg-bg-muted border-border-primary text-text-primary p-2 rounded-md mt-1" required />
+                        <label htmlFor="min_stay" className="block text-sm font-medium text-text-secondary">{t('propertyModal.minStay')}</label>
+                        <input name="min_stay" id="min_stay" type="number" placeholder={t('propertyModal.minStay')} value={formData.min_stay} onChange={handleChange} className="w-full bg-bg-muted border-border-primary text-text-primary p-2 rounded-md mt-1" required />
                     </div>
                  </div>
                 
                 <fieldset className="border border-border-secondary p-4 rounded-md">
-                  <legend className="text-lg font-semibold px-2 text-text-primary">Équipements</legend>
+                  <legend className="text-lg font-semibold px-2 text-text-primary">{t('propertyModal.amenities')}</legend>
                   <div className="grid grid-cols-2 md:grid-cols-3 gap-2 mt-2 max-h-48 overflow-y-auto">
                     {availableAmenities.map(amenity => (
                       <label key={amenity} className="flex items-center gap-2 text-sm text-text-secondary">
@@ -210,10 +212,10 @@ function PropertyModal({ token, onClose, onSave, property }) {
                 
                 <div className="flex justify-end gap-4 pt-4">
                     <button type="button" onClick={onClose} className="px-4 py-2 font-semibold text-text-secondary bg-bg-muted rounded-md hover:bg-border-primary">
-                        Annuler
+                        {t('propertyModal.cancel')}
                     </button>
                     <button type="submit" disabled={isLoading || isSyncing} className="px-4 py-2 font-semibold text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:bg-gray-500">
-                        {isLoading ? 'Sauvegarde...' : 'Sauvegarder'}
+                        {isLoading ? t('common.saving') : t('propertyModal.save')}
                     </button>
                 </div>
               </form>

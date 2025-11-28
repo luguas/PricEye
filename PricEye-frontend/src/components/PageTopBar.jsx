@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import NotificationsMenu from './NotificationsMenu.jsx';
 import logoPriceye from '../../Images/logo priceye.png';
+import { useLanguage } from '../contexts/LanguageContext.jsx';
 
 const BellIcon = ({ className = '' }) => (
   <svg
@@ -41,12 +42,13 @@ function PageTopBar({
   onNotificationsUpdate,
   ...props
 }) {
+  const { t } = useLanguage();
   const [isNotificationsMenuOpen, setIsNotificationsMenuOpen] = useState(false);
   const buttonRef = useRef(null);
 
   const formattedPropertyCount =
     typeof propertyCount === 'number'
-      ? `${propertyCount} ${propertyCount > 1 ? 'propriétés' : 'propriété'}`
+      ? `${propertyCount} ${propertyCount > 1 ? t('common.properties') : t('common.property')}`
       : '—';
 
   // Vérifier s'il y a des notifications
@@ -133,7 +135,7 @@ function PageTopBar({
 
         <div className="hidden sm:block w-px h-8 bg-white/10" aria-hidden="true" />
 
-        <div className="flex flex-col items-end">
+        <div className="flex flex-col items-end gap-0.5">
           <span className="text-global-blanc font-h3-font-family text-h3-font-size font-h3-font-weight leading-h3-line-height">
             {userName}
           </span>

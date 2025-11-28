@@ -1,8 +1,10 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { getMarketNews } from '../services/api.js';
 import CustomScrollbar from './CustomScrollbar.jsx';
+import { useLanguage } from '../contexts/LanguageContext.jsx';
 
 function NewsFeed({ token }) {
+  const { t, language } = useLanguage();
   const [news, setNews] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState('');
@@ -15,7 +17,7 @@ function NewsFeed({ token }) {
       const data = await getMarketNews(token);
       setNews(data || []);
     } catch (err) {
-      setError(`Impossible de charger les actualités: ${err.message}`);
+      setError(t('newsFeed.loadError', { message: err.message }));
     } finally {
       setIsLoading(false);
     }
@@ -49,7 +51,8 @@ function NewsFeed({ token }) {
   const formatDate = (dateString) => {
     if (!dateString) return '';
     try {
-      return new Intl.DateTimeFormat('fr-FR', {
+      const locale = language === 'en' ? 'en-US' : 'fr-FR';
+      return new Intl.DateTimeFormat(locale, {
         day: '2-digit',
         month: 'short',
       }).format(new Date(dateString));
@@ -70,7 +73,7 @@ function NewsFeed({ token }) {
       return <p className="text-sm text-red-400">{error}</p>;
     }
     if (!news || news.length === 0) {
-      return <p className="text-sm text-global-inactive">Aucune actualité pertinente trouvée.</p>;
+      return <p className="text-sm text-global-inactive">{t('newsFeed.noNews')}</p>;
     }
 
     return (
@@ -91,10 +94,10 @@ function NewsFeed({ token }) {
             <p className="text-sm text-global-inactive">{item.summary}</p>
             <div className="flex items-center justify-between text-sm">
               <span className={`font-semibold ${getImpactColor(item.impact_category)}`}>
-                Impact estimé : {getImpactSign(item.impact_percentage)} ({item.impact_category || 'N/A'})
+                {t('newsFeed.estimatedImpact')}: {getImpactSign(item.impact_percentage)} ({item.impact_category || 'N/A'})
               </span>
               {item.source && (
-                <span className="text-xs text-global-inactive">Source : {item.source}</span>
+                <span className="text-xs text-global-inactive">{t('newsFeed.source')}: {item.source}</span>
               )}
             </div>
           </div>
@@ -108,14 +111,14 @@ function NewsFeed({ token }) {
       <div className="flex items-center justify-between gap-4 shrink-0 mb-4">
         <div>
           <p className="text-sm uppercase tracking-[0.3em] text-global-inactive">Insights</p>
-          <h2 className="text-2xl font-h2-font-family text-global-blanc">Actualité du marché</h2>
+          <h2 className="text-2xl font-h2-font-family text-global-blanc">{t('newsFeed.title')}</h2>
         </div>
         <button
           type="button"
           onClick={fetchNews}
           className="text-sm px-4 py-2 rounded-full border border-global-stroke-box text-global-inactive hover:text-global-blanc hover:border-global-content-highlight-2nd transition shrink-0"
         >
-          Actualiser
+          {t('dashboard.refresh')}
         </button>
       </div>
       <div className="flex-1 min-h-0 overflow-hidden flex flex-col">

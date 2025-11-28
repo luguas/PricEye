@@ -12,13 +12,15 @@ import {
 import { jwtDecode } from 'jwt-decode'; 
 import PMSIntegrationPanel from '../components/PMSIntegrationPanel.jsx'; // NOUVEL IMPORT
 import ConfirmModal from '../components/ConfirmModal.jsx';
+import { useLanguage } from '../contexts/LanguageContext.jsx';
 
 function SettingsPage({ token, userProfile: initialProfile, onThemeChange, onLogout }) {
+  const { t, language: currentLanguage } = useLanguage();
   const [profile, setProfile] = useState({
     name: '',
     email: '',
     currency: 'EUR',
-    language: 'fr',
+    language: currentLanguage || 'fr',
     timezone: 'Europe/Paris',
     theme: 'auto',
     notificationPreferences: {
@@ -67,7 +69,7 @@ function SettingsPage({ token, userProfile: initialProfile, onThemeChange, onLog
       }
   } catch (e) {
       console.error("Erreur de décodage du token:", e);
-      setError("Session invalide, veuillez vous reconnecter.");
+      setError(t('settings.sessionError'));
   }
 
 
@@ -86,6 +88,7 @@ function SettingsPage({ token, userProfile: initialProfile, onThemeChange, onLog
       if (initialProfile) {
            setProfile({
                 ...initialProfile,
+                language: initialProfile.language || currentLanguage || 'fr',
                 notificationPreferences: initialProfile.notificationPreferences || { notifyOnBooking: true, notifyOnApiError: true },
                 reportFrequency: initialProfile.reportFrequency || 'hebdomadaire',
                 theme: initialProfile.theme || 'auto',
@@ -99,7 +102,7 @@ function SettingsPage({ token, userProfile: initialProfile, onThemeChange, onLog
         setCurrentIntegration(integrationData); // Peut être null
       } catch (integrationError) {
          console.error("Erreur de chargement de l'intégration:", integrationError);
-         setError("Impossible de charger le statut de l'intégration PMS.");
+         setError(t('settings.errors.integrationLoadError'));
       } finally {
          setIsIntegrationLoading(false);
       }
@@ -111,7 +114,7 @@ function SettingsPage({ token, userProfile: initialProfile, onThemeChange, onLog
       }
       
     } catch (err) {
-      setError(`Erreur lors du chargement des données: ${err.message}`);
+      setError(t('settings.errors.loadError', { message: err.message }));
     } finally {
       setIsLoading(false);
     }
@@ -121,17 +124,30 @@ function SettingsPage({ token, userProfile: initialProfile, onThemeChange, onLog
     fetchProfileAndTeam();
   }, [fetchProfileAndTeam]);
 
+  // Synchroniser la langue du profil avec la langue actuelle du contexte
+  useEffect(() => {
+    if (currentLanguage) {
+      setProfile(prev => {
+        // Ne mettre à jour que si la langue a vraiment changé
+        if (prev.language !== currentLanguage) {
+          return { ...prev, language: currentLanguage };
+        }
+        return prev;
+      });
+    }
+  }, [currentLanguage]);
+
   // Fonction de validation du profil
   const validateProfile = () => {
       const newErrors = {};
       if (!profile.name || profile.name.trim() === '') {
-          newErrors.name = "Le nom ne peut pas être vide.";
+          newErrors.name = t('settings.validation.nameRequired');
       }
       if (!profile.currency) {
-          newErrors.currency = "Veuillez sélectionner une devise.";
+          newErrors.currency = t('settings.validation.currencyRequired');
       }
       if (!profile.timezone) {
-          newErrors.timezone = "Veuillez sélectionner un fuseau horaire.";
+          newErrors.timezone = t('settings.validation.timezoneRequired');
       }
       
       setValidationErrors(newErrors);
@@ -157,6 +173,14 @@ function SettingsPage({ token, userProfile: initialProfile, onThemeChange, onLog
     } else {
         setProfile(prev => ({ ...prev, [name]: type === 'checkbox' ? checked : value }));
     }
+    
+    // Si la langue change, mettre à jour le localStorage et recharger la page
+    if (name === 'language') {
+      localStorage.setItem('userLanguage', value);
+      // Déclencher un événement pour mettre à jour le LanguageProvider
+      window.dispatchEvent(new CustomEvent('languageChanged', { detail: { language: value } }));
+    }
+    
     setSuccessMessage('');
     setProfileError('');
   };
@@ -168,7 +192,7 @@ function SettingsPage({ token, userProfile: initialProfile, onThemeChange, onLog
     setSuccessMessage('');
     
     if (!validateProfile()) {
-        setProfileError("Veuillez corriger les erreurs dans le formulaire.");
+        setProfileError(t('settings.validation.formErrors'));
         return; 
     }
 
@@ -184,10 +208,10 @@ function SettingsPage({ token, userProfile: initialProfile, onThemeChange, onLog
         reportFrequency: profile.reportFrequency,
       };
       await updateUserProfile(dataToUpdate, token);
-      setSuccessMessage('Profil mis à jour avec succès !');
+      setSuccessMessage(t('settings.messages.profileUpdated'));
       setValidationErrors({}); 
     } catch (err) {
-      setProfileError(`Erreur lors de la sauvegarde: ${err.message}`);
+      setProfileError(t('settings.errors.saveError', { message: err.message }));
     } finally {
       setIsSaving(false);
     }
@@ -200,23 +224,23 @@ function SettingsPage({ token, userProfile: initialProfile, onThemeChange, onLog
       setPasswordSuccess('');
       
       if (newPassword.length < 6) {
-           setPasswordError("Le nouveau mot de passe doit contenir au moins 6 caractères.");
+           setPasswordError(t('settings.validation.passwordMinLength'));
            return;
       }
       if (newPassword !== confirmPassword) {
-          setPasswordError("Les nouveaux mots de passe ne correspondent pas.");
+          setPasswordError(t('settings.validation.passwordMismatch'));
           return;
       }
 
       setIsSaving(true);
       try {
           await changeUserPassword(oldPassword, newPassword);
-          setPasswordSuccess("Mot de passe modifié avec succès !");
+          setPasswordSuccess(t('settings.messages.passwordChanged'));
           setOldPassword('');
           setNewPassword('');
           setConfirmPassword('');
       } catch (err) {
-          setPasswordError(`Erreur: ${err.message}`);
+          setPasswordError(t('settings.errors.saveError', { message: err.message }));
       } finally {
           setIsSaving(false);
       }
@@ -229,11 +253,11 @@ function SettingsPage({ token, userProfile: initialProfile, onThemeChange, onLog
       setInviteSuccess('');
       try {
           await inviteMember({ email: inviteEmail, role: inviteRole }, token);
-          setInviteSuccess(`Invitation envoyée à ${inviteEmail}.`);
+          setInviteSuccess(t('settings.messages.inviteSent', { email: inviteEmail }));
           setInviteEmail(''); 
           fetchProfileAndTeam(); // Re-fetch team
       } catch (err) {
-          setTeamError(`Erreur lors de l'invitation: ${err.message}`);
+          setTeamError(t('settings.errors.inviteError', { message: err.message }));
       }
   };
   
@@ -245,7 +269,7 @@ function SettingsPage({ token, userProfile: initialProfile, onThemeChange, onLog
           const membersData = await getTeamMembers(token); // Re-fetch
           setTeamMembers(membersData);
       } catch (err) {
-          setTeamError(`Erreur lors du changement de rôle: ${err.message}`);
+          setTeamError(t('settings.errors.roleChangeError', { message: err.message }));
       }
   };
 
@@ -253,7 +277,7 @@ function SettingsPage({ token, userProfile: initialProfile, onThemeChange, onLog
   const handleRemoveMember = async (memberId) => {
       setConfirmModal({
           isOpen: true,
-          message: "Êtes-vous sûr de vouloir retirer ce membre de l'équipe ?",
+          message: t('settings.messages.removeMemberConfirm'),
           onConfirm: async () => {
               setTeamError('');
               try {
@@ -261,7 +285,7 @@ function SettingsPage({ token, userProfile: initialProfile, onThemeChange, onLog
                   const membersData = await getTeamMembers(token); // Re-fetch
                   setTeamMembers(membersData);
               } catch (err) {
-                  setTeamError(`Erreur lors de la suppression: ${err.message}`);
+                  setTeamError(t('settings.errors.removeError', { message: err.message }));
               }
           }
       });
@@ -280,7 +304,7 @@ function SettingsPage({ token, userProfile: initialProfile, onThemeChange, onLog
           }}
         />
         <div className="relative z-10 flex items-center justify-center min-h-screen">
-          <p className="text-center text-global-inactive">Chargement des paramètres...</p>
+          <p className="text-center text-global-inactive">{t('settings.loading')}</p>
         </div>
       </div>
     );
@@ -298,7 +322,7 @@ function SettingsPage({ token, userProfile: initialProfile, onThemeChange, onLog
              }}
            />
            <div className="relative z-10 flex items-center justify-center min-h-screen">
-             <p className="text-center text-red-400 p-8">Erreur de session. Veuillez vous reconnecter.</p>
+             <p className="text-center text-red-400 p-8">{t('settings.sessionError')}</p>
            </div>
          </div>
        );
@@ -318,7 +342,7 @@ function SettingsPage({ token, userProfile: initialProfile, onThemeChange, onLog
       />
       <div className="relative z-10 space-y-6 p-4 md:p-6 lg:p-8 max-w-4xl mx-auto"> 
         <h1 className="text-global-blanc text-left font-h1-font-family text-h1-font-size font-h1-font-weight relative">
-          Paramètres
+          {t('settings.title')}
         </h1>
 
       {error && <p className="bg-red-900/50 text-red-300 p-3 rounded-[10px] text-sm">{error}</p>}
@@ -329,7 +353,7 @@ function SettingsPage({ token, userProfile: initialProfile, onThemeChange, onLog
       {/* Panneau d'Intégration PMS */}
       <div className="bg-global-bg-box rounded-[14px] border border-solid border-global-stroke-box p-6 flex flex-col gap-3 items-start justify-start relative">
         {isIntegrationLoading ? (
-           <p className="text-sm text-global-inactive">Chargement de l'intégration...</p>
+           <p className="text-sm text-global-inactive">{t('settings.integration.loading')}</p>
         ) : (
             <PMSIntegrationPanel 
                 token={token}
@@ -342,13 +366,13 @@ function SettingsPage({ token, userProfile: initialProfile, onThemeChange, onLog
       {/* Formulaire de Profil */}
       <form onSubmit={handleProfileSubmit} className="space-y-6 bg-global-bg-box rounded-[14px] border border-solid border-global-stroke-box p-6 flex flex-col gap-3 items-start justify-start relative">
         <h2 className="text-global-blanc text-left font-h2-font-family text-h2-font-size font-h2-font-weight relative border-b border-global-stroke-box pb-2 mb-4 w-full">
-          Mon Profil
+          {t('settings.myProfile')}
         </h2>
          <fieldset className="border border-global-stroke-box p-4 rounded-[10px] w-full">
-          <legend className="text-global-blanc text-left font-h3-font-family text-h3-font-size font-h3-font-weight px-2">Informations Personnelles</legend>
+          <legend className="text-global-blanc text-left font-h3-font-family text-h3-font-size font-h3-font-weight px-2">{t('settings.personalInfo')}</legend>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-2">
             <div>
-              <label htmlFor="name" className="block text-sm font-medium text-global-inactive mb-1">Nom</label>
+              <label htmlFor="name" className="block text-sm font-medium text-global-inactive mb-1">{t('settings.name')}</label>
               <input 
                 type="text" 
                 name="name" 
@@ -360,7 +384,7 @@ function SettingsPage({ token, userProfile: initialProfile, onThemeChange, onLog
               {validationErrors.name && <p className="text-xs text-red-400 mt-1">{validationErrors.name}</p>}
             </div>
             <div>
-              <label htmlFor="email" className="block text-sm font-medium text-global-inactive mb-1">Email (non modifiable)</label>
+              <label htmlFor="email" className="block text-sm font-medium text-global-inactive mb-1">{t('settings.email')}</label>
               <input 
                 type="email" 
                 name="email" 
@@ -373,10 +397,10 @@ function SettingsPage({ token, userProfile: initialProfile, onThemeChange, onLog
           </div>
         </fieldset>
          <fieldset className="border border-global-stroke-box p-4 rounded-[10px] w-full">
-           <legend className="text-global-blanc text-left font-h3-font-family text-h3-font-size font-h3-font-weight px-2">Préférences Régionales & Visuelles</legend>
+           <legend className="text-global-blanc text-left font-h3-font-family text-h3-font-size font-h3-font-weight px-2">{t('settings.regionalPreferences')}</legend>
            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-2">
                 <div>
-                  <label htmlFor="language" className="block text-sm font-medium text-global-inactive mb-1">Langue</label>
+                  <label htmlFor="language" className="block text-sm font-medium text-global-inactive mb-1">{t('settings.language')}</label>
                   <select 
                     name="language" 
                     id="language" 
@@ -384,12 +408,12 @@ function SettingsPage({ token, userProfile: initialProfile, onThemeChange, onLog
                     onChange={handleChange} 
                     className="w-full bg-global-bg-small-box border border-global-stroke-box rounded-[10px] px-3 py-2 text-global-blanc focus:outline-none focus:ring-2 focus:ring-global-content-highlight-2nd"
                   >
-                      <option value="fr">Français</option>
-                      <option value="en">English</option>
+                      <option value="fr">{t('settings.languages.fr')}</option>
+                      <option value="en">{t('settings.languages.en')}</option>
                   </select>
                 </div>
                  <div>
-                  <label htmlFor="currency" className="block text-sm font-medium text-global-inactive mb-1">Devise</label>
+                  <label htmlFor="currency" className="block text-sm font-medium text-global-inactive mb-1">{t('settings.currency')}</label>
                   <select 
                     name="currency" 
                     id="currency" 
@@ -397,7 +421,7 @@ function SettingsPage({ token, userProfile: initialProfile, onThemeChange, onLog
                     onChange={handleChange} 
                     className="w-full bg-global-bg-small-box border border-global-stroke-box rounded-[10px] px-3 py-2 text-global-blanc focus:outline-none focus:ring-2 focus:ring-global-content-highlight-2nd"
                   >
-                      <option value="">Sélectionner...</option>
+                      <option value="">{t('settings.selectCurrency')}</option>
                       <option value="EUR">EUR (€)</option>
                       <option value="USD">USD ($)</option>
                        <option value="GBP">GBP (£)</option>
@@ -405,7 +429,7 @@ function SettingsPage({ token, userProfile: initialProfile, onThemeChange, onLog
                   {validationErrors.currency && <p className="text-xs text-red-400 mt-1">{validationErrors.currency}</p>}
                 </div>
                  <div>
-                  <label htmlFor="timezone" className="block text-sm font-medium text-global-inactive mb-1">Fuseau Horaire</label>
+                  <label htmlFor="timezone" className="block text-sm font-medium text-global-inactive mb-1">{t('settings.timezone')}</label>
                   <select 
                     name="timezone" 
                     id="timezone" 
@@ -413,7 +437,7 @@ function SettingsPage({ token, userProfile: initialProfile, onThemeChange, onLog
                     onChange={handleChange} 
                     className="w-full bg-global-bg-small-box border border-global-stroke-box rounded-[10px] px-3 py-2 text-global-blanc focus:outline-none focus:ring-2 focus:ring-global-content-highlight-2nd"
                   >
-                      <option value="">Sélectionner...</option>
+                      <option value="">{t('settings.selectTimezone')}</option>
                       <optgroup label="Europe">
                         <option value="Europe/Paris">Europe/Paris (UTC+1/+2)</option>
                         <option value="Europe/London">Europe/London (UTC+0/+1)</option>
@@ -474,13 +498,13 @@ function SettingsPage({ token, userProfile: initialProfile, onThemeChange, onLog
                       </optgroup>
                   </select>
                   <p className="text-xs text-global-inactive mt-1">
-                    Le fuseau horaire est utilisé pour la génération automatique des prix (00h00 chaque jour).
+                    {t('settings.timezoneNote')}
                   </p>
                   {validationErrors.timezone && <p className="text-xs text-red-400 mt-1">{validationErrors.timezone}</p>}
                 </div>
                 {/* SÉLECTEUR DE THÈME */}
                  <div className="md:col-span-3">
-                  <label htmlFor="theme" className="block text-sm font-medium text-global-inactive mb-1">Apparence</label>
+                  <label htmlFor="theme" className="block text-sm font-medium text-global-inactive mb-1">{t('settings.appearance')}</label>
                   <select 
                     name="theme" 
                     id="theme" 
@@ -488,15 +512,15 @@ function SettingsPage({ token, userProfile: initialProfile, onThemeChange, onLog
                     onChange={handleChange} 
                     className="w-full md:w-1/3 bg-global-bg-small-box border border-global-stroke-box rounded-[10px] px-3 py-2 text-global-blanc focus:outline-none focus:ring-2 focus:ring-global-content-highlight-2nd"
                   >
-                      <option value="auto">Auto (Système)</option>
-                      <option value="light">Clair</option>
-                      <option value="dark">Sombre</option>
+                      <option value="auto">{t('settings.auto')}</option>
+                      <option value="light">{t('settings.light')}</option>
+                      <option value="dark">{t('settings.dark')}</option>
                   </select>
                 </div>
            </div>
          </fieldset>
          <fieldset className="border border-global-stroke-box p-4 rounded-[10px] w-full">
-          <legend className="text-global-blanc text-left font-h3-font-family text-h3-font-size font-h3-font-weight px-2">Notifications</legend>
+          <legend className="text-global-blanc text-left font-h3-font-family text-h3-font-size font-h3-font-weight px-2">{t('settings.notifications')}</legend>
           <div className="space-y-2 mt-2">
             <label className="flex items-center gap-2 text-sm text-global-inactive">
               <input 
@@ -506,7 +530,7 @@ function SettingsPage({ token, userProfile: initialProfile, onThemeChange, onLog
                 onChange={handleChange}
                 className="w-4 h-4 rounded border-global-stroke-box bg-global-bg-small-box text-global-content-highlight-2nd focus:ring-global-content-highlight-2nd"
               />
-              M'alerter par email pour chaque nouvelle réservation
+              {t('settings.notifyOnBooking')}
             </label>
             <label className="flex items-center gap-2 text-sm text-global-inactive">
               <input 
@@ -516,14 +540,14 @@ function SettingsPage({ token, userProfile: initialProfile, onThemeChange, onLog
                 onChange={handleChange}
                 className="w-4 h-4 rounded border-global-stroke-box bg-global-bg-small-box text-global-content-highlight-2nd focus:ring-global-content-highlight-2nd"
               />
-              M'alerter si une connexion API est rompue
+              {t('settings.notifyOnApiError')}
             </label>
           </div>
         </fieldset>
          <fieldset className="border border-global-stroke-box p-4 rounded-[10px] w-full">
-          <legend className="text-global-blanc text-left font-h3-font-family text-h3-font-size font-h3-font-weight px-2">Rapports Automatiques</legend>
+          <legend className="text-global-blanc text-left font-h3-font-family text-h3-font-size font-h3-font-weight px-2">{t('settings.automaticReports')}</legend>
           <div>
-            <label htmlFor="reportFrequency" className="block text-sm font-medium text-global-inactive mb-1">Fréquence d'envoi du résumé des performances</label>
+            <label htmlFor="reportFrequency" className="block text-sm font-medium text-global-inactive mb-1">{t('settings.reportFrequency')}</label>
             <select 
               name="reportFrequency" 
               id="reportFrequency" 
@@ -531,10 +555,10 @@ function SettingsPage({ token, userProfile: initialProfile, onThemeChange, onLog
               onChange={handleChange} 
               className="w-full md:w-1/2 bg-global-bg-small-box border border-global-stroke-box rounded-[10px] px-3 py-2 text-global-blanc focus:outline-none focus:ring-2 focus:ring-global-content-highlight-2nd"
             >
-              <option value="jamais">Jamais</option>
-              <option value="quotidien">Quotidien</option>
-              <option value="hebdomadaire">Hebdomadaire</option>
-              <option value="mensuel">Mensuel</option>
+              <option value="jamais">{t('settings.never')}</option>
+              <option value="quotidien">{t('settings.daily')}</option>
+              <option value="hebdomadaire">{t('settings.weekly')}</option>
+              <option value="mensuel">{t('settings.monthly')}</option>
             </select>
           </div>
         </fieldset>
@@ -544,7 +568,7 @@ function SettingsPage({ token, userProfile: initialProfile, onThemeChange, onLog
             disabled={isSaving} 
             className="px-6 py-2 font-semibold text-white rounded-[10px] bg-gradient-to-r from-[#155dfc] to-[#12a1d5] hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed transition-opacity"
           >
-            {isSaving ? 'Sauvegarde...' : 'Sauvegarder le Profil'}
+            {isSaving ? t('common.saving') : t('settings.saveProfile')}
           </button>
         </div>
       </form>
@@ -552,17 +576,17 @@ function SettingsPage({ token, userProfile: initialProfile, onThemeChange, onLog
       {/* Formulaire: Changer le mot de passe */}
       <form onSubmit={handlePasswordSubmit} className="space-y-6 bg-global-bg-box rounded-[14px] border border-solid border-global-stroke-box p-6 flex flex-col gap-3 items-start justify-start relative">
         <h2 className="text-global-blanc text-left font-h2-font-family text-h2-font-size font-h2-font-weight relative border-b border-global-stroke-box pb-2 mb-4 w-full">
-          Sécurité
+          {t('settings.security')}
         </h2>
         <fieldset className="border border-global-stroke-box p-4 rounded-[10px] w-full">
-            <legend className="text-global-blanc text-left font-h3-font-family text-h3-font-size font-h3-font-weight px-2">Changer le mot de passe</legend>
+            <legend className="text-global-blanc text-left font-h3-font-family text-h3-font-size font-h3-font-weight px-2">{t('settings.changePassword')}</legend>
             
             {passwordError && <p className="text-sm text-red-400 bg-red-900/50 p-3 rounded-[10px]">{passwordError}</p>}
             {passwordSuccess && <p className="text-sm text-green-400 bg-green-900/50 p-3 rounded-[10px]">{passwordSuccess}</p>}
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-4">
                  <div>
-                    <label htmlFor="oldPassword" className="block text-sm font-medium text-global-inactive mb-1">Ancien mot de passe</label>
+                    <label htmlFor="oldPassword" className="block text-sm font-medium text-global-inactive mb-1">{t('settings.oldPassword')}</label>
                     <input 
                       type="password" 
                       name="oldPassword" 
@@ -574,7 +598,7 @@ function SettingsPage({ token, userProfile: initialProfile, onThemeChange, onLog
                     />
                 </div>
                 <div>
-                    <label htmlFor="newPassword" className="block text-sm font-medium text-global-inactive mb-1">Nouveau mot de passe</label>
+                    <label htmlFor="newPassword" className="block text-sm font-medium text-global-inactive mb-1">{t('settings.newPassword')}</label>
                     <input 
                       type="password" 
                       name="newPassword" 
@@ -586,7 +610,7 @@ function SettingsPage({ token, userProfile: initialProfile, onThemeChange, onLog
                     />
                 </div>
                  <div>
-                    <label htmlFor="confirmPassword" className="block text-sm font-medium text-global-inactive mb-1">Confirmer le nouveau</label>
+                    <label htmlFor="confirmPassword" className="block text-sm font-medium text-global-inactive mb-1">{t('settings.confirmPassword')}</label>
                     <input 
                       type="password" 
                       name="confirmPassword" 
@@ -605,7 +629,7 @@ function SettingsPage({ token, userProfile: initialProfile, onThemeChange, onLog
             disabled={isSaving} 
             className="px-6 py-2 font-semibold text-white rounded-[10px] bg-gradient-to-r from-[#155dfc] to-[#12a1d5] hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed transition-opacity"
           >
-            {isSaving ? 'Sauvegarde...' : 'Changer le mot de passe'}
+            {isSaving ? t('common.saving') : t('settings.changePasswordButton')}
           </button>
         </div>
       </form>
@@ -614,7 +638,7 @@ function SettingsPage({ token, userProfile: initialProfile, onThemeChange, onLog
       {profile.role === 'admin' && (
         <div className="space-y-6 bg-global-bg-box rounded-[14px] border border-solid border-global-stroke-box p-6 flex flex-col gap-3 items-start justify-start relative">
           <h2 className="text-global-blanc text-left font-h2-font-family text-h2-font-size font-h2-font-weight relative border-b border-global-stroke-box pb-2 mb-4 w-full">
-            Gestion d'Équipe
+            {t('settings.teamManagement')}
           </h2>
           
           {teamError && <p className="bg-red-900/50 text-red-300 p-3 rounded-[10px] text-sm w-full">{teamError}</p>}
@@ -622,7 +646,7 @@ function SettingsPage({ token, userProfile: initialProfile, onThemeChange, onLog
 
           <form onSubmit={handleInviteSubmit} className="grid grid-cols-1 md:grid-cols-3 gap-4 items-end w-full">
             <div>
-              <label htmlFor="inviteEmail" className="block text-sm font-medium text-global-inactive mb-1">Email du nouveau membre</label>
+              <label htmlFor="inviteEmail" className="block text-sm font-medium text-global-inactive mb-1">{t('settings.newMemberEmail')}</label>
               <input 
                 type="email" 
                 id="inviteEmail" 
@@ -634,29 +658,29 @@ function SettingsPage({ token, userProfile: initialProfile, onThemeChange, onLog
               />
             </div>
             <div>
-              <label htmlFor="inviteRole" className="block text-sm font-medium text-global-inactive mb-1">Rôle</label>
+              <label htmlFor="inviteRole" className="block text-sm font-medium text-global-inactive mb-1">{t('settings.role')}</label>
               <select 
                 id="inviteRole" 
                 value={inviteRole} 
                 onChange={(e) => setInviteRole(e.target.value)} 
                 className="w-full bg-global-bg-small-box border border-global-stroke-box rounded-[10px] px-3 py-2 text-global-blanc focus:outline-none focus:ring-2 focus:ring-global-content-highlight-2nd"
               >
-                <option value="member">Membre (Lecture seule)</option>
-                <option value="manager">Gestionnaire (Modifier propriétés)</option>
+                <option value="member">{t('settings.member')}</option>
+                <option value="manager">{t('settings.manager')}</option>
               </select>
             </div>
             <button 
               type="submit" 
               className="px-4 py-2 font-semibold text-white rounded-[10px] bg-gradient-to-r from-[#155dfc] to-[#12a1d5] hover:opacity-90 transition-opacity h-10"
             >
-              Inviter
+              {t('settings.invite')}
             </button>
           </form>
 
           <div className="mt-6 w-full">
-            <h3 className="text-global-blanc text-left font-h3-font-family text-h3-font-size font-h3-font-weight mb-2">Membres Actuels</h3>
+            <h3 className="text-global-blanc text-left font-h3-font-family text-h3-font-size font-h3-font-weight mb-2">{t('settings.currentMembers')}</h3>
             {isLoading ? (
-              <p className="text-global-inactive">Chargement...</p>
+              <p className="text-global-inactive">{t('common.loading')}</p>
             ) : teamMembers.length > 0 ? (
               <ul className="space-y-2">
                 {teamMembers.map(member => (
@@ -668,7 +692,7 @@ function SettingsPage({ token, userProfile: initialProfile, onThemeChange, onLog
                     <div className="flex items-center gap-2">
                       {member.id === currentUserId ? (
                           <span className="text-sm font-semibold px-2 py-1 bg-global-bg-box rounded-[10px] text-global-blanc border border-global-stroke-box">
-                            Vous ({member.role})
+                            {t('settings.you')} ({member.role})
                           </span>
                       ) : (
                          <>
@@ -677,15 +701,15 @@ function SettingsPage({ token, userProfile: initialProfile, onThemeChange, onLog
                             onChange={(e) => handleRoleChange(member.id, e.target.value)}
                             className="bg-global-bg-box border border-global-stroke-box p-1 rounded-[10px] text-xs text-global-blanc" 
                           >
-                            <option value="member">Membre</option>
-                            <option value="manager">Gestionnaire</option>
+                            <option value="member">{t('settings.member')}</option>
+                            <option value="manager">{t('settings.manager')}</option>
                             <option value="admin">Admin</option>
                           </select>
                           <button 
                             onClick={() => handleRemoveMember(member.id)} 
                             className="text-xs px-2 py-1 bg-red-800 hover:bg-red-700 rounded-[10px] text-white transition-colors"
                           >
-                            Retirer
+                            {t('settings.remove')}
                           </button>
                          </>
                       )}
@@ -694,7 +718,7 @@ function SettingsPage({ token, userProfile: initialProfile, onThemeChange, onLog
                 ))}
               </ul>
             ) : (
-              <p className="text-global-inactive text-sm">Vous êtes le seul membre de l'équipe.</p>
+              <p className="text-global-inactive text-sm">{t('settings.onlyMember')}</p>
             )}
           </div>
         </div>
@@ -703,10 +727,10 @@ function SettingsPage({ token, userProfile: initialProfile, onThemeChange, onLog
       {/* Bouton de déconnexion */}
       <div className="bg-global-bg-box rounded-[14px] border border-solid border-global-stroke-box p-6 flex flex-col gap-3 items-start justify-start relative">
         <h2 className="text-global-blanc text-left font-h2-font-family text-h2-font-size font-h2-font-weight relative border-b border-global-stroke-box pb-2 mb-4 w-full">
-          Déconnexion
+          {t('settings.logout')}
         </h2>
         <p className="text-global-inactive text-sm mb-4">
-          Vous pouvez vous déconnecter de votre compte à tout moment. Vous devrez vous reconnecter pour accéder à nouveau à l'application.
+          {t('settings.logoutDescription')}
         </p>
         <div className="flex justify-end pt-4 w-full">
           <button 
@@ -714,7 +738,7 @@ function SettingsPage({ token, userProfile: initialProfile, onThemeChange, onLog
             onClick={onLogout}
             className="px-6 py-2 font-semibold text-white rounded-[10px] bg-red-600 hover:bg-red-700 transition-colors"
           >
-            Se déconnecter
+            {t('settings.disconnect')}
           </button>
         </div>
       </div>
@@ -724,10 +748,10 @@ function SettingsPage({ token, userProfile: initialProfile, onThemeChange, onLog
         isOpen={confirmModal.isOpen}
         onClose={() => setConfirmModal({ isOpen: false, message: '', onConfirm: null })}
         onConfirm={confirmModal.onConfirm || (() => {})}
-        title="Confirmation"
+        title={t('common.confirm')}
         message={confirmModal.message}
-        confirmText="Confirmer"
-        cancelText="Annuler"
+        confirmText={t('common.confirm')}
+        cancelText={t('common.cancel')}
       />
       </div>
     </div>

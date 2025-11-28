@@ -63,6 +63,14 @@ async function apiRequest(endpoint, options = {}) {
   const contentType = response.headers.get('content-type');
 
   if (!response.ok) {
+    // Si le token est expiré ou invalide (401 ou 403), déclencher la déconnexion
+    if (response.status === 401 || response.status === 403) {
+      // Nettoyer le token du localStorage
+      localStorage.removeItem('authToken');
+      // Déclencher un événement personnalisé pour notifier App.jsx
+      window.dispatchEvent(new CustomEvent('tokenExpired'));
+    }
+    
     let errorData = { error: `Erreur ${response.status} sur l'endpoint ${endpoint}`};
     if (contentType && contentType.includes('application/json')) {
       try {

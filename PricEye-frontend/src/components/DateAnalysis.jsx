@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { getDateAnalysis } from '../services/api.js';
+import { useLanguage } from '../contexts/LanguageContext.jsx';
 
 /**
  * Affiche l'analyse du marché (événements, demande, prix) pour une date spécifique.
@@ -11,6 +12,7 @@ import { getDateAnalysis } from '../services/api.js';
  * @param {object} props.userProfile - Le profil de l'utilisateur (pour la devise).
  */
 function DateAnalysis({ token, propertyId, date, currentPrice, userProfile }) {
+  const { t, language } = useLanguage();
   const [analysis, setAnalysis] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
@@ -54,9 +56,10 @@ function DateAnalysis({ token, propertyId, date, currentPrice, userProfile }) {
   
   // Helper pour formater la devise
   const formatCurrency = (amount) => {
-      if (amount == null) return 'N/A';
+      if (amount == null) return t('dateAnalysis.na');
       const currency = userProfile?.currency || 'EUR'; // EUR par défaut
-      return (amount).toLocaleString('fr-FR', { 
+      const locale = language === 'en' ? 'en-US' : 'fr-FR';
+      return (amount).toLocaleString(locale, { 
           style: 'currency', 
           currency: currency, 
           minimumFractionDigits: 0, 
@@ -69,7 +72,7 @@ function DateAnalysis({ token, propertyId, date, currentPrice, userProfile }) {
       return (
         <div className="border-solid border-global-stroke-box border-t pt-4 flex flex-row gap-6 items-start justify-center self-stretch shrink-0 relative">
           <div className="text-global-inactive text-left font-h4-font-family text-h4-font-size leading-h4-line-height font-h4-font-weight relative self-stretch">
-            Cliquez sur une date du calendrier pour l'analyser.
+            {t('dateAnalysis.selectDate')}
           </div>
         </div>
       );
@@ -92,7 +95,7 @@ function DateAnalysis({ token, propertyId, date, currentPrice, userProfile }) {
       return (
         <div className="border-solid border-global-stroke-box border-t pt-4">
           <p className="text-global-inactive text-left font-h4-font-family text-h4-font-size leading-h4-line-height font-h4-font-weight">
-            Aucune analyse disponible pour cette date.
+            {t('dateAnalysis.noAnalysis')}
           </p>
         </div>
       );
@@ -107,7 +110,7 @@ function DateAnalysis({ token, propertyId, date, currentPrice, userProfile }) {
         const trendSign = diff > 0 ? '+' : '';
         trend = (
             <span className={`text-sm font-semibold ${trendColor}`}>
-                ({trendSign}{diff.toFixed(0)}% vs Marché)
+                ({trendSign}{diff.toFixed(0)}% {t('dateAnalysis.vsMarket')})
             </span>
         );
     }
@@ -117,13 +120,13 @@ function DateAnalysis({ token, propertyId, date, currentPrice, userProfile }) {
     return (
       <div className="border-solid border-global-stroke-box border-t pt-4 flex flex-col gap-3 self-stretch">
         <div>
-          <h5 className="text-xs font-bold text-global-inactive uppercase tracking-wider mb-1">Demande du Marché</h5>
-          <p className="text-lg font-semibold text-global-blanc">{analysis.marketDemand || 'N/A'}</p>
+          <h5 className="text-xs font-bold text-global-inactive uppercase tracking-wider mb-1">{t('dateAnalysis.marketDemand')}</h5>
+          <p className="text-lg font-semibold text-global-blanc">{analysis.marketDemand || t('dateAnalysis.na')}</p>
         </div>
         
         {/* Affichage du prix actuel et de l'écart */}
         <div>
-          <h5 className="text-xs font-bold text-global-inactive uppercase tracking-wider mb-1">Votre Prix Actuel</h5>
+          <h5 className="text-xs font-bold text-global-inactive uppercase tracking-wider mb-1">{t('dateAnalysis.currentPrice')}</h5>
           <div className="flex items-baseline gap-2">
             <p className="text-lg font-semibold text-global-blanc">{formatCurrency(currentPrice)}</p>
             {trend}
@@ -131,12 +134,12 @@ function DateAnalysis({ token, propertyId, date, currentPrice, userProfile }) {
         </div>
 
         <div>
-          <h5 className="text-xs font-bold text-global-inactive uppercase tracking-wider mb-1">Suggestion de Prix (Marché)</h5>
-          <p className="text-lg font-semibold text-global-blanc">{analysis.priceSuggestion || 'N/A'}</p>
+          <h5 className="text-xs font-bold text-global-inactive uppercase tracking-wider mb-1">{t('dateAnalysis.priceSuggestion')}</h5>
+          <p className="text-lg font-semibold text-global-blanc">{analysis.priceSuggestion || t('dateAnalysis.na')}</p>
         </div>
         
         <div>
-          <h5 className="text-xs font-bold text-global-inactive uppercase tracking-wider mb-1">Événements Locaux</h5>
+          <h5 className="text-xs font-bold text-global-inactive uppercase tracking-wider mb-1">{t('dateAnalysis.localEvents')}</h5>
           {analysis.events && analysis.events.length > 0 ? (
             <ul className="list-disc list-inside text-sm text-global-inactive space-y-1 mt-1">
               {analysis.events.map((event, index) => (
@@ -144,12 +147,12 @@ function DateAnalysis({ token, propertyId, date, currentPrice, userProfile }) {
               ))}
             </ul>
           ) : (
-            <p className="text-sm text-global-inactive mt-1">Aucun événement majeur trouvé.</p>
+            <p className="text-sm text-global-inactive mt-1">{t('dateAnalysis.noEvents')}</p>
           )}
         </div>
          <div>
-          <h5 className="text-xs font-bold text-global-inactive uppercase tracking-wider mb-1">Résumé de l'IA</h5>
-          <p className="text-sm text-global-inactive italic mt-1">"{analysis.analysisSummary || 'Analyse non disponible.'}"</p>
+          <h5 className="text-xs font-bold text-global-inactive uppercase tracking-wider mb-1">{t('dateAnalysis.aiSummary')}</h5>
+          <p className="text-sm text-global-inactive italic mt-1">"{analysis.analysisSummary || t('dateAnalysis.analysisNotAvailable')}"</p>
         </div>
       </div>
     );
@@ -158,7 +161,7 @@ function DateAnalysis({ token, propertyId, date, currentPrice, userProfile }) {
   return (
     <div className="bg-global-bg-box rounded-[14px] border border-solid border-global-stroke-box p-6 flex flex-col gap-3 items-start justify-start shrink-0 w-full relative">
       <div className="text-global-blanc text-left font-h2-font-family text-h2-font-size font-h2-font-weight relative">
-        Analyse du Marché
+        {t('dateAnalysis.title')}
       </div>
       {renderContent()}
     </div>

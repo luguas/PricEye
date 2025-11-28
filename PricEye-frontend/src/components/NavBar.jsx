@@ -1,5 +1,6 @@
 import React from 'react';
 import logoPriceye from '../../Images/logo priceye.png';
+import { useLanguage } from '../contexts/LanguageContext.jsx';
 
 const IconDashboard = ({ className = '' }) => (
   <svg
@@ -108,12 +109,12 @@ const IconArrow = ({ direction = 'left', className = '' }) => {
   );
 };
 
-const navItems = [
-  { id: 'dashboard', label: 'Tableau de bord', icon: IconDashboard },
-  { id: 'bookings', label: 'Réservations', icon: IconCalendar },
-  { id: 'report', label: 'Rapports', icon: IconReports },
-  { id: 'pricing', label: 'Calendrier pricing', icon: IconCalendar },
-  { id: 'settings', label: 'Paramètres', icon: IconSettings },
+const navItemsConfig = [
+  { id: 'dashboard', translationKey: 'sidebar.dashboard', icon: IconDashboard },
+  { id: 'bookings', translationKey: 'sidebar.bookings', icon: IconCalendar },
+  { id: 'report', translationKey: 'sidebar.reports', icon: IconReports },
+  { id: 'pricing', translationKey: 'sidebar.pricing', icon: IconCalendar },
+  { id: 'settings', translationKey: 'sidebar.settings', icon: IconSettings },
 ];
 
 export const NavBar = ({
@@ -124,7 +125,13 @@ export const NavBar = ({
   className = '',
   ...props
 }) => {
+  const { t } = useLanguage();
   const navWidthClass = isCollapsed ? 'w-[96px]' : 'w-[255px]';
+  
+  const navItems = navItemsConfig.map(item => ({
+    ...item,
+    label: t(item.translationKey)
+  }));
 
   return (
     <nav
