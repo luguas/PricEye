@@ -99,7 +99,32 @@ function PropertyModal({ token, onClose, onSave, property }) {
       onSave(); 
       onClose(); 
     } catch (err) {
-      setError(err.message);
+      // Vérifier si c'est une erreur de limite
+      const errorMessage = err.message || '';
+      
+      if (errorMessage.includes('LIMIT_EXCEEDED')) {
+        // Afficher la modale de limite via la fonction globale
+        if (window.showLimitExceededModal) {
+          // Extraire les données de l'erreur si disponibles
+          try {
+            const errorData = JSON.parse(errorMessage.split('LIMIT_EXCEEDED')[1] || '{}');
+            window.showLimitExceededModal({
+              currentCount: errorData.currentCount || 10,
+              maxAllowed: errorData.maxAllowed || 10,
+            });
+          } catch {
+            window.showLimitExceededModal({
+              currentCount: 10,
+              maxAllowed: 10,
+            });
+          }
+        } else {
+          // Fallback si la fonction n'est pas disponible
+          setError('Vous avez atteint la limite de 10 propriétés pendant votre essai gratuit. Veuillez terminer votre essai pour continuer.');
+        }
+      } else {
+        setError(errorMessage || 'Une erreur est survenue lors de l\'ajout de la propriété.');
+      }
     } finally {
       setIsLoading(false);
     }

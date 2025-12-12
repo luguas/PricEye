@@ -11,6 +11,7 @@ import {
 } from '../services/api.js'; 
 import { jwtDecode } from 'jwt-decode'; 
 import PMSIntegrationPanel from '../components/PMSIntegrationPanel.jsx'; // NOUVEL IMPORT
+import BillingPanel from '../components/BillingPanel.jsx'; // NOUVEL IMPORT
 import ConfirmModal from '../components/ConfirmModal.jsx';
 import { useLanguage } from '../contexts/LanguageContext.jsx';
 
@@ -72,6 +73,23 @@ function SettingsPage({ token, userProfile: initialProfile, onThemeChange, onLog
       setError(t('settings.sessionError'));
   }
 
+
+  // Fonction pour rafraîchir le profil (utilisée par BillingPanel)
+  const handleProfileRefresh = useCallback(async () => {
+    try {
+      const updatedProfile = await getUserProfile(token);
+      setProfile({
+        ...updatedProfile,
+        language: updatedProfile.language || currentLanguage || 'fr',
+        notificationPreferences: updatedProfile.notificationPreferences || { notifyOnBooking: true, notifyOnApiError: true },
+        reportFrequency: updatedProfile.reportFrequency || 'hebdomadaire',
+        theme: updatedProfile.theme || 'auto',
+        role: updatedProfile.role || 'member'
+      });
+    } catch (err) {
+      console.error('Erreur lors du rafraîchissement du profil:', err);
+    }
+  }, [token, currentLanguage]);
 
   const fetchProfileAndTeam = useCallback(async () => {
     if (!currentUserId) {
@@ -362,6 +380,13 @@ function SettingsPage({ token, userProfile: initialProfile, onThemeChange, onLog
             />
         )}
       </div>
+
+      {/* Panneau de Gestion de l'Abonnement */}
+      <BillingPanel 
+        token={token}
+        userProfile={profile}
+        onProfileUpdate={handleProfileRefresh}
+      />
 
       {/* Formulaire de Profil */}
       <form onSubmit={handleProfileSubmit} className="space-y-6 bg-global-bg-box rounded-[14px] border border-solid border-global-stroke-box p-6 flex flex-col gap-3 items-start justify-start relative">

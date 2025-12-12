@@ -576,3 +576,41 @@ export function updatePriceOverrides(propertyId, overrides, token) {
     });
 }
 
+// ===== FONCTIONS STRIPE BILLING =====
+
+/**
+ * Crée une session Stripe Checkout pour l'onboarding
+ * @param {string} token - Jeton d'authentification Priceye
+ * @returns {Promise<{url: string, sessionId: string}>}
+ */
+export async function createCheckoutSession(token) {
+  return apiRequest('/api/checkout/create-session', {
+    method: 'POST',
+    token: token,
+  });
+}
+
+/**
+ * Termine l'essai gratuit et facture immédiatement
+ * @param {string} token - Jeton d'authentification Priceye
+ * @returns {Promise<{message: string, subscriptionId: string, invoiceId: string, status: string}>}
+ */
+export async function endTrialAndBill(token) {
+  return apiRequest('/api/subscriptions/end-trial-and-bill', {
+    method: 'POST',
+    token: token,
+  });
+}
+
+/**
+ * Crée une session Stripe Customer Portal
+ * @param {string} token - Jeton d'authentification Priceye
+ * @returns {Promise<{url: string}>}
+ */
+export async function createPortalSession(token) {
+  return apiRequest('/api/billing/portal-session', {
+    method: 'POST',
+    token: token,
+  });
+}
+

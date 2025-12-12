@@ -446,5 +446,29 @@
     "analysisNotAvailable": "Analyse non disponible.",
     "vsMarket": "vs Marché",
     "na": "N/A"
+  },
+  "billing": {
+    "title": "Gestion de l'abonnement",
+    "noSubscription": "Vous n'avez pas encore d'abonnement actif.",
+    "activateSubscription": "Activer l'abonnement",
+    "trialActive": "Essai gratuit actif",
+    "trialDescription": "Vous bénéficiez d'un essai gratuit de 30 jours. Vous pouvez ajouter jusqu'à 10 propriétés pendant cette période.",
+    "endTrialNow": "Terminer l'essai et payer maintenant",
+    "subscriptionActive": "Abonnement actif",
+    "subscriptionDescription": "Votre abonnement est actif. Vous pouvez gérer votre abonnement, télécharger vos factures et mettre à jour votre carte bancaire.",
+    "manageSubscription": "Gérer mon abonnement",
+    "paymentFailed": "Échec de paiement",
+    "paymentFailedDescription": "Votre dernier paiement a échoué. Veuillez mettre à jour votre méthode de paiement pour continuer à utiliser Priceye.",
+    "updatePaymentMethod": "Mettre à jour la méthode de paiement",
+    "subscriptionCanceled": "Abonnement annulé",
+    "subscriptionCanceledDescription": "Votre abonnement a été annulé. Réactivez votre abonnement pour continuer à utiliser Priceye.",
+    "reactivateSubscription": "Réactiver l'abonnement",
+    "limitExceeded": "Limite de propriétés dépassée",
+    "limitExceededMessage": "Vous avez atteint la limite de 10 propriétés pendant votre essai gratuit.",
+    "limitExceededAction": "Pour continuer, vous devez terminer votre essai et activer la facturation maintenant.",
+    "endTrialAndPay": "Terminer l'essai et payer",
+    "endTrialConfirm": "Terminer l'essai gratuit",
+    "endTrialConfirmMessage": "Êtes-vous sûr de vouloir terminer votre essai gratuit maintenant ? Vous serez facturé immédiatement pour le mois en cours.",
+    "confirmEndTrial": "Oui, terminer l'essai"
   }
 }

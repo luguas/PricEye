@@ -21,10 +21,10 @@ async function updateSubscriptionQuantities(subscriptionId, quantities) {
         const subscription = await stripe.subscriptions.retrieve(subscriptionId);
         
         // Trouver les items d'abonnement (on suppose qu'il y a deux produits)
-        // Vous devrez ajuster les product IDs selon votre configuration Stripe
-        const principalProductId = process.env.STRIPE_PRODUCT_PRINCIPAL_ID;
+        // Support des deux noms de variables pour compatibilité
+        const principalProductId = process.env.STRIPE_PRODUCT_PARENT_ID || process.env.STRIPE_PRODUCT_PRINCIPAL_ID;
         const childProductId = process.env.STRIPE_PRODUCT_CHILD_ID;
-        const principalPriceId = process.env.STRIPE_PRICE_PRINCIPAL_ID;
+        const principalPriceId = process.env.STRIPE_PRICE_PARENT_ID || process.env.STRIPE_PRICE_PRINCIPAL_ID;
         const childPriceId = process.env.STRIPE_PRICE_CHILD_ID;
         
         if (!principalPriceId || !childPriceId) {
@@ -167,7 +167,8 @@ async function createSubscription(customerId, paymentMethodId, quantities, trial
             throw new Error('STRIPE_SECRET_KEY non configuré');
         }
         
-        const principalPriceId = process.env.STRIPE_PRICE_PRINCIPAL_ID;
+        // Support des deux noms de variables pour compatibilité
+        const principalPriceId = process.env.STRIPE_PRICE_PARENT_ID || process.env.STRIPE_PRICE_PRINCIPAL_ID;
         const childPriceId = process.env.STRIPE_PRICE_CHILD_ID;
         
         if (!principalPriceId || !childPriceId) {

@@ -446,5 +446,29 @@
     "analysisNotAvailable": "Analysis not available.",
     "vsMarket": "vs Market",
     "na": "N/A"
+  },
+  "billing": {
+    "title": "Subscription Management",
+    "noSubscription": "You don't have an active subscription yet.",
+    "activateSubscription": "Activate Subscription",
+    "trialActive": "Free Trial Active",
+    "trialDescription": "You have a 30-day free trial. You can add up to 10 properties during this period.",
+    "endTrialNow": "End Trial and Pay Now",
+    "subscriptionActive": "Active Subscription",
+    "subscriptionDescription": "Your subscription is active. You can manage your subscription, download invoices, and update your payment method.",
+    "manageSubscription": "Manage Subscription",
+    "paymentFailed": "Payment Failed",
+    "paymentFailedDescription": "Your last payment failed. Please update your payment method to continue using Priceye.",
+    "updatePaymentMethod": "Update Payment Method",
+    "subscriptionCanceled": "Subscription Canceled",
+    "subscriptionCanceledDescription": "Your subscription has been canceled. Reactivate your subscription to continue using Priceye.",
+    "reactivateSubscription": "Reactivate Subscription",
+    "limitExceeded": "Property Limit Exceeded",
+    "limitExceededMessage": "You have reached the limit of 10 properties during your free trial.",
+    "limitExceededAction": "To continue, you must end your trial and activate billing now.",
+    "endTrialAndPay": "End Trial and Pay",
+    "endTrialConfirm": "End Free Trial",
+    "endTrialConfirmMessage": "Are you sure you want to end your free trial now? You will be billed immediately for the current month.",
+    "confirmEndTrial": "Yes, End Trial"
   }
 }

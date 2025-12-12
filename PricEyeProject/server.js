@@ -184,7 +184,15 @@ async function syncAllPMSRates() {
         const userId = doc.ref.parent.parent.id;
         const pmsType = doc.id;
         const credentials = doc.data().credentials;
-        const userEmail = (await db.collection('users').doc(userId).get()).data()?.email || 'email-inconnu';
+        const userDoc = await db.collection('users').doc(userId).get();
+        const userData = userDoc.data();
+        const userEmail = userData?.email || 'email-inconnu';
+
+        // Vérifier si la synchronisation PMS est activée pour cet utilisateur
+        if (userData?.pmsSyncEnabled === false) {
+            console.log(`[PMS Sync] Synchronisation désactivée pour ${userEmail} (ID: ${userId}). Raison: ${userData.pmsSyncStoppedReason || 'unknown'}`);
+            continue; // Passer à l'utilisateur suivant
+        }
 
         console.log(`[PMS Sync] Traitement de ${pmsType} pour ${userEmail} (ID: ${userId})`);
 
@@ -321,6 +329,94 @@ function calculateBillingQuantities(userProperties, userGroups) {
 }
 
 /**
+ * Vérifie si l'utilisateur est en période d'essai et si l'ajout d'une propriété dépasse la limite de 10
+ * @param {string} userId - ID de l'utilisateur
+ * @param {string} subscriptionId - ID de l'abonnement Stripe
+ * @param {number} currentPropertyCount - Nombre actuel de propriétés
+ * @param {number} newPropertiesCount - Nombre de nouvelles propriétés à ajouter
+ * @param {Object} db - Instance Firestore
+ * @returns {Promise<{isAllowed: boolean, isTrialActive: boolean, currentCount: number, maxAllowed: number}>}
+ */
+async function checkTrialPropertyLimit(userId, subscriptionId, currentPropertyCount, newPropertiesCount, db) {
+    try {
+        if (!subscriptionId) {
+            // Pas d'abonnement = pas de limite
+            return { isAllowed: true, isTrialActive: false, currentCount: currentPropertyCount, maxAllowed: Infinity };
+        }
+        
+        const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
+        const subscription = await stripe.subscriptions.retrieve(subscriptionId);
+        
+        // Vérifier si en période d'essai
+        const isTrialActive = subscription.status === 'trialing' && 
+                              subscription.trial_end && 
+                              subscription.trial_end * 1000 > Date.now();
+        
+        if (!isTrialActive) {
+            // Pas en période d'essai = pas de limite
+            return { isAllowed: true, isTrialActive: false, currentCount: currentPropertyCount, maxAllowed: Infinity };
+        }
+        
+        // En période d'essai : vérifier la limite de 10
+        const totalProperties = currentPropertyCount + newPropertiesCount;
+        const maxAllowed = 10;
+        const isAllowed = totalProperties <= maxAllowed;
+        
+        return { isAllowed, isTrialActive: true, currentCount: currentPropertyCount, maxAllowed };
+        
+    } catch (error) {
+        console.error('[Trial Limit] Erreur lors de la vérification:', error);
+        // En cas d'erreur, on autorise (fail-safe)
+        return { isAllowed: true, isTrialActive: false, currentCount: currentPropertyCount, maxAllowed: Infinity };
+    }
+}
+
+/**
+ * Calcule la distance entre deux points géographiques (formule Haversine)
+ * @param {number} lat1 - Latitude du premier point
+ * @param {number} lon1 - Longitude du premier point
+ * @param {number} lat2 - Latitude du deuxième point
+ * @param {number} lon2 - Longitude du deuxième point
+ * @returns {number} - Distance en mètres
+ */
+function calculateDistance(lat1, lon1, lat2, lon2) {
+    const R = 6371e3; // Rayon de la Terre en mètres
+    const φ1 = lat1 * Math.PI / 180;
+    const φ2 = lat2 * Math.PI / 180;
+    const Δφ = (lat2 - lat1) * Math.PI / 180;
+    const Δλ = (lon2 - lon1) * Math.PI / 180;
+    
+    const a = Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
+              Math.cos(φ1) * Math.cos(φ2) *
+              Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    
+    return R * c; // Distance en mètres
+}
+
+/**
+ * Vérifie si la synchronisation PMS est activée pour un utilisateur
+ * @param {string} userId - ID de l'utilisateur
+ * @param {Object} db - Instance Firestore
+ * @returns {Promise<boolean>} - true si la sync est activée, false sinon
+ */
+async function isPMSSyncEnabled(userId, db) {
+    try {
+        const userDoc = await db.collection('users').doc(userId).get();
+        if (!userDoc.exists) {
+            return false;
+        }
+        const userData = userDoc.data();
+        // Par défaut, la sync est activée si le flag n'existe pas (rétrocompatibilité)
+        return userData.pmsSyncEnabled !== false;
+    } catch (error) {
+        console.error(`[PMS Sync] Erreur lors de la vérification de pmsSyncEnabled pour ${userId}:`, error);
+        // En cas d'erreur, on autorise (fail-safe)
+        return true;
+    }
+}
+
+/**
  * Récupère toutes les propriétés et groupes d'un utilisateur et met à jour Stripe
  * @param {string} userId - ID de l'utilisateur
  * @param {Object} db - Instance Firestore
@@ -362,9 +458,93 @@ async function recalculateAndUpdateBilling(userId, db) {
         
         console.log(`[Billing] Quantités calculées pour ${userId}: Principal=${quantities.quantityPrincipal}, Enfant=${quantities.quantityChild}`);
         
-        // 4. Mettre à jour Stripe
+        // 4. Récupérer l'abonnement pour vérifier le statut et les quantités actuelles
+        const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
+        const subscription = await stripe.subscriptions.retrieve(subscriptionId);
+        
+        // Vérifier si en période d'essai
+        const isTrialActive = subscription.status === 'trialing' && 
+                              subscription.trial_end && 
+                              subscription.trial_end * 1000 > Date.now();
+        
+        if (isTrialActive) {
+            // En période d'essai : juste mettre à jour les quantités (pas de facturation)
+            console.log(`[Billing] Utilisateur en période d'essai. Mise à jour des quantités sans facturation.`);
+            const stripeManager = require('./integrations/stripeManager');
+            await stripeManager.updateSubscriptionQuantities(subscriptionId, quantities);
+            return;
+        }
+        
+        // Pas en période d'essai : gérer le rattrapage en cours de mois
+        // 5. Calculer les quantités actuelles dans l'abonnement
+        const parentPriceId = process.env.STRIPE_PRICE_PARENT_ID || process.env.STRIPE_PRICE_PRINCIPAL_ID;
+        const childPriceId = process.env.STRIPE_PRICE_CHILD_ID;
+        
+        const subscriptionItems = subscription.items.data;
+        let principalItem = subscriptionItems.find(item => {
+            const priceId = typeof item.price === 'string' ? item.price : item.price.id;
+            return priceId === parentPriceId;
+        });
+        let childItem = subscriptionItems.find(item => {
+            const priceId = typeof item.price === 'string' ? item.price : item.price.id;
+            return priceId === childPriceId;
+        });
+        
+        const oldQuantityPrincipal = principalItem ? principalItem.quantity : 0;
+        const oldQuantityChild = childItem ? childItem.quantity : 0;
+        
+        // 6. Détecter les augmentations (nouvelles propriétés ajoutées)
+        const principalIncrease = Math.max(0, quantities.quantityPrincipal - oldQuantityPrincipal);
+        const childIncrease = Math.max(0, quantities.quantityChild - oldQuantityChild);
+        
+        // 7. Mettre à jour l'abonnement pour le MOIS SUIVANT (sans proration)
         const stripeManager = require('./integrations/stripeManager');
         await stripeManager.updateSubscriptionQuantities(subscriptionId, quantities);
+        
+        // 8. Si augmentation : créer des invoice items pour le MOIS EN COURS (rattrapage)
+        if (principalIncrease > 0 || childIncrease > 0) {
+            const customerId = subscription.customer;
+            
+            // Prix en centimes (13.99€ = 1399 centimes, 3.99€ = 399 centimes)
+            const parentPricePerUnit = 1399; // 13.99€
+            const childPricePerUnit = 399; // 3.99€
+            
+            // Créer un invoice item pour chaque augmentation
+            if (principalIncrease > 0) {
+                await stripe.invoiceItems.create({
+                    customer: customerId,
+                    amount: principalIncrease * parentPricePerUnit,
+                    currency: 'eur',
+                    description: `Rattrapage - Ajout de ${principalIncrease} propriété(s) principale(s) en cours de mois`,
+                    metadata: {
+                        userId: userId,
+                        reason: 'mid_month_property_addition',
+                        propertyType: 'principal',
+                        quantity: principalIncrease
+                    }
+                });
+                console.log(`[Billing] Invoice item créé pour ${principalIncrease} propriété(s) principale(s) (rattrapage)`);
+            }
+            
+            if (childIncrease > 0) {
+                await stripe.invoiceItems.create({
+                    customer: customerId,
+                    amount: childIncrease * childPricePerUnit,
+                    currency: 'eur',
+                    description: `Rattrapage - Ajout de ${childIncrease} propriété(s) enfant(s) en cours de mois`,
+                    metadata: {
+                        userId: userId,
+                        reason: 'mid_month_property_addition',
+                        propertyType: 'child',
+                        quantity: childIncrease
+                    }
+                });
+                console.log(`[Billing] Invoice item créé pour ${childIncrease} propriété(s) enfant(s) (rattrapage)`);
+            }
+            
+            // Note : Ces invoice items s'ajouteront à la prochaine facture
+            // SAUF si le billing threshold est atteint (déclenchement immédiat)
+        }
         
         console.log(`[Billing] Facturation mise à jour avec succès pour ${userId}`);
     } catch (error) {
@@ -570,6 +750,10 @@ app.post('/api/webhooks/stripe', async (req, res) => {
     try {
         // Gérer les différents événements Stripe
         switch (event.type) {
+            case 'checkout.session.completed':
+                await handleCheckoutSessionCompleted(event.data.object, db);
+                break;
+                
             case 'invoice.payment_failed':
                 await handlePaymentFailed(event.data.object, db);
                 break;
@@ -649,7 +833,10 @@ async function handlePaymentFailed(invoice, db) {
             accessDisabledAt: admin.firestore.FieldValue.serverTimestamp(),
             paymentFailed: true,
             lastPaymentFailureAt: admin.firestore.FieldValue.serverTimestamp(),
-            lastPaymentFailureInvoiceId: invoice.id
+            lastPaymentFailureInvoiceId: invoice.id,
+            pmsSyncEnabled: false, // STOPPER la synchronisation PMS
+            pmsSyncStoppedReason: 'payment_failed',
+            pmsSyncStoppedAt: admin.firestore.FieldValue.serverTimestamp()
         });
         
         // Optionnel : Désactiver l'utilisateur dans Firebase Auth
@@ -666,6 +853,103 @@ async function handlePaymentFailed(invoice, db) {
         
     } catch (error) {
         console.error('[Webhook] Erreur lors de la gestion de l\'échec de paiement:', error);
+        throw error;
+    }
+}
+
+/**
+ * Gère la complétion d'une session Stripe Checkout
+ * Active l'abonnement et enregistre les listing IDs pour l'anti-abus
+ */
+async function handleCheckoutSessionCompleted(session, db) {
+    try {
+        const customerId = session.customer;
+        const subscriptionId = session.subscription;
+        
+        console.log(`[Webhook] Checkout session complétée: ${session.id}, subscription: ${subscriptionId}, customer: ${customerId}`);
+        
+        if (!subscriptionId || !customerId) {
+            console.error('[Webhook] Session incomplète: subscriptionId ou customerId manquant');
+            return;
+        }
+        
+        const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
+        
+        // Récupérer le customer pour obtenir le userId
+        const customer = await stripe.customers.retrieve(customerId);
+        const userId = session.metadata?.userId || customer.metadata?.userId;
+        
+        if (!userId) {
+            console.error(`[Webhook] Impossible de trouver le userId pour la session ${session.id}`);
+            return;
+        }
+        
+        // Récupérer l'abonnement pour obtenir le statut
+        const subscription = await stripe.subscriptions.retrieve(subscriptionId);
+        
+        // Mettre à jour le profil utilisateur dans Firestore
+        await db.collection('users').doc(userId).update({
+            stripeCustomerId: customerId,
+            stripeSubscriptionId: subscriptionId,
+            subscriptionStatus: subscription.status, // 'trialing' ou 'active'
+            subscriptionCreatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            accessDisabled: false,
+            pmsSyncEnabled: true // Activer la synchronisation PMS
+        });
+        
+        console.log(`[Webhook] Profil utilisateur ${userId} mis à jour avec l'abonnement ${subscriptionId}`);
+        
+        // Enregistrer les listing IDs pour l'anti-abus des essais gratuits
+        // Récupérer toutes les propriétés de l'utilisateur
+        const userProfile = await db.collection('users').doc(userId).get();
+        const teamId = userProfile.data()?.teamId || userId;
+        
+        const propertiesSnapshot = await db.collection('properties')
+            .where('teamId', '==', teamId)
+            .get();
+        
+        const listingIds = [];
+        propertiesSnapshot.docs.forEach(doc => {
+            const prop = doc.data();
+            if (prop.pmsId) {
+                listingIds.push(prop.pmsId);
+            }
+        });
+        
+        // Enregistrer chaque listing ID dans la collection used_listing_ids
+        if (listingIds.length > 0) {
+            const batch = db.batch();
+            for (const listingId of listingIds) {
+                // Vérifier si le listing ID n'est pas déjà enregistré
+                const existing = await db.collection('used_listing_ids')
+                    .where('listingId', '==', listingId)
+                    .limit(1)
+                    .get();
+                
+                if (existing.empty) {
+                    // Enregistrer le listing ID
+                    const usedListingRef = db.collection('used_listing_ids').doc();
+                    batch.set(usedListingRef, {
+                        listingId: listingId,
+                        userId: userId,
+                        usedAt: admin.firestore.FieldValue.serverTimestamp(),
+                        checkoutSessionId: session.id,
+                        subscriptionId: subscriptionId,
+                        source: 'checkout_completed' // Source de l'enregistrement
+                    });
+                }
+            }
+            
+            if (listingIds.length > 0) {
+                await batch.commit();
+                console.log(`[Webhook] ${listingIds.length} listing ID(s) enregistré(s) pour l'anti-abus`);
+            }
+        }
+        
+        console.log(`[Webhook] Checkout session complétée avec succès pour l'utilisateur ${userId}`);
+        
+    } catch (error) {
+        console.error('[Webhook] Erreur lors de la gestion de la session checkout:', error);
         throw error;
     }
 }
@@ -893,6 +1177,355 @@ app.post('/api/subscriptions/create', authenticateToken, async (req, res) => {
         res.status(500).send({ error: `Erreur lors de la création de l'abonnement: ${error.message}` });
     }
 });
+
+// --- ROUTES STRIPE SUBSCRIPTIONS (Phase 3) ---
+/**
+ * POST /api/subscriptions/end-trial-and-bill - Termine l'essai anticipé et facture immédiatement
+ * Utilisé quand l'utilisateur dépasse la limite de 10 propriétés pendant l'essai
+ */
+app.post('/api/subscriptions/end-trial-and-bill', authenticateToken, async (req, res) => {
+    try {
+        const db = admin.firestore();
+        const userId = req.user.uid;
+        const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
+        
+        // Récupérer le profil utilisateur
+        const userProfileRef = db.collection('users').doc(userId);
+        const userProfileDoc = await userProfileRef.get();
+        
+        if (!userProfileDoc.exists) {
+            return res.status(404).send({ error: 'Profil utilisateur non trouvé.' });
+        }
+        
+        const userProfile = userProfileDoc.data();
+        const subscriptionId = userProfile.stripeSubscriptionId;
+        
+        if (!subscriptionId) {
+            return res.status(400).send({ error: 'Aucun abonnement trouvé.' });
+        }
+        
+        // Récupérer l'abonnement actuel
+        const subscription = await stripe.subscriptions.retrieve(subscriptionId);
+        
+        // Vérifier que l'utilisateur est bien en période d'essai
+        const isTrialActive = subscription.status === 'trialing' && 
+                              subscription.trial_end && 
+                              subscription.trial_end * 1000 > Date.now();
+        
+        if (!isTrialActive) {
+            return res.status(400).send({ error: 'Vous n\'êtes pas en période d\'essai.' });
+        }
+        
+        // Récupérer toutes les propriétés et groupes pour recalculer les quantités
+        const teamId = userProfile.teamId || userId;
+        const propertiesSnapshot = await db.collection('properties').where('teamId', '==', teamId).get();
+        const userProperties = propertiesSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        
+        const groupsSnapshot = await db.collection('groups').where('ownerId', '==', userId).get();
+        const userGroups = groupsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        
+        // Calculer les nouvelles quantités
+        const quantities = calculateBillingQuantities(userProperties, userGroups);
+        
+        // Si aucune propriété, on commence avec 1 propriété principale
+        if (quantities.quantityPrincipal === 0 && quantities.quantityChild === 0) {
+            quantities.quantityPrincipal = 1;
+        }
+        
+        // Récupérer les items d'abonnement existants
+        const subscriptionItems = subscription.items.data;
+        const parentPriceId = process.env.STRIPE_PRICE_PARENT_ID || process.env.STRIPE_PRICE_PRINCIPAL_ID;
+        const childPriceId = process.env.STRIPE_PRICE_CHILD_ID;
+        
+        // Trouver les items existants
+        let principalItem = subscriptionItems.find(item => {
+            const priceId = typeof item.price === 'string' ? item.price : item.price.id;
+            return priceId === parentPriceId;
+        });
+        let childItem = subscriptionItems.find(item => {
+            const priceId = typeof item.price === 'string' ? item.price : item.price.id;
+            return priceId === childPriceId;
+        });
+        
+        // Construire les items à mettre à jour
+        const itemsToUpdate = [];
+        
+        if (principalItem) {
+            itemsToUpdate.push({
+                id: principalItem.id,
+                quantity: quantities.quantityPrincipal
+            });
+        } else if (quantities.quantityPrincipal > 0) {
+            itemsToUpdate.push({
+                price: parentPriceId,
+                quantity: quantities.quantityPrincipal
+            });
+        }
+        
+        if (childItem) {
+            itemsToUpdate.push({
+                id: childItem.id,
+                quantity: quantities.quantityChild
+            });
+        } else if (quantities.quantityChild > 0) {
+            itemsToUpdate.push({
+                price: childPriceId,
+                quantity: quantities.quantityChild
+            });
+        }
+        
+        // Mettre à jour l'abonnement : quantité + fin d'essai + facturation immédiate
+        const updatedSubscription = await stripe.subscriptions.update(subscriptionId, {
+            items: itemsToUpdate,
+            trial_end: 'now', // Terminer l'essai immédiatement
+            proration_behavior: 'always_invoice' // Facturer immédiatement avec proration
+        });
+        
+        // Forcer la génération de la facture
+        const invoice = await stripe.invoices.create({
+            customer: subscription.customer,
+            subscription: subscriptionId,
+            auto_advance: true // Générer et envoyer immédiatement
+        });
+        
+        // Finaliser la facture (prélèvement immédiat)
+        await stripe.invoices.finalizeInvoice(invoice.id, { auto_advance: true });
+        
+        // Mettre à jour le profil utilisateur
+        await userProfileRef.update({
+            subscriptionStatus: updatedSubscription.status,
+            trialEndedAt: admin.firestore.FieldValue.serverTimestamp()
+        });
+        
+        console.log(`[End Trial] Essai terminé et facturation effectuée pour ${userId}`);
+        
+        res.status(200).json({
+            message: 'Essai terminé et facturation effectuée avec succès',
+            subscriptionId: subscriptionId,
+            invoiceId: invoice.id,
+            status: updatedSubscription.status
+        });
+        
+    } catch (error) {
+        console.error('[End Trial] Erreur lors de la fin d\'essai anticipée:', error);
+        res.status(500).send({ error: `Erreur lors de la fin d'essai: ${error.message}` });
+    }
+});
+
+// --- ROUTES STRIPE BILLING PORTAL (Phase 4) ---
+/**
+ * POST /api/billing/portal-session - Crée une session Stripe Customer Portal
+ * Permet au client de gérer son abonnement, ses factures et sa carte bancaire
+ */
+app.post('/api/billing/portal-session', authenticateToken, async (req, res) => {
+    try {
+        const db = admin.firestore();
+        const userId = req.user.uid;
+        const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
+        
+        // Récupérer le profil utilisateur
+        const userProfileRef = db.collection('users').doc(userId);
+        const userProfileDoc = await userProfileRef.get();
+        
+        if (!userProfileDoc.exists) {
+            return res.status(404).send({ error: 'Profil utilisateur non trouvé.' });
+        }
+        
+        const userProfile = userProfileDoc.data();
+        const customerId = userProfile.stripeCustomerId;
+        
+        if (!customerId) {
+            return res.status(400).json({ error: 'Aucun customer Stripe trouvé. Vous devez d\'abord créer un abonnement.' });
+        }
+        
+        // Créer la session du portail client
+        const frontendUrl = process.env.FRONTEND_URL || 'https://pric-eye.vercel.app';
+        const session = await stripe.billingPortal.sessions.create({
+            customer: customerId,
+            return_url: `${frontendUrl}/billing`
+        });
+        
+        console.log(`[Billing Portal] Session créée pour ${userId}: ${session.url}`);
+        
+        res.json({ url: session.url });
+    } catch (error) {
+        console.error('[Billing Portal] Erreur lors de la création de la session portal:', error);
+        res.status(500).json({ error: 'Erreur serveur lors de la création de la session portal.' });
+    }
+});
+
+// --- ROUTES STRIPE CHECKOUT (NOUVEAU - Phase 2) ---
+/**
+ * POST /api/checkout/create-session - Crée une session Stripe Checkout pour l'onboarding
+ * Utilise Stripe Checkout (page hébergée) pour la sécurité et la conformité
+ */
+app.post('/api/checkout/create-session', authenticateToken, async (req, res) => {
+    try {
+        const db = admin.firestore();
+        const userId = req.user.uid;
+        const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
+        const stripeManager = require('./integrations/stripeManager');
+        
+        // Récupérer le profil utilisateur
+        const userProfileRef = db.collection('users').doc(userId);
+        const userProfileDoc = await userProfileRef.get();
+        
+        if (!userProfileDoc.exists) {
+            return res.status(404).send({ error: 'Profil utilisateur non trouvé.' });
+        }
+        
+        const userProfile = userProfileDoc.data();
+        
+        // Vérifier si l'utilisateur a déjà un abonnement actif
+        if (userProfile.stripeSubscriptionId) {
+            try {
+                const existingSubscription = await stripe.subscriptions.retrieve(userProfile.stripeSubscriptionId);
+                if (existingSubscription.status === 'active' || existingSubscription.status === 'trialing') {
+                    return res.status(400).send({ error: 'Vous avez déjà un abonnement actif.' });
+                }
+            } catch (error) {
+                console.log(`[Checkout] L'abonnement existant ${userProfile.stripeSubscriptionId} n'est plus valide.`);
+            }
+        }
+        
+        // 1. Récupérer toutes les propriétés de l'utilisateur
+        const teamId = userProfile.teamId || userId;
+        const propertiesSnapshot = await db.collection('properties').where('teamId', '==', teamId).get();
+        const userProperties = propertiesSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        
+        // 2. Récupérer tous les groupes de l'utilisateur
+        const groupsSnapshot = await db.collection('groups').where('ownerId', '==', userId).get();
+        const userGroups = groupsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        
+        // 3. Calculer les buckets Parent/Enfant
+        const quantities = calculateBillingQuantities(userProperties, userGroups);
+        
+        // Si aucune propriété, on commence avec 1 propriété principale
+        if (quantities.quantityPrincipal === 0 && quantities.quantityChild === 0) {
+            quantities.quantityPrincipal = 1;
+        }
+        
+        // 4. Vérifier l'anti-abus des essais gratuits (listing IDs)
+        let trialPeriodDays = 30; // Par défaut, essai gratuit de 30 jours
+        
+        // Extraire tous les listing IDs (pmsId) des propriétés importées
+        const listingIds = userProperties
+            .filter(p => p.pmsId)
+            .map(p => p.pmsId);
+        
+        if (listingIds.length > 0) {
+            const hasAbuse = await checkListingIdsAbuse(listingIds, db);
+            if (hasAbuse) {
+                console.log(`[Checkout] Anti-abus détecté pour l'utilisateur ${userId}. Essai gratuit refusé.`);
+                trialPeriodDays = 0; // Pas d'essai gratuit
+            }
+        }
+        
+        // 5. Créer ou récupérer le Customer Stripe
+        const customerId = await stripeManager.getOrCreateStripeCustomer(
+            userId,
+            userProfile.email || req.user.email,
+            userProfile.name || 'Utilisateur',
+            userProfile.stripeCustomerId
+        );
+        
+        // 6. Construire les line_items pour Stripe Checkout
+        const lineItems = [];
+        
+        // Support des deux noms de variables pour compatibilité
+        const parentPriceId = process.env.STRIPE_PRICE_PARENT_ID || process.env.STRIPE_PRICE_PRINCIPAL_ID;
+        const childPriceId = process.env.STRIPE_PRICE_CHILD_ID;
+        
+        if (!parentPriceId || !childPriceId) {
+            return res.status(500).send({ error: 'Configuration Stripe incomplète. Contactez le support.' });
+        }
+        
+        // Ajouter l'item parent si quantité > 0
+        if (quantities.quantityPrincipal > 0) {
+            lineItems.push({
+                price: parentPriceId,
+                quantity: quantities.quantityPrincipal
+            });
+        }
+        
+        // Ajouter l'item enfant si quantité > 0
+        if (quantities.quantityChild > 0) {
+            lineItems.push({
+                price: childPriceId,
+                quantity: quantities.quantityChild
+            });
+        }
+        
+        // Si aucun item, on crée quand même avec 1 propriété principale
+        if (lineItems.length === 0) {
+            lineItems.push({
+                price: parentPriceId,
+                quantity: 1
+            });
+        }
+        
+        // 7. Créer la session Stripe Checkout
+        const frontendUrl = process.env.FRONTEND_URL || 'https://pric-eye.vercel.app';
+        
+        const session = await stripe.checkout.sessions.create({
+            mode: 'subscription',
+            customer: customerId,
+            customer_email: userProfile.email || req.user.email,
+            line_items: lineItems,
+            subscription_data: {
+                trial_period_days: trialPeriodDays,
+                metadata: {
+                    userId: userId
+                }
+            },
+            success_url: `${frontendUrl}/dashboard?success=true&session_id={CHECKOUT_SESSION_ID}`,
+            cancel_url: `${frontendUrl}/billing?canceled=true`
+        });
+        
+        console.log(`[Checkout] Session créée pour ${userId}: ${session.id} (essai: ${trialPeriodDays} jours)`);
+        
+        // Retourner l'URL de la session
+        res.status(200).json({
+            url: session.url,
+            sessionId: session.id
+        });
+        
+    } catch (error) {
+        console.error('[Checkout] Erreur lors de la création de la session:', error);
+        res.status(500).send({ error: `Erreur lors de la création de la session: ${error.message}` });
+    }
+});
+
+/**
+ * Fonction helper : Vérifie si des listing IDs ont déjà été utilisés (anti-abus essai gratuit)
+ * @param {Array<string>} listingIds - Liste des listing IDs à vérifier
+ * @param {Object} db - Instance Firestore
+ * @returns {Promise<boolean>} - true si abus détecté, false sinon
+ */
+async function checkListingIdsAbuse(listingIds, db) {
+    if (!listingIds || listingIds.length === 0) return false;
+    
+    try {
+        // Vérifier si un des listing IDs a déjà été utilisé
+        for (const listingId of listingIds) {
+            const existing = await db.collection('used_listing_ids')
+                .where('listingId', '==', listingId)
+                .limit(1)
+                .get();
+            
+            if (!existing.empty) {
+                console.log(`[Anti-Abus] Listing ID ${listingId} déjà utilisé. Abus détecté.`);
+                return true; // Abus détecté
+            }
+        }
+        
+        return false; // Pas d'abus
+    } catch (error) {
+        console.error('[Anti-Abus] Erreur lors de la vérification:', error);
+        // En cas d'erreur, on autorise l'essai gratuit (fail-safe)
+        return false;
+    }
+}
 
 /**
  * Endpoint pour récupérer l'état actuel de la génération automatique des prix IA
@@ -1199,9 +1832,42 @@ app.post('/api/integrations/import-properties', authenticateToken, async (req, r
              console.error(`[Import] Échec: Profil utilisateur ${userId} non trouvé ou n'a pas de teamId.`);
              return res.status(404).send({ error: 'Profil utilisateur non trouvé ou teamId manquant.' });
         }
-        const teamId = userProfileDoc.data().teamId;
+        const userProfile = userProfileDoc.data();
+        const teamId = userProfile.teamId;
         
-        // 2. Batch write to Firestore
+        // 2. Vérification de la limite de 10 propriétés pendant l'essai gratuit
+        const subscriptionId = userProfile.stripeSubscriptionId;
+        if (subscriptionId) {
+            // Compter les propriétés actuelles
+            const currentPropertiesSnapshot = await db.collection('properties')
+                .where('teamId', '==', teamId).get();
+            const currentPropertyCount = currentPropertiesSnapshot.size;
+            
+            // Compter les nouvelles propriétés à importer
+            const newPropertiesCount = propertiesToImport.filter(p => p.pmsId && p.name).length;
+            
+            // Vérifier la limite
+            const limitCheck = await checkTrialPropertyLimit(
+                userId, 
+                subscriptionId, 
+                currentPropertyCount, 
+                newPropertiesCount,
+                db
+            );
+            
+            if (!limitCheck.isAllowed) {
+                return res.status(403).json({
+                    error: 'LIMIT_EXCEEDED',
+                    message: 'Vous dépassez la limite gratuite de 10 propriétés.',
+                    currentCount: limitCheck.currentCount,
+                    maxAllowed: limitCheck.maxAllowed,
+                    requiresPayment: true,
+                    attemptedImport: newPropertiesCount
+                });
+            }
+        }
+        
+        // 3. Batch write to Firestore
         const batch = db.batch();
         let importedCount = 0;
         
@@ -1260,6 +1926,40 @@ app.post('/api/integrations/import-properties', authenticateToken, async (req, r
 
         // 5. Commit batch
         await batch.commit();
+
+        // 5bis. Enregistrer les listing IDs pour l'anti-abus des essais gratuits
+        // (Même si l'utilisateur n'a pas encore fait de checkout, on enregistre les IDs)
+        const listingIdsToRegister = propertiesToImport
+            .filter(p => p.pmsId && p.name)
+            .map(p => p.pmsId);
+        
+        if (listingIdsToRegister.length > 0) {
+            const listingBatch = db.batch();
+            for (const listingId of listingIdsToRegister) {
+                // Vérifier si le listing ID n'est pas déjà enregistré
+                const existing = await db.collection('used_listing_ids')
+                    .where('listingId', '==', listingId)
+                    .limit(1)
+                    .get();
+                
+                if (existing.empty) {
+                    // Enregistrer le listing ID
+                    const usedListingRef = db.collection('used_listing_ids').doc();
+                    listingBatch.set(usedListingRef, {
+                        listingId: listingId,
+                        userId: userId,
+                        usedAt: admin.firestore.FieldValue.serverTimestamp(),
+                        source: 'import_properties', // Source de l'enregistrement
+                        propertyCount: listingIdsToRegister.length
+                    });
+                }
+            }
+            
+            if (listingIdsToRegister.length > 0) {
+                await listingBatch.commit();
+                console.log(`[Import] ${listingIdsToRegister.length} listing ID(s) enregistré(s) pour l'anti-abus`);
+            }
+        }
 
         // 6. Importer les réservations pour chaque propriété importée
         let totalReservationsImported = 0;
@@ -1445,7 +2145,39 @@ app.post('/api/properties', authenticateToken, async (req, res) => {
         }
         const userProfileRef = db.collection('users').doc(userId);
         const userProfileDoc = await userProfileRef.get();
-        const teamId = userProfileDoc.exists ? userProfileDoc.data().teamId : userId; 
+        if (!userProfileDoc.exists) {
+            return res.status(404).send({ error: 'Profil utilisateur non trouvé.' });
+        }
+        const userProfile = userProfileDoc.data();
+        const teamId = userProfile.teamId || userId;
+        
+        // Vérification de la limite de 10 propriétés pendant l'essai gratuit
+        const subscriptionId = userProfile.stripeSubscriptionId;
+        if (subscriptionId) {
+            // Compter les propriétés actuelles
+            const currentPropertiesSnapshot = await db.collection('properties')
+                .where('teamId', '==', teamId).get();
+            const currentPropertyCount = currentPropertiesSnapshot.size;
+            
+            // Vérifier la limite
+            const limitCheck = await checkTrialPropertyLimit(
+                userId, 
+                subscriptionId, 
+                currentPropertyCount, 
+                1, // 1 nouvelle propriété
+                db
+            );
+            
+            if (!limitCheck.isAllowed) {
+                return res.status(403).json({
+                    error: 'LIMIT_EXCEEDED',
+                    message: 'Vous dépassez la limite gratuite de 10 propriétés.',
+                    currentCount: limitCheck.currentCount,
+                    maxAllowed: limitCheck.maxAllowed,
+                    requiresPayment: true
+                });
+            }
+        } 
 
         const propertyWithOwner = { 
             ...newPropertyData, 
@@ -1648,25 +2380,31 @@ app.put('/api/properties/:id/strategy', authenticateToken, async (req, res) => {
         // 2. Vérifier si la propriété est liée au PMS
         const propertyData = doc.data();
         if (propertyData.pmsId && propertyData.pmsType) {
-            console.log(`[PMS Sync] Propriété ${id} (PMS ID: ${propertyData.pmsId}) est liée. Synchronisation des paramètres...`);
-            try {
-                // 3. Récupérer le client PMS
-                const client = await getUserPMSClient(userId); 
-                
-                // 4. Appeler updatePropertySettings
-                const settingsToSync = {
-                    base_price: strategyData.base_price,
-                    floor_price: strategyData.floor_price,
-                    ceiling_price: strategyData.ceiling_price
-                };
-                await client.updatePropertySettings(propertyData.pmsId, settingsToSync);
-                
-                console.log(`[PMS Sync] Paramètres de stratégie synchronisés avec ${propertyData.pmsType} pour ${id}.`);
-                
-            } catch (pmsError) {
-                console.error(`[PMS Sync] ERREUR: Échec de la synchronisation des paramètres pour ${id}. Raison: ${pmsError.message}`);
-                // Renvoyer une erreur au client, même si Firestore a réussi
-                return res.status(500).send({ error: `Sauvegarde Firestore réussie, mais échec de la synchronisation PMS: ${pmsError.message}` });
+            // Vérifier si la synchronisation PMS est activée
+            const syncEnabled = await isPMSSyncEnabled(userId, db);
+            if (!syncEnabled) {
+                console.log(`[PMS Sync] Synchronisation PMS désactivée pour l'utilisateur ${userId}. Synchronisation ignorée.`);
+            } else {
+                console.log(`[PMS Sync] Propriété ${id} (PMS ID: ${propertyData.pmsId}) est liée. Synchronisation des paramètres...`);
+                try {
+                    // 3. Récupérer le client PMS
+                    const client = await getUserPMSClient(userId); 
+                    
+                    // 4. Appeler updatePropertySettings
+                    const settingsToSync = {
+                        base_price: strategyData.base_price,
+                        floor_price: strategyData.floor_price,
+                        ceiling_price: strategyData.ceiling_price
+                    };
+                    await client.updatePropertySettings(propertyData.pmsId, settingsToSync);
+                    
+                    console.log(`[PMS Sync] Paramètres de stratégie synchronisés avec ${propertyData.pmsType} pour ${id}.`);
+                    
+                } catch (pmsError) {
+                    console.error(`[PMS Sync] ERREUR: Échec de la synchronisation des paramètres pour ${id}. Raison: ${pmsError.message}`);
+                    // Renvoyer une erreur au client, même si Firestore a réussi
+                    return res.status(500).send({ error: `Sauvegarde Firestore réussie, mais échec de la synchronisation PMS: ${pmsError.message}` });
+                }
             }
         }
         
@@ -1740,21 +2478,27 @@ app.put('/api/properties/:id/rules', authenticateToken, async (req, res) => {
         // 2. Vérifier si la propriété est liée au PMS
         const propertyData = doc.data(); // doc est déjà récupéré plus haut
         if (propertyData.pmsId && propertyData.pmsType) {
-            console.log(`[PMS Sync] Propriété ${id} (PMS ID: ${propertyData.pmsId}) est liée. Synchronisation des règles...`);
-            try {
-                // 3. Récupérer le client PMS
-                const client = await getUserPMSClient(userId);
-                
-                // 4. Appeler updatePropertySettings
-                // Les 'cleanRulesData' (min_stay, etc.) sont exactement ce que nous voulons synchroniser
-                await client.updatePropertySettings(propertyData.pmsId, cleanRulesData);
-                
-                console.log(`[PMS Sync] Règles synchronisées avec ${propertyData.pmsType} pour ${id}.`);
-                
-            } catch (pmsError) {
-                console.error(`[PMS Sync] ERREUR: Échec de la synchronisation des règles pour ${id}. Raison: ${pmsError.message}`);
-                // Renvoyer une erreur au client
-                return res.status(500).send({ error: `Sauvegarde Firestore réussie, mais échec de la synchronisation PMS: ${pmsError.message}` });
+            // Vérifier si la synchronisation PMS est activée
+            const syncEnabled = await isPMSSyncEnabled(userId, db);
+            if (!syncEnabled) {
+                console.log(`[PMS Sync] Synchronisation PMS désactivée pour l'utilisateur ${userId}. Synchronisation ignorée.`);
+            } else {
+                console.log(`[PMS Sync] Propriété ${id} (PMS ID: ${propertyData.pmsId}) est liée. Synchronisation des règles...`);
+                try {
+                    // 3. Récupérer le client PMS
+                    const client = await getUserPMSClient(userId);
+                    
+                    // 4. Appeler updatePropertySettings
+                    // Les 'cleanRulesData' (min_stay, etc.) sont exactement ce que nous voulons synchroniser
+                    await client.updatePropertySettings(propertyData.pmsId, cleanRulesData);
+                    
+                    console.log(`[PMS Sync] Règles synchronisées avec ${propertyData.pmsType} pour ${id}.`);
+                    
+                } catch (pmsError) {
+                    console.error(`[PMS Sync] ERREUR: Échec de la synchronisation des règles pour ${id}. Raison: ${pmsError.message}`);
+                    // Renvoyer une erreur au client
+                    return res.status(500).send({ error: `Sauvegarde Firestore réussie, mais échec de la synchronisation PMS: ${pmsError.message}` });
+                }
             }
         }
 
@@ -2528,6 +3272,49 @@ app.put('/api/groups/:id/properties', authenticateToken, async (req, res) => {
                 // C'est la première propriété ajoutée. Elle devient le modèle.
                 templatePropertyData = newPropertyData;
             } else {
+                // Vérification géofencing : distance < 500m
+                if (templatePropertyData.location && newPropertyData.location) {
+                    // Extraire les coordonnées (format peut varier)
+                    let templateLat, templateLon, newLat, newLon;
+                    
+                    if (templatePropertyData.location.latitude && templatePropertyData.location.longitude) {
+                        templateLat = templatePropertyData.location.latitude;
+                        templateLon = templatePropertyData.location.longitude;
+                    } else if (typeof templatePropertyData.location === 'string') {
+                        // Format "lat,lon" ou autre
+                        const coords = templatePropertyData.location.split(',').map(c => parseFloat(c.trim()));
+                        if (coords.length >= 2) {
+                            templateLat = coords[0];
+                            templateLon = coords[1];
+                        }
+                    }
+                    
+                    if (newPropertyData.location.latitude && newPropertyData.location.longitude) {
+                        newLat = newPropertyData.location.latitude;
+                        newLon = newPropertyData.location.longitude;
+                    } else if (typeof newPropertyData.location === 'string') {
+                        const coords = newPropertyData.location.split(',').map(c => parseFloat(c.trim()));
+                        if (coords.length >= 2) {
+                            newLat = coords[0];
+                            newLon = coords[1];
+                        }
+                    }
+                    
+                    if (templateLat !== undefined && templateLon !== undefined && 
+                        newLat !== undefined && newLon !== undefined) {
+                        const distance = calculateDistance(templateLat, templateLon, newLat, newLon);
+                        
+                        if (distance > 500) {
+                            return res.status(403).json({
+                                error: 'GEO_FENCING_VIOLATION',
+                                message: 'Les propriétés d\'un groupe doivent être à moins de 500m les unes des autres.',
+                                distance: Math.round(distance),
+                                maxDistance: 500
+                            });
+                        }
+                    }
+                }
+                
                 // Comparer au modèle (capacité, surface, et type de propriété)
                 const fieldsToMatch = ['capacity', 'surface', 'property_type'];
                 for (const field of fieldsToMatch) {
@@ -3425,6 +4212,14 @@ async function callGeminiAPI(prompt, maxRetries = 10) {
             const candidate = result.candidates?.[0];
             const textPart = candidate?.content?.parts?.[0]?.text;
 
+            // Extraire les informations de tokens depuis usageMetadata
+            if (result.usageMetadata) {
+                const inputTokens = result.usageMetadata.promptTokenCount || 0;
+                const outputTokens = result.usageMetadata.candidatesTokenCount || 0;
+                const totalTokens = result.usageMetadata.totalTokenCount || (inputTokens + outputTokens);
+                console.log(`[Gemini Tokens] Entrée: ${inputTokens}, Sortie: ${outputTokens}, Total: ${totalTokens}`);
+            }
+
             if (textPart) {
                 try {
                     return JSON.parse(textPart);
@@ -3489,6 +4284,14 @@ async function callGeminiWithSearch(prompt, maxRetries = 10) {
             const result = await response.json();
             const candidate = result.candidates?.[0];
             const textPart = candidate?.content?.parts?.[0]?.text;
+            
+            // Extraire les informations de tokens depuis usageMetadata
+            if (result.usageMetadata) {
+                const inputTokens = result.usageMetadata.promptTokenCount || 0;
+                const outputTokens = result.usageMetadata.candidatesTokenCount || 0;
+                const totalTokens = result.usageMetadata.totalTokenCount || (inputTokens + outputTokens);
+                console.log(`[Gemini Tokens (Search)] Entrée: ${inputTokens}, Sortie: ${outputTokens}, Total: ${totalTokens}`);
+            }
             
             if (textPart) {
                  try {
@@ -3621,10 +4424,15 @@ app.post('/api/properties/:id/pricing-strategy', authenticateToken, async (req, 
 
         // --- NOUVELLE ÉTAPE: Synchronisation PMS (AVANT la sauvegarde Firestore) ---
         if (property.pmsId && property.pmsType) {
-            console.log(`[PMS Sync] Propriété ${id} (PMS ID: ${property.pmsId}) est liée. Synchronisation de la stratégie IA...`);
-            try {
-                // 1. Récupérer le client PMS
-                const client = await getUserPMSClient(req.user.uid);
+            // Vérifier si la synchronisation PMS est activée
+            const syncEnabled = await isPMSSyncEnabled(req.user.uid, db);
+            if (!syncEnabled) {
+                console.log(`[PMS Sync] Synchronisation PMS désactivée pour l'utilisateur ${req.user.uid}. Synchronisation ignorée.`);
+            } else {
+                console.log(`[PMS Sync] Propriété ${id} (PMS ID: ${property.pmsId}) est liée. Synchronisation de la stratégie IA...`);
+                try {
+                    // 1. Récupérer le client PMS
+                    const client = await getUserPMSClient(req.user.uid);
                 
                 // 2. Appeler updateBatchRates
                 // Nous filtrons les prix verrouillés localement AVANT de les envoyer au PMS
@@ -3635,17 +4443,18 @@ app.post('/api/properties/:id/pricing-strategy', authenticateToken, async (req, 
                 
                 const pricesToSync = strategyResult.daily_prices.filter(day => !lockedDates.has(day.date));
                 
-                if (pricesToSync.length > 0) {
-                    await client.updateBatchRates(property.pmsId, pricesToSync);
-                    console.log(`[PMS Sync] Stratégie IA (${pricesToSync.length} jours) synchronisée avec ${property.pmsType} pour ${id}.`);
-                } else {
-                    console.log(`[PMS Sync] Aucun prix à synchroniser (tous les jours générés étaient peut-être verrouillés).`);
-                }
+                    if (pricesToSync.length > 0) {
+                        await client.updateBatchRates(property.pmsId, pricesToSync);
+                        console.log(`[PMS Sync] Stratégie IA (${pricesToSync.length} jours) synchronisée avec ${property.pmsType} pour ${id}.`);
+                    } else {
+                        console.log(`[PMS Sync] Aucun prix à synchroniser (tous les jours générés étaient peut-être verrouillés).`);
+                    }
 
-            } catch (pmsError) {
-                console.error(`[PMS Sync] ERREUR FATALE: Échec de la synchronisation de la stratégie IA pour ${id}. Raison: ${pmsError.message}`);
-                // 3. Bloquer la sauvegarde Firestore et renvoyer une erreur
-                return res.status(502).send({ error: `Échec de la synchronisation PMS: ${pmsError.message}. Les prix n'ont pas été sauvegardés.` });
+                } catch (pmsError) {
+                    console.error(`[PMS Sync] ERREUR FATALE: Échec de la synchronisation de la stratégie IA pour ${id}. Raison: ${pmsError.message}`);
+                    // 3. Bloquer la sauvegarde Firestore et renvoyer une erreur
+                    return res.status(502).send({ error: `Échec de la synchronisation PMS: ${pmsError.message}. Les prix n'ont pas été sauvegardés.` });
+                }
             }
         }
         // --- FIN DE L'ÉTAPE DE SYNCHRONISATION PMS ---
@@ -4041,21 +4850,27 @@ async function generateAndApplyPricingForProperty(propertyId, property, userId, 
 
         // Synchronisation PMS si nécessaire
         if (property.pmsId && property.pmsType) {
-            try {
-                const client = await getUserPMSClient(userId);
-                const lockedPricesCol = db.collection('properties').doc(propertyId).collection('price_overrides');
-                const lockedSnapshot = await lockedPricesCol.where('isLocked', '==', true).get();
-                const lockedDates = new Set(lockedSnapshot.docs.map(doc => doc.id));
-                
-                const pricesToSync = strategyResult.daily_prices.filter(day => !lockedDates.has(day.date));
-                
-                if (pricesToSync.length > 0) {
-                    await client.updateBatchRates(property.pmsId, pricesToSync);
-                    console.log(`[Auto-Pricing] [PMS Sync] Stratégie IA (${pricesToSync.length} jours) synchronisée avec ${property.pmsType} pour ${propertyId}.`);
+            // Vérifier si la synchronisation PMS est activée
+            const syncEnabled = await isPMSSyncEnabled(userId, db);
+            if (!syncEnabled) {
+                console.log(`[Auto-Pricing] [PMS Sync] Synchronisation PMS désactivée pour l'utilisateur ${userId}. Synchronisation ignorée.`);
+            } else {
+                try {
+                    const client = await getUserPMSClient(userId);
+                    const lockedPricesCol = db.collection('properties').doc(propertyId).collection('price_overrides');
+                    const lockedSnapshot = await lockedPricesCol.where('isLocked', '==', true).get();
+                    const lockedDates = new Set(lockedSnapshot.docs.map(doc => doc.id));
+                    
+                    const pricesToSync = strategyResult.daily_prices.filter(day => !lockedDates.has(day.date));
+                    
+                    if (pricesToSync.length > 0) {
+                        await client.updateBatchRates(property.pmsId, pricesToSync);
+                        console.log(`[Auto-Pricing] [PMS Sync] Stratégie IA (${pricesToSync.length} jours) synchronisée avec ${property.pmsType} pour ${propertyId}.`);
+                    }
+                } catch (pmsError) {
+                    console.error(`[Auto-Pricing] [PMS Sync] ERREUR pour ${propertyId}: ${pmsError.message}`);
+                    // On continue quand même avec la sauvegarde Firestore
                 }
-            } catch (pmsError) {
-                console.error(`[Auto-Pricing] [PMS Sync] ERREUR pour ${propertyId}: ${pmsError.message}`);
-                // On continue quand même avec la sauvegarde Firestore
             }
         }
 
@@ -4550,31 +5365,37 @@ app.put('/api/properties/:id/price-overrides', authenticateToken, async (req, re
 
         // Synchronisation avec PMS si la propriété est liée à un PMS
         if (propertyData.pmsId && propertyData.pmsType) {
-            try {
-                console.log(`[PMS Sync] Propriété ${propertyId} (PMS ID: ${propertyData.pmsId}) est liée. Synchronisation des prix...`);
-                
-                // Récupérer le client PMS
-                const client = await getUserPMSClient(userId);
-                
-                // Filtrer les prix verrouillés et invalides (on ne synchronise pas les prix verrouillés)
-                const pricesToSync = overrides
-                    .filter(override => !override.isLocked && override.date && override.price != null)
-                    .map(override => ({
-                        date: override.date,
-                        price: Number(override.price)
-                    }))
-                    .filter(rate => !isNaN(rate.price) && rate.price > 0); // Filtrer les prix invalides
+            // Vérifier si la synchronisation PMS est activée
+            const syncEnabled = await isPMSSyncEnabled(userId, db);
+            if (!syncEnabled) {
+                console.log(`[PMS Sync] Synchronisation PMS désactivée pour l'utilisateur ${userId}. Synchronisation ignorée.`);
+            } else {
+                try {
+                    console.log(`[PMS Sync] Propriété ${propertyId} (PMS ID: ${propertyData.pmsId}) est liée. Synchronisation des prix...`);
+                    
+                    // Récupérer le client PMS
+                    const client = await getUserPMSClient(userId);
+                    
+                    // Filtrer les prix verrouillés et invalides (on ne synchronise pas les prix verrouillés)
+                    const pricesToSync = overrides
+                        .filter(override => !override.isLocked && override.date && override.price != null)
+                        .map(override => ({
+                            date: override.date,
+                            price: Number(override.price)
+                        }))
+                        .filter(rate => !isNaN(rate.price) && rate.price > 0); // Filtrer les prix invalides
 
-                if (pricesToSync.length > 0) {
-                    await client.updateBatchRates(propertyData.pmsId, pricesToSync);
-                    console.log(`[PMS Sync] ${pricesToSync.length} prix synchronisés avec ${propertyData.pmsType} pour ${propertyId}.`);
-                } else {
-                    console.log(`[PMS Sync] Aucun prix à synchroniser (tous les prix sont verrouillés ou invalides).`);
+                    if (pricesToSync.length > 0) {
+                        await client.updateBatchRates(propertyData.pmsId, pricesToSync);
+                        console.log(`[PMS Sync] ${pricesToSync.length} prix synchronisés avec ${propertyData.pmsType} pour ${propertyId}.`);
+                    } else {
+                        console.log(`[PMS Sync] Aucun prix à synchroniser (tous les prix sont verrouillés ou invalides).`);
+                    }
+                } catch (pmsError) {
+                    console.error(`[PMS Sync] ERREUR lors de la synchronisation des prix pour ${propertyId}:`, pmsError.message);
+                    // On continue quand même car les prix sont déjà sauvegardés dans Firestore
+                    // On pourrait optionnellement retourner un avertissement dans la réponse
                 }
-            } catch (pmsError) {
-                console.error(`[PMS Sync] ERREUR lors de la synchronisation des prix pour ${propertyId}:`, pmsError.message);
-                // On continue quand même car les prix sont déjà sauvegardés dans Firestore
-                // On pourrait optionnellement retourner un avertissement dans la réponse
             }
         }
 

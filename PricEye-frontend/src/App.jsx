@@ -6,6 +6,9 @@ import PricingPage from './pages/PricingPage.jsx';
 import SettingsPage from './pages/SettingsPage.jsx';
 import ReportPage from './pages/ReportPage.jsx'; 
 import BookingsPage from './pages/BookingsPage.jsx'; // NOUVELLE PAGE
+import CheckoutSuccessPage from './pages/CheckoutSuccessPage.jsx';
+import CheckoutCancelPage from './pages/CheckoutCancelPage.jsx';
+import AccessBlockedPage from './pages/AccessBlockedPage.jsx';
 import { getUserProfile, getGroupRecommendations, getProperties } from './services/api.js'; 
 import NavBar from './components/NavBar.jsx';
 import PageTopBar from './components/PageTopBar.jsx';
@@ -100,17 +103,48 @@ function AppContent() {
     };
   }, [handleLogout]);
 
+  // Effet pour vérifier le retour depuis Stripe Checkout
+  useEffect(() => {
+    const urlParams = new URLSearchParams(window.location.search);
+    const sessionId = urlParams.get('session_id');
+    const canceled = urlParams.get('canceled');
+    
+    if (sessionId) {
+      // Succès - rediriger vers la page de succès
+      setCurrentView('checkout-success');
+      // Nettoyer l'URL
+      window.history.replaceState({}, '', window.location.pathname);
+    } else if (canceled) {
+      // Annulation - rediriger vers la page d'annulation
+      setCurrentView('checkout-cancel');
+      // Nettoyer l'URL
+      window.history.replaceState({}, '', window.location.pathname);
+    }
+  }, []);
+
   // Effet pour charger le token et le profil au démarrage
   useEffect(() => {
     const storedToken = localStorage.getItem('authToken');
     if (storedToken) {
       setToken(storedToken);
-      setCurrentView('dashboard');
+      
+      // Ne pas changer la vue si on est sur checkout-success ou checkout-cancel
+      if (currentView !== 'checkout-success' && currentView !== 'checkout-cancel' && currentView !== 'access-blocked') {
+        setCurrentView('dashboard');
+      }
       
       // Charger le profil utilisateur pour récupérer le thème
       getUserProfile(storedToken)
         .then(profile => {
           setUserProfile(profile);
+          
+          // Vérifier si l'accès est désactivé (kill-switch)
+          if (profile.accessDisabled) {
+            setCurrentView('access-blocked');
+            setIsLoadingProfile(false);
+            return;
+          }
+          
           applyTheme(profile.theme || 'auto'); // Appliquer le thème sauvegardé
           // Mettre à jour la langue dans localStorage et déclencher l'événement
           if (profile.language) {
@@ -131,12 +165,15 @@ function AppContent() {
         .finally(() => setIsLoadingProfile(false));
         
     } else {
-      setCurrentView('login');
+      // Ne pas changer la vue si on est sur checkout-success ou checkout-cancel
+      if (currentView !== 'checkout-success' && currentView !== 'checkout-cancel') {
+        setCurrentView('login');
+      }
       setIsLoadingProfile(false);
       applyTheme('auto'); // Appliquer le thème système par défaut si déconnecté
       setNotifications([]);
     }
-  }, [token, fetchNotifications, fetchPropertyCount, handleLogout]); // Relancé si le token change (ex: connexion)
+  }, [token, fetchNotifications, fetchPropertyCount, handleLogout, currentView]); // Relancé si le token change (ex: connexion)
 
   const handleLoginSuccess = (newToken) => {
     setToken(newToken); // Déclenchera le useEffect ci-dessus pour charger le profil
@@ -173,6 +210,18 @@ function AppContent() {
         return <SettingsPage token={token} userProfile={userProfile} onThemeChange={handleThemeChange} onLogout={handleLogout} />;
       case 'report': 
         return <ReportPage token={token} userProfile={userProfile} />;
+      case 'checkout-success':
+        return <CheckoutSuccessPage 
+          token={token}
+          onProfileUpdate={async () => {
+            const profile = await getUserProfile(token);
+            setUserProfile(profile);
+          }}
+        />;
+      case 'checkout-cancel':
+        return <CheckoutCancelPage />;
+      case 'access-blocked':
+        return <AccessBlockedPage token={token} />;
       default:
         return <DashboardPage token={token} userProfile={userProfile} />; 
     }
