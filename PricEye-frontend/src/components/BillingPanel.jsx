@@ -86,9 +86,30 @@ function BillingPanel({ token, userProfile, onProfileUpdate }) {
 
   // Exposer la fonction pour les autres composants (ex: PropertyModal)
   useEffect(() => {
-    window.showLimitExceededModal = showLimitExceededModal;
+    // Utiliser une référence stable pour éviter les problèmes de closure
+    const stableShowLimitModal = (data) => {
+      try {
+        setLimitModalData(data);
+        setShowLimitModal(true);
+      } catch (error) {
+        console.error('Erreur lors de l\'affichage de la modale de limite:', error);
+      }
+    };
+    
+    // Vérifier que window existe avant d'assigner
+    if (typeof window !== 'undefined') {
+      window.showLimitExceededModal = stableShowLimitModal;
+    }
+    
     return () => {
-      delete window.showLimitExceededModal;
+      // Nettoyer proprement lors du démontage
+      if (typeof window !== 'undefined' && window.showLimitExceededModal === stableShowLimitModal) {
+        try {
+          delete window.showLimitExceededModal;
+        } catch (error) {
+          // Ignorer les erreurs de nettoyage
+        }
+      }
     };
   }, []);
 

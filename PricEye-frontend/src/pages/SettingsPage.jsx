@@ -196,7 +196,13 @@ function SettingsPage({ token, userProfile: initialProfile, onThemeChange, onLog
     if (name === 'language') {
       localStorage.setItem('userLanguage', value);
       // Déclencher un événement pour mettre à jour le LanguageProvider
-      window.dispatchEvent(new CustomEvent('languageChanged', { detail: { language: value } }));
+      if (typeof window !== 'undefined') {
+        try {
+          window.dispatchEvent(new CustomEvent('languageChanged', { detail: { language: value } }));
+        } catch (error) {
+          console.error('Erreur lors de l\'envoi de l\'événement languageChanged:', error);
+        }
+      }
     }
     
     setSuccessMessage('');

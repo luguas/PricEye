@@ -39,6 +39,7 @@ function AppContent() {
   const [notifications, setNotifications] = useState([]);
   const [isLoadingNotifications, setIsLoadingNotifications] = useState(false);
   const [propertyCount, setPropertyCount] = useState(null);
+  const [isInitialLoad, setIsInitialLoad] = useState(true);
 
   // Gérer le changement de thème
   const handleThemeChange = (newTheme) => {
@@ -122,58 +123,71 @@ function AppContent() {
     }
   }, []);
 
-  // Effet pour charger le token et le profil au démarrage
+  // Effet pour le chargement initial (une seule fois)
   useEffect(() => {
+    if (!isInitialLoad) return;
+    
     const storedToken = localStorage.getItem('authToken');
     if (storedToken) {
       setToken(storedToken);
-      
-      // Ne pas changer la vue si on est sur checkout-success ou checkout-cancel
-      if (currentView !== 'checkout-success' && currentView !== 'checkout-cancel' && currentView !== 'access-blocked') {
+      // Définir dashboard seulement au premier chargement
+      if (currentView === 'login' || currentView === 'register') {
         setCurrentView('dashboard');
       }
-      
-      // Charger le profil utilisateur pour récupérer le thème
-      getUserProfile(storedToken)
-        .then(profile => {
-          setUserProfile(profile);
-          
-          // Vérifier si l'accès est désactivé (kill-switch)
-          if (profile.accessDisabled) {
-            setCurrentView('access-blocked');
-            setIsLoadingProfile(false);
-            return;
-          }
-          
-          applyTheme(profile.theme || 'auto'); // Appliquer le thème sauvegardé
-          // Mettre à jour la langue dans localStorage et déclencher l'événement
-          if (profile.language) {
-            localStorage.setItem('userLanguage', profile.language);
-            window.dispatchEvent(new CustomEvent('languageChanged', { detail: { language: profile.language } }));
-          }
-          // Charger les notifications et le nombre de propriétés après le profil
-          fetchNotifications(storedToken);
-          fetchPropertyCount(storedToken);
-        })
-        .catch(err => {
-          console.error("Erreur de chargement du profil:", err);
-          // Si le token est invalide (ex: 403), déconnecter l'utilisateur
-          if (err.message.includes('403') || err.message.includes('401') || err.message.includes('Jeton invalide') || err.message.includes('Jeton manquant')) {
-             handleLogout();
-          }
-        })
-        .finally(() => setIsLoadingProfile(false));
-        
     } else {
-      // Ne pas changer la vue si on est sur checkout-success ou checkout-cancel
-      if (currentView !== 'checkout-success' && currentView !== 'checkout-cancel') {
-        setCurrentView('login');
-      }
-      setIsLoadingProfile(false);
-      applyTheme('auto'); // Appliquer le thème système par défaut si déconnecté
-      setNotifications([]);
+      setCurrentView('login');
     }
-  }, [token, fetchNotifications, fetchPropertyCount, handleLogout, currentView]); // Relancé si le token change (ex: connexion)
+    setIsInitialLoad(false);
+  }, [isInitialLoad, currentView]);
+
+  // Effet pour charger le profil quand le token change
+  useEffect(() => {
+    if (!token) {
+      setIsLoadingProfile(false);
+      applyTheme('auto');
+      setNotifications([]);
+      return;
+    }
+
+    setIsLoadingProfile(true);
+    
+    // Charger le profil utilisateur pour récupérer le thème
+    getUserProfile(token)
+      .then(profile => {
+        setUserProfile(profile);
+        
+        // Vérifier si l'accès est désactivé (kill-switch)
+        if (profile.accessDisabled) {
+          setCurrentView('access-blocked');
+          setIsLoadingProfile(false);
+          return;
+        }
+        
+        applyTheme(profile.theme || 'auto'); // Appliquer le thème sauvegardé
+        // Mettre à jour la langue dans localStorage et déclencher l'événement
+        if (profile.language) {
+          localStorage.setItem('userLanguage', profile.language);
+          if (typeof window !== 'undefined') {
+            try {
+              window.dispatchEvent(new CustomEvent('languageChanged', { detail: { language: profile.language } }));
+            } catch (error) {
+              console.error('Erreur lors de l\'envoi de l\'événement languageChanged:', error);
+            }
+          }
+        }
+        // Charger les notifications et le nombre de propriétés après le profil
+        fetchNotifications(token);
+        fetchPropertyCount(token);
+      })
+      .catch(err => {
+        console.error("Erreur de chargement du profil:", err);
+        // Si le token est invalide (ex: 403), déconnecter l'utilisateur
+        if (err.message.includes('403') || err.message.includes('401') || err.message.includes('Jeton invalide') || err.message.includes('Jeton manquant')) {
+           handleLogout();
+        }
+      })
+      .finally(() => setIsLoadingProfile(false));
+  }, [token, fetchNotifications, fetchPropertyCount, handleLogout]);
 
   const handleLoginSuccess = (newToken) => {
     setToken(newToken); // Déclenchera le useEffect ci-dessus pour charger le profil

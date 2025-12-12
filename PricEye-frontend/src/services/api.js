@@ -68,7 +68,13 @@ async function apiRequest(endpoint, options = {}) {
       // Nettoyer le token du localStorage
       localStorage.removeItem('authToken');
       // Déclencher un événement personnalisé pour notifier App.jsx
-      window.dispatchEvent(new CustomEvent('tokenExpired'));
+      if (typeof window !== 'undefined') {
+        try {
+          window.dispatchEvent(new CustomEvent('tokenExpired'));
+        } catch (error) {
+          console.error('Erreur lors de l\'envoi de l\'événement tokenExpired:', error);
+        }
+      }
     }
     
     let errorData = { error: `Erreur ${response.status} sur l'endpoint ${endpoint}`};

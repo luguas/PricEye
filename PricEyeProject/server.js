@@ -31,6 +31,24 @@ try {
 const app = express();
 const port = process.env.PORT || 5000;
 
+// Vérification des variables d'environnement Stripe au démarrage
+if (!process.env.STRIPE_SECRET_KEY) {
+    console.error('❌ ERREUR CRITIQUE: STRIPE_SECRET_KEY non configuré dans les variables d\'environnement');
+    console.error('📝 Veuillez créer un fichier .env avec la clé Stripe ou configurer les variables d\'environnement.');
+    console.error('📝 Voir CONFIGURATION_PHASE1.md pour les instructions.');
+    process.exit(1);
+}
+
+// Vérifier les IDs produits/prix (support des deux noms : PARENT et PRINCIPAL)
+const parentPriceId = process.env.STRIPE_PRICE_PARENT_ID || process.env.STRIPE_PRICE_PRINCIPAL_ID;
+if (!parentPriceId || !process.env.STRIPE_PRICE_CHILD_ID) {
+    console.error('❌ ERREUR CRITIQUE: IDs produits/prix Stripe non configurés');
+    console.error('📝 Veuillez configurer STRIPE_PRICE_PARENT_ID (ou STRIPE_PRICE_PRINCIPAL_ID) et STRIPE_PRICE_CHILD_ID dans .env');
+    process.exit(1);
+}
+
+console.log('✅ Configuration Stripe chargée avec succès');
+
 // --- MIDDLEWARES ---
 
 // CORRECTION: Configuration CORS explicite pour la production
@@ -1363,6 +1381,13 @@ app.post('/api/checkout/create-session', authenticateToken, async (req, res) => 
     try {
         const db = admin.firestore();
         const userId = req.user.uid;
+        
+        // Vérifier que la clé Stripe est configurée
+        if (!process.env.STRIPE_SECRET_KEY) {
+            console.error('[Checkout] STRIPE_SECRET_KEY non configuré dans les variables d\'environnement');
+            return res.status(500).send({ error: 'Configuration Stripe manquante. Contactez le support.' });
+        }
+        
         const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
         const stripeManager = require('./integrations/stripeManager');
         
