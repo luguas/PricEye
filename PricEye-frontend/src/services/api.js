@@ -509,6 +509,13 @@ export function getPerformanceOverTime(token, startDate, endDate) {
     });
 }
 
+export function getMarketDemandSnapshot(token, timezone) {
+    const params = new URLSearchParams({ timezone });
+    return apiRequest(`/api/reports/market-demand-snapshot?${params.toString()}`, {
+        token,
+    });
+}
+
 export function getDateAnalysis(propertyId, date, token) {
     return apiRequest(`/api/reports/analyze-date`, {
         method: 'POST',

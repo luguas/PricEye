@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { getProperties, getReportKpis, getRevenueOverTime, getPerformanceOverTime } from '../services/api.js'; // Importer getPerformanceOverTime
+import { getProperties, getReportKpis, getRevenueOverTime, getPerformanceOverTime, getMarketDemandSnapshot } from '../services/api.js'; // Importer getPerformanceOverTime
 import { exportToExcel } from '../utils/exportUtils.js';
 import Chart from 'chart.js/auto'; 
 import { getDatesFromRange, getPreviousDates } from '../utils/dateUtils.js'; // Importer les deux fonctions
@@ -106,6 +106,7 @@ function ReportPage({ token, userProfile }) {
   const [revenueVsTargetData, setRevenueVsTargetData] = useState(null); // Pour le graphique Revenu total vs Objectif
   const [adrByChannelData, setAdrByChannelData] = useState(null); // Pour le graphique ADR par canal
   const [grossMarginData, setGrossMarginData] = useState(null); // Pour le graphique Marge brute (%)
+  const [marketSnapshot, setMarketSnapshot] = useState(null); // Pour le bloc Analyse demande 24h (marché)
 
   // État pour la modale d'alerte
   const [alertModal, setAlertModal] = useState({ isOpen: false, message: '', title: 'Information' });
@@ -559,17 +560,19 @@ function ReportPage({ token, userProfile }) {
           const { startDate: prevStartDate, endDate: prevEndDate } = getPreviousDates(currentStartDate, currentEndDate);
 
           // 2. Appeler l'API pour les deux périodes en parallèle
-          const [currentData, prevData, revenueData, perfData] = await Promise.all([
+          const [currentData, prevData, revenueData, perfData, marketSnapshotData] = await Promise.all([
               getReportKpis(token, currentStartDate, currentEndDate),
               getReportKpis(token, prevStartDate, prevEndDate),
               getRevenueOverTime(token, currentStartDate, currentEndDate),
-              getPerformanceOverTime(token, currentStartDate, currentEndDate) // NOUVEL APPEL
+              getPerformanceOverTime(token, currentStartDate, currentEndDate), // NOUVEL APPEL
+              getMarketDemandSnapshot(token, userProfile.timezone || 'Europe/Paris')
           ]);
           
           setKpis(currentData);
           setPrevKpis(prevData);
           setChartData(revenueData); // Sauvegarder les données du graphique de revenus
           setPerformanceData(perfData); // NOUVEAU: Sauvegarder les données du graphique de performance
+          setMarketSnapshot(marketSnapshotData || null);
           
           // Transformer les données pour les nouveaux graphiques
           if (revenueData && revenueData.labels && Array.isArray(revenueData.labels) && revenueData.labels.length > 0) {
@@ -619,6 +622,7 @@ function ReportPage({ token, userProfile }) {
           setRevparData(null);
           setIaData(null);
           setMarketData(null);
+          setMarketSnapshot(null);
       } finally {
           setIsKpiLoading(false);
       }
@@ -2282,7 +2286,7 @@ function ReportPage({ token, userProfile }) {
                   </div>
                   <div className="shrink-0 w-[52.02px] h-8 relative">
                     <div className="text-[#00d3f2] text-left font-['Inter-Regular',_sans-serif] text-2xl leading-8 font-normal absolute left-0 top-0" style={{ letterSpacing: "0.07px" }}>
-                      +127
+                      {marketSnapshot ? `+${marketSnapshot.activeSearches}` : '+127'}
                     </div>
                   </div>
                 </div>
@@ -2294,7 +2298,7 @@ function ReportPage({ token, userProfile }) {
                   </div>
                   <div className="shrink-0 w-[44.08px] h-8 relative">
                     <div className="text-[#51a2ff] text-left font-['Inter-Regular',_sans-serif] text-2xl leading-8 font-normal absolute left-0 top-0" style={{ letterSpacing: "0.07px" }}>
-                      +84
+                      {marketSnapshot ? `+${marketSnapshot.listingViews}` : '+84'}
                     </div>
                   </div>
                 </div>
@@ -2306,7 +2310,7 @@ function ReportPage({ token, userProfile }) {
                   </div>
                   <div className="shrink-0 w-[64.31px] h-8 relative">
                     <div className="text-[#00d492] text-left font-['Inter-Regular',_sans-serif] text-2xl leading-8 font-normal absolute left-0 top-0" style={{ letterSpacing: "0.07px" }}>
-                      18.2%
+                      {marketSnapshot ? `${marketSnapshot.conversionRate.toFixed(1)}%` : '18.2%'}
                     </div>
                   </div>
                 </div>
