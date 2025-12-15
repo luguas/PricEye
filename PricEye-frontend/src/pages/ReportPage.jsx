@@ -97,6 +97,15 @@ function ReportPage({ token, userProfile }) {
   const [revparData, setRevparData] = useState(null); // Pour le graphique RevPAR, ADR & Occupation
   const [iaData, setIaData] = useState(null); // Pour le graphique Gain IA & Score IA
   const [marketData, setMarketData] = useState(null); // Pour le graphique Offre vs Demande
+  const [adrVsMarketData, setAdrVsMarketData] = useState(null); // Pour le graphique ADR vs Marché
+  const [priceDistributionData, setPriceDistributionData] = useState(null); // Pour le graphique Distribution prix concurrents
+  const [forecastRevenueData, setForecastRevenueData] = useState(null); // Pour le graphique Revenus futurs & Occupation prévue
+  const [forecastAdrData, setForecastAdrData] = useState(null); // Pour le graphique ADR, RevPAR & Occupation prévus
+  const [forecastScenariosData, setForecastScenariosData] = useState(null); // Pour le graphique Scénarios de prévision
+  const [forecastRadarData, setForecastRadarData] = useState(null); // Pour le graphique Prévisions synthétiques par propriété
+  const [revenueVsTargetData, setRevenueVsTargetData] = useState(null); // Pour le graphique Revenu total vs Objectif
+  const [adrByChannelData, setAdrByChannelData] = useState(null); // Pour le graphique ADR par canal
+  const [grossMarginData, setGrossMarginData] = useState(null); // Pour le graphique Marge brute (%)
 
   // État pour la modale d'alerte
   const [alertModal, setAlertModal] = useState({ isOpen: false, message: '', title: 'Information' });
@@ -107,11 +116,29 @@ function ReportPage({ token, userProfile }) {
   const revparChartRef = useRef(null);
   const iaChartRef = useRef(null);
   const marketTrendChartRef = useRef(null); // NOUVEAU: Pour le graphique Offre vs Demande
+  const adrVsMarketChartRef = useRef(null); // Pour le graphique ADR vs Marché
+  const priceDistributionChartRef = useRef(null); // Pour le graphique Distribution prix concurrents
+  const forecastRevenueChartRef = useRef(null); // Pour le graphique Revenus futurs & Occupation prévue
+  const forecastAdrChartRef = useRef(null); // Pour le graphique ADR, RevPAR & Occupation prévus
+  const forecastScenariosChartRef = useRef(null); // Pour le graphique Scénarios de prévision
+  const forecastRadarChartRef = useRef(null); // Pour le graphique Prévisions synthétiques par propriété
+  const revenueVsTargetChartRef = useRef(null); // Pour le graphique Revenu total vs Objectif
+  const adrByChannelChartRef = useRef(null); // Pour le graphique ADR par canal
+  const grossMarginChartRef = useRef(null); // Pour le graphique Marge brute (%)
   const revenueChartInstance = useRef(null);
   const marketChartInstance = useRef(null);
   const revparChartInstance = useRef(null);
   const iaChartInstance = useRef(null);
   const marketTrendChartInstance = useRef(null); // NOUVEAU: Instance du graphique Offre vs Demande
+  const adrVsMarketChartInstance = useRef(null); // Instance du graphique ADR vs Marché
+  const priceDistributionChartInstance = useRef(null); // Instance du graphique Distribution prix concurrents
+  const forecastRevenueChartInstance = useRef(null); // Instance du graphique Revenus futurs & Occupation prévue
+  const forecastAdrChartInstance = useRef(null); // Instance du graphique ADR, RevPAR & Occupation prévus
+  const forecastScenariosChartInstance = useRef(null); // Instance du graphique Scénarios de prévision
+  const forecastRadarChartInstance = useRef(null); // Instance du graphique Prévisions synthétiques par propriété
+  const revenueVsTargetChartInstance = useRef(null); // Instance du graphique Revenu total vs Objectif
+  const adrByChannelChartInstance = useRef(null); // Instance du graphique ADR par canal
+  const grossMarginChartInstance = useRef(null); // Instance du graphique Marge brute (%)
   
   // Fonctions de formatage
   const formatCurrency = (amount) => {
@@ -382,6 +409,95 @@ function ReportPage({ token, userProfile }) {
     return { labels, demandeData, offreData };
   };
 
+  // Transformer les données pour le graphique ADR vs Marché
+  const transformToAdrVsMarketData = (allProperties) => {
+    // Pour l'instant, on utilise des données de test basées sur le design Figma
+    // Plus tard, cela pourra être remplacé par de vraies données de l'API
+    if (!allProperties || allProperties.length === 0) {
+      // Données de test par défaut
+      return {
+        labels: ['Villa Luxe', 'Chalet Alpes', 'Villa Sunset', 'Appart Centre'],
+        marketAdrData: [120, 95, 140, 80],
+        yourAdrData: [150, 110, 165, 100]
+      };
+    }
+    
+    // Prendre les 4 premières propriétés pour le graphique
+    const properties = allProperties.slice(0, 4);
+    
+    const labels = properties.map(p => p.name || 'Propriété');
+    const marketAdrData = properties.map(p => p.market_adr || Math.floor(Math.random() * 100 + 50));
+    const yourAdrData = properties.map(p => p.adr || Math.floor(Math.random() * 100 + 80));
+    
+    return { labels, marketAdrData, yourAdrData };
+  };
+
+  // Transformer les données pour le graphique Distribution prix concurrents
+  const transformToPriceDistributionData = () => {
+    // Données de test basées sur le design Figma
+    // Plus tard, cela pourra être remplacé par de vraies données de l'API
+    return {
+      labels: ['0-100', '100-150', '150-200', '200-250', '250-300', '300+'],
+      data: [8, 12, 18, 15, 10, 5]
+    };
+  };
+
+  // Transformer les données pour les graphiques de prévisions
+  const transformToForecastData = () => {
+    // Données de test basées sur le design Figma
+    return {
+      // Revenus futurs & Occupation prévue
+      revenueForecast: {
+        labels: ['Sem 1', 'Sem 2', 'Sem 3', 'Sem 4'],
+        revenueData: [4000, 8000, 12000, 14000],
+        occupancyData: [25, 50, 75, 85]
+      },
+      // ADR, RevPAR & Occupation prévus
+      adrForecast: {
+        labels: ['Sem 1', 'Sem 2', 'Sem 3', 'Sem 4'],
+        adrData: [55, 110, 165, 200],
+        revparData: [50, 100, 150, 180],
+        occupancyData: [25, 50, 75, 90]
+      },
+      // Scénarios de prévision
+      scenarios: {
+        labels: ['Sem 1', 'Sem 2', 'Sem 3', 'Sem 4'],
+        baselineData: [4500, 9000, 13500, 16000],
+        optimisticData: [4950, 9900, 14850, 17600],
+        pessimisticData: [4050, 8100, 12150, 14400]
+      },
+      // Prévisions synthétiques par propriété (radar)
+      radar: {
+        labels: ['Revenu', 'Occupation', 'ADR', 'Score IA', 'ROI'],
+        data: [75, 60, 80, 70, 65]
+      }
+    };
+  };
+
+  // Transformer les données pour les graphiques de performance financière
+  const transformToFinancialData = () => {
+    // Données de test basées sur le design Figma
+    return {
+      // Revenu total vs Objectif
+      revenueVsTarget: {
+        labels: ['Jan', 'Fév', 'Mar', 'Avr', 'Mai', 'Juin'],
+        targetData: [20000, 25000, 30000, 35000, 40000, 45000],
+        revenueData: [18000, 23000, 28000, 32000, 38000, 42000]
+      },
+      // ADR par canal
+      adrByChannel: {
+        labels: ['Airbnb', 'Booking.com', 'VRBO', 'Direct'],
+        data: [150, 140, 130, 160],
+        variations: [5.2, 3.1, 7.8, 9.2] // Pourcentages de variation
+      },
+      // Marge brute (%)
+      grossMargin: {
+        labels: ['Jan', 'Fév', 'Mar', 'Avr', 'Mai', 'Juin'],
+        data: [45, 50, 55, 58, 62, 65]
+      }
+    };
+  };
+
   // Fetch all properties (pour les filtres)
   const fetchAllProperties = useCallback(async () => {
     setIsLoading(true);
@@ -399,6 +515,37 @@ function ReportPage({ token, userProfile }) {
   useEffect(() => {
     fetchAllProperties();
   }, [fetchAllProperties]);
+
+  // Initialiser les données ADR vs Marché et Distribution prix quand les propriétés sont chargées
+  useEffect(() => {
+    if (allProperties.length > 0) {
+      const adrData = transformToAdrVsMarketData(allProperties);
+      setAdrVsMarketData(adrData);
+    } else {
+      // Données par défaut si aucune propriété
+      setAdrVsMarketData({
+        labels: ['Villa Luxe', 'Chalet Alpes', 'Villa Sunset', 'Appart Centre'],
+        marketAdrData: [120, 95, 140, 80],
+        yourAdrData: [150, 110, 165, 100]
+      });
+    }
+    // Initialiser les données de distribution des prix
+    const distributionData = transformToPriceDistributionData();
+    setPriceDistributionData(distributionData);
+    
+    // Initialiser les données de prévisions
+    const forecastData = transformToForecastData();
+    setForecastRevenueData(forecastData.revenueForecast);
+    setForecastAdrData(forecastData.adrForecast);
+    setForecastScenariosData(forecastData.scenarios);
+    setForecastRadarData(forecastData.radar);
+    
+    // Initialiser les données de performance financière
+    const financialData = transformToFinancialData();
+    setRevenueVsTargetData(financialData.revenueVsTarget);
+    setAdrByChannelData(financialData.adrByChannel);
+    setGrossMarginData(financialData.grossMargin);
+  }, [allProperties]);
 
   // Fetch KPIs (Données Réelles)
   const fetchKpisAndCharts = useCallback(async () => {
@@ -536,6 +683,42 @@ function ReportPage({ token, userProfile }) {
       if (marketTrendChartInstance.current) { 
         try { marketTrendChartInstance.current.destroy(); } catch(e) {}
         marketTrendChartInstance.current = null;
+      }
+      if (adrVsMarketChartInstance.current) { 
+        try { adrVsMarketChartInstance.current.destroy(); } catch(e) {}
+        adrVsMarketChartInstance.current = null;
+      }
+      if (priceDistributionChartInstance.current) { 
+        try { priceDistributionChartInstance.current.destroy(); } catch(e) {}
+        priceDistributionChartInstance.current = null;
+      }
+      if (forecastRevenueChartInstance.current) { 
+        try { forecastRevenueChartInstance.current.destroy(); } catch(e) {}
+        forecastRevenueChartInstance.current = null;
+      }
+      if (forecastAdrChartInstance.current) { 
+        try { forecastAdrChartInstance.current.destroy(); } catch(e) {}
+        forecastAdrChartInstance.current = null;
+      }
+      if (forecastScenariosChartInstance.current) { 
+        try { forecastScenariosChartInstance.current.destroy(); } catch(e) {}
+        forecastScenariosChartInstance.current = null;
+      }
+      if (forecastRadarChartInstance.current) { 
+        try { forecastRadarChartInstance.current.destroy(); } catch(e) {}
+        forecastRadarChartInstance.current = null;
+      }
+      if (revenueVsTargetChartInstance.current) { 
+        try { revenueVsTargetChartInstance.current.destroy(); } catch(e) {}
+        revenueVsTargetChartInstance.current = null;
+      }
+      if (adrByChannelChartInstance.current) { 
+        try { adrByChannelChartInstance.current.destroy(); } catch(e) {}
+        adrByChannelChartInstance.current = null;
+      }
+      if (grossMarginChartInstance.current) { 
+        try { grossMarginChartInstance.current.destroy(); } catch(e) {}
+        grossMarginChartInstance.current = null;
       }
     };
 
@@ -944,12 +1127,12 @@ function ReportPage({ token, userProfile }) {
             },
             y: {
               beginAtZero: true,
+              max: 600,
               ticks: {
                 color: '#94a3b8',
                 font: { family: 'Inter-Regular, sans-serif', size: 12 },
-                maxTicksLimit: 5,
-                padding: 4,
                 stepSize: 150,
+                padding: 4,
                 callback: function(value) {
                   return value.toFixed(0);
                 }
@@ -972,6 +1155,689 @@ function ReportPage({ token, userProfile }) {
           console.error('Error creating market trend chart:', error);
         }
       }
+
+      // Graphique ADR vs Marché
+      if (adrVsMarketChartRef.current && isValidData(adrVsMarketData, ['labels', 'marketAdrData', 'yourAdrData'])) {
+        try {
+          const ctxAdrVsMarket = adrVsMarketChartRef.current.getContext('2d');
+          adrVsMarketChartInstance.current = new Chart(ctxAdrVsMarket, {
+        type: 'bar',
+        data: {
+          labels: adrVsMarketData.labels,
+          datasets: [
+            {
+              label: 'ADR Marché',
+              data: adrVsMarketData.marketAdrData,
+              backgroundColor: 'rgba(148, 163, 184, 0.3)',
+              borderColor: '#94a3b8',
+              borderWidth: 1,
+            },
+            {
+              label: 'Votre ADR',
+              data: adrVsMarketData.yourAdrData,
+              backgroundColor: '#00d3f2',
+              borderColor: '#00d3f2',
+              borderWidth: 1,
+            }
+          ]
+        },
+        options: {
+          scales: {
+            x: {
+              ticks: {
+                color: '#94a3b8',
+                font: { family: 'Inter-Regular, sans-serif', size: 12 },
+                padding: 8
+              },
+              grid: { display: false },
+              border: { display: false }
+            },
+            y: {
+              beginAtZero: true,
+              max: 220,
+              ticks: {
+                color: '#94a3b8',
+                font: { family: 'Inter-Regular, sans-serif', size: 12 },
+                stepSize: 55,
+                padding: 4,
+                callback: function(value) {
+                  return value.toFixed(0);
+                }
+              },
+              grid: {
+                color: 'rgba(148, 163, 184, 0.2)',
+                drawBorder: false,
+                lineWidth: 1
+              },
+              border: { display: false }
+            }
+          },
+          plugins: {
+            legend: { display: false }
+          },
+          maintainAspectRatio: false
+        }
+      });
+        } catch (error) {
+          console.error('Error creating ADR vs Market chart:', error);
+        }
+      }
+
+      // Graphique Distribution prix concurrents
+      if (priceDistributionChartRef.current && isValidData(priceDistributionData, ['labels', 'data'])) {
+        try {
+          const ctxPriceDistribution = priceDistributionChartRef.current.getContext('2d');
+          priceDistributionChartInstance.current = new Chart(ctxPriceDistribution, {
+        type: 'bar',
+        data: {
+          labels: priceDistributionData.labels,
+          datasets: [
+            {
+              label: 'Nombre de concurrents',
+              data: priceDistributionData.data,
+              backgroundColor: '#00d3f2',
+              borderColor: '#00d3f2',
+              borderWidth: 1,
+            }
+          ]
+        },
+        options: {
+          scales: {
+            x: {
+              ticks: {
+                color: '#94a3b8',
+                font: { family: 'Inter-Regular, sans-serif', size: 12 },
+                padding: 8
+              },
+              grid: { display: false },
+              border: { display: false }
+            },
+            y: {
+              beginAtZero: true,
+              max: 24,
+              ticks: {
+                color: '#94a3b8',
+                font: { family: 'Inter-Regular, sans-serif', size: 12 },
+                stepSize: 6,
+                padding: 4,
+                callback: function(value) {
+                  return value.toFixed(0);
+                }
+              },
+              grid: {
+                color: 'rgba(148, 163, 184, 0.2)',
+                drawBorder: false,
+                lineWidth: 1
+              },
+              border: { display: false }
+            }
+          },
+          plugins: {
+            legend: { display: false }
+          },
+          maintainAspectRatio: false
+        }
+      });
+        } catch (error) {
+          console.error('Error creating Price Distribution chart:', error);
+        }
+      }
+
+      // Graphique Revenus futurs & Occupation prévue
+      if (forecastRevenueChartRef.current && isValidData(forecastRevenueData, ['labels', 'revenueData', 'occupancyData'])) {
+        try {
+          const ctxForecastRevenue = forecastRevenueChartRef.current.getContext('2d');
+          forecastRevenueChartInstance.current = new Chart(ctxForecastRevenue, {
+        type: 'bar',
+        data: {
+          labels: forecastRevenueData.labels,
+          datasets: [
+            {
+              label: 'Revenu prévu (€)',
+              data: forecastRevenueData.revenueData,
+              backgroundColor: '#1e40af',
+              borderColor: '#1e40af',
+              borderWidth: 1,
+              yAxisID: 'y',
+            },
+            {
+              label: 'Occupation (%)',
+              data: forecastRevenueData.occupancyData,
+              type: 'line',
+              borderColor: '#06b6d4',
+              backgroundColor: 'transparent',
+              tension: 0.3,
+              fill: false,
+              pointRadius: 4,
+              pointBackgroundColor: '#06b6d4',
+              pointBorderColor: '#06b6d4',
+              pointBorderWidth: 2,
+              pointHoverRadius: 6,
+              yAxisID: 'y1',
+            }
+          ]
+        },
+        options: {
+          scales: {
+            x: {
+              ticks: {
+                color: '#94a3b8',
+                font: { family: 'Inter-Regular, sans-serif', size: 12 },
+                padding: 8
+              },
+              grid: { display: false },
+              border: { display: false }
+            },
+            y: {
+              beginAtZero: true,
+              max: 16000,
+              position: 'left',
+              ticks: {
+                color: '#94a3b8',
+                font: { family: 'Inter-Regular, sans-serif', size: 12 },
+                stepSize: 4000,
+                padding: 4,
+                callback: function(value) {
+                  return value.toFixed(0);
+                }
+              },
+              grid: {
+                color: 'rgba(148, 163, 184, 0.2)',
+                drawBorder: false,
+                lineWidth: 1
+              },
+              border: { display: false }
+            },
+            y1: {
+              beginAtZero: true,
+              max: 100,
+              position: 'right',
+              ticks: {
+                color: '#94a3b8',
+                font: { family: 'Inter-Regular, sans-serif', size: 12 },
+                stepSize: 25,
+                padding: 4,
+                callback: function(value) {
+                  return value.toFixed(0);
+                }
+              },
+              grid: {
+                color: 'rgba(148, 163, 184, 0.2)',
+                drawBorder: false,
+                lineWidth: 1
+              },
+              border: { display: false }
+            }
+          },
+          plugins: {
+            legend: { display: false }
+          },
+          maintainAspectRatio: false
+        }
+      });
+        } catch (error) {
+          console.error('Error creating Forecast Revenue chart:', error);
+        }
+      }
+
+      // Graphique ADR, RevPAR & Occupation prévus
+      if (forecastAdrChartRef.current && isValidData(forecastAdrData, ['labels', 'adrData', 'revparData', 'occupancyData'])) {
+        try {
+          const ctxForecastAdr = forecastAdrChartRef.current.getContext('2d');
+          forecastAdrChartInstance.current = new Chart(ctxForecastAdr, {
+        type: 'line',
+        data: {
+          labels: forecastAdrData.labels,
+          datasets: [
+            {
+              label: 'ADR (€)',
+              data: forecastAdrData.adrData,
+              borderColor: '#8b5cf6',
+              backgroundColor: 'transparent',
+              tension: 0.3,
+              fill: false,
+              pointRadius: 4,
+              pointBackgroundColor: '#8b5cf6',
+              pointBorderColor: '#8b5cf6',
+              yAxisID: 'y',
+            },
+            {
+              label: 'RevPAR (€)',
+              data: forecastAdrData.revparData,
+              borderColor: '#06b6d4',
+              backgroundColor: 'transparent',
+              tension: 0.3,
+              fill: false,
+              pointRadius: 4,
+              pointBackgroundColor: '#06b6d4',
+              pointBorderColor: '#06b6d4',
+              yAxisID: 'y',
+            },
+            {
+              label: 'Occupation (%)',
+              data: forecastAdrData.occupancyData,
+              borderColor: '#10b981',
+              backgroundColor: 'transparent',
+              tension: 0.3,
+              fill: false,
+              pointRadius: 4,
+              pointBackgroundColor: '#10b981',
+              pointBorderColor: '#10b981',
+              yAxisID: 'y1',
+            }
+          ]
+        },
+        options: {
+          scales: {
+            x: {
+              ticks: {
+                color: '#94a3b8',
+                font: { family: 'Inter-Regular, sans-serif', size: 12 },
+                padding: 8
+              },
+              grid: { display: false },
+              border: { display: false }
+            },
+            y: {
+              beginAtZero: true,
+              max: 220,
+              position: 'left',
+              ticks: {
+                color: '#94a3b8',
+                font: { family: 'Inter-Regular, sans-serif', size: 12 },
+                stepSize: 55,
+                padding: 4,
+                callback: function(value) {
+                  return value.toFixed(0);
+                }
+              },
+              grid: {
+                color: 'rgba(148, 163, 184, 0.2)',
+                drawBorder: false,
+                lineWidth: 1
+              },
+              border: { display: false }
+            },
+            y1: {
+              beginAtZero: true,
+              max: 100,
+              position: 'right',
+              ticks: {
+                color: '#94a3b8',
+                font: { family: 'Inter-Regular, sans-serif', size: 12 },
+                stepSize: 25,
+                padding: 4,
+                callback: function(value) {
+                  return value.toFixed(0);
+                }
+              },
+              grid: {
+                color: 'rgba(148, 163, 184, 0.2)',
+                drawBorder: false,
+                lineWidth: 1
+              },
+              border: { display: false }
+            }
+          },
+          plugins: {
+            legend: { display: false }
+          },
+          maintainAspectRatio: false
+        }
+      });
+        } catch (error) {
+          console.error('Error creating Forecast ADR chart:', error);
+        }
+      }
+
+      // Graphique Scénarios de prévision
+      if (forecastScenariosChartRef.current && isValidData(forecastScenariosData, ['labels', 'baselineData', 'optimisticData', 'pessimisticData'])) {
+        try {
+          const ctxForecastScenarios = forecastScenariosChartRef.current.getContext('2d');
+          forecastScenariosChartInstance.current = new Chart(ctxForecastScenarios, {
+        type: 'line',
+        data: {
+          labels: forecastScenariosData.labels,
+          datasets: [
+            {
+              label: 'Scénario baseline',
+              data: forecastScenariosData.baselineData,
+              borderColor: '#06b6d4',
+              backgroundColor: 'transparent',
+              tension: 0.3,
+              fill: false,
+              pointRadius: 4,
+              pointBackgroundColor: '#06b6d4',
+              pointBorderColor: '#06b6d4',
+              pointBorderWidth: 2,
+              pointHoverRadius: 6,
+            },
+            {
+              label: 'Scénario optimiste (+10%)',
+              data: forecastScenariosData.optimisticData,
+              borderColor: '#10b981',
+              backgroundColor: 'transparent',
+              tension: 0.3,
+              fill: false,
+              pointRadius: 4,
+              pointBackgroundColor: '#10b981',
+              pointBorderColor: '#10b981',
+              pointBorderWidth: 2,
+              pointHoverRadius: 6,
+            },
+            {
+              label: 'Scénario pessimiste (-10%)',
+              data: forecastScenariosData.pessimisticData,
+              borderColor: '#ef4444',
+              backgroundColor: 'transparent',
+              tension: 0.3,
+              fill: false,
+              pointRadius: 4,
+              pointBackgroundColor: '#ef4444',
+              pointBorderColor: '#ef4444',
+              pointBorderWidth: 2,
+              pointHoverRadius: 6,
+            }
+          ]
+        },
+        options: {
+          scales: {
+            x: {
+              ticks: {
+                color: '#94a3b8',
+                font: { family: 'Inter-Regular, sans-serif', size: 12 },
+                padding: 8
+              },
+              grid: { display: false },
+              border: { display: false }
+            },
+            y: {
+              beginAtZero: true,
+              max: 18000,
+              ticks: {
+                color: '#94a3b8',
+                font: { family: 'Inter-Regular, sans-serif', size: 12 },
+                stepSize: 4500,
+                padding: 4,
+                callback: function(value) {
+                  return value.toFixed(0);
+                }
+              },
+              grid: {
+                color: 'rgba(148, 163, 184, 0.2)',
+                drawBorder: false,
+                lineWidth: 1
+              },
+              border: { display: false }
+            }
+          },
+          plugins: {
+            legend: { display: false }
+          },
+          maintainAspectRatio: false
+        }
+      });
+        } catch (error) {
+          console.error('Error creating Forecast Scenarios chart:', error);
+        }
+      }
+
+      // Graphique Prévisions synthétiques par propriété (Radar)
+      if (forecastRadarChartRef.current && isValidData(forecastRadarData, ['labels', 'data'])) {
+        try {
+          const ctxForecastRadar = forecastRadarChartRef.current.getContext('2d');
+          forecastRadarChartInstance.current = new Chart(ctxForecastRadar, {
+        type: 'radar',
+        data: {
+          labels: forecastRadarData.labels,
+          datasets: [
+            {
+              label: 'Prévisions',
+              data: forecastRadarData.data,
+              borderColor: '#00d3f2',
+              backgroundColor: 'rgba(0, 211, 242, 0.2)',
+              pointBackgroundColor: '#00d3f2',
+              pointBorderColor: '#00d3f2',
+              pointHoverBackgroundColor: '#fff',
+              pointHoverBorderColor: '#00d3f2',
+            }
+          ]
+        },
+        options: {
+          scales: {
+            r: {
+              beginAtZero: true,
+              max: 100,
+              ticks: {
+                stepSize: 25,
+                color: '#94a3b8',
+                font: { family: 'Inter-Regular, sans-serif', size: 12 },
+                backdropColor: 'transparent'
+              },
+              grid: {
+                color: 'rgba(148, 163, 184, 0.2)'
+              },
+              pointLabels: {
+                color: '#94a3b8',
+                font: { family: 'Inter-Regular, sans-serif', size: 12 }
+              }
+            }
+          },
+          plugins: {
+            legend: { display: false }
+          },
+          maintainAspectRatio: false
+        }
+      });
+        } catch (error) {
+          console.error('Error creating Forecast Radar chart:', error);
+        }
+      }
+
+      // Graphique Revenu total vs Objectif
+      if (revenueVsTargetChartRef.current && isValidData(revenueVsTargetData, ['labels', 'targetData', 'revenueData'])) {
+        try {
+          const ctxRevenueVsTarget = revenueVsTargetChartRef.current.getContext('2d');
+          revenueVsTargetChartInstance.current = new Chart(ctxRevenueVsTarget, {
+        type: 'line',
+        data: {
+          labels: revenueVsTargetData.labels,
+          datasets: [
+            {
+              label: 'Objectif',
+              data: revenueVsTargetData.targetData,
+              borderColor: '#64748b',
+              backgroundColor: 'transparent',
+              tension: 0.3,
+              fill: false,
+              pointRadius: 4,
+              pointBackgroundColor: '#64748b',
+              pointBorderColor: '#64748b',
+              borderWidth: 2,
+              borderDash: [5, 5],
+            },
+            {
+              label: 'Revenu réel',
+              data: revenueVsTargetData.revenueData,
+              borderColor: '#06b6d4',
+              backgroundColor: 'transparent',
+              tension: 0.3,
+              fill: false,
+              pointRadius: 4,
+              pointBackgroundColor: '#06b6d4',
+              pointBorderColor: '#06b6d4',
+              borderWidth: 2,
+            }
+          ]
+        },
+        options: {
+          scales: {
+            x: {
+              ticks: {
+                color: '#94a3b8',
+                font: { family: 'Inter-Regular, sans-serif', size: 12 },
+                padding: 8
+              },
+              grid: { display: false },
+              border: { display: false }
+            },
+            y: {
+              beginAtZero: true,
+              max: 60000,
+              ticks: {
+                color: '#94a3b8',
+                font: { family: 'Inter-Regular, sans-serif', size: 12 },
+                stepSize: 15000,
+                padding: 4,
+                callback: function(value) {
+                  return value.toFixed(0);
+                }
+              },
+              grid: {
+                color: 'rgba(148, 163, 184, 0.2)',
+                drawBorder: false,
+                lineWidth: 1
+              },
+              border: { display: false }
+            }
+          },
+          plugins: {
+            legend: { display: false }
+          },
+          maintainAspectRatio: false
+        }
+      });
+        } catch (error) {
+          console.error('Error creating Revenue vs Target chart:', error);
+        }
+      }
+
+      // Graphique ADR par canal (barres horizontales)
+      if (adrByChannelChartRef.current && isValidData(adrByChannelData, ['labels', 'data'])) {
+        try {
+          const ctxAdrByChannel = adrByChannelChartRef.current.getContext('2d');
+          adrByChannelChartInstance.current = new Chart(ctxAdrByChannel, {
+        type: 'bar',
+        data: {
+          labels: adrByChannelData.labels,
+          datasets: [
+            {
+              label: 'ADR (€)',
+              data: adrByChannelData.data,
+              backgroundColor: '#00d3f2',
+              borderColor: '#00d3f2',
+              borderWidth: 1,
+            }
+          ]
+        },
+        options: {
+          indexAxis: 'y', // Barres horizontales
+          scales: {
+            x: {
+              beginAtZero: true,
+              max: 220,
+              ticks: {
+                color: '#94a3b8',
+                font: { family: 'Inter-Regular, sans-serif', size: 12 },
+                stepSize: 55,
+                padding: 8,
+                callback: function(value) {
+                  return value.toFixed(0);
+                }
+              },
+              grid: {
+                color: 'rgba(148, 163, 184, 0.2)',
+                drawBorder: false,
+                lineWidth: 1
+              },
+              border: { display: false }
+            },
+            y: {
+              ticks: {
+                color: '#94a3b8',
+                font: { family: 'Inter-Regular, sans-serif', size: 12 },
+                padding: 4
+              },
+              grid: { display: false },
+              border: { display: false }
+            }
+          },
+          plugins: {
+            legend: { display: false }
+          },
+          maintainAspectRatio: false
+        }
+      });
+        } catch (error) {
+          console.error('Error creating ADR by Channel chart:', error);
+        }
+      }
+
+      // Graphique Marge brute (%)
+      if (grossMarginChartRef.current && isValidData(grossMarginData, ['labels', 'data'])) {
+        try {
+          const ctxGrossMargin = grossMarginChartRef.current.getContext('2d');
+          grossMarginChartInstance.current = new Chart(ctxGrossMargin, {
+        type: 'line',
+        data: {
+          labels: grossMarginData.labels,
+          datasets: [
+            {
+              label: 'Marge brute (%)',
+              data: grossMarginData.data,
+              borderColor: '#00d3f2',
+              backgroundColor: 'rgba(0, 211, 242, 0.1)',
+              tension: 0.3,
+              fill: true,
+              pointRadius: 4,
+              pointBackgroundColor: '#00d3f2',
+              pointBorderColor: '#00d3f2',
+              pointBorderWidth: 2,
+              pointHoverRadius: 6,
+            }
+          ]
+        },
+        options: {
+          scales: {
+            x: {
+              ticks: {
+                color: '#94a3b8',
+                font: { family: 'Inter-Regular, sans-serif', size: 12 },
+                padding: 8
+              },
+              grid: { display: false },
+              border: { display: false }
+            },
+            y: {
+              beginAtZero: true,
+              max: 80,
+              ticks: {
+                color: '#94a3b8',
+                font: { family: 'Inter-Regular, sans-serif', size: 12 },
+                stepSize: 20,
+                padding: 4,
+                callback: function(value) {
+                  return value.toFixed(0);
+                }
+              },
+              grid: {
+                color: 'rgba(148, 163, 184, 0.2)',
+                drawBorder: false,
+                lineWidth: 1
+              },
+              border: { display: false }
+            }
+          },
+          plugins: {
+            legend: { display: false }
+          },
+          maintainAspectRatio: false
+        }
+      });
+        } catch (error) {
+          console.error('Error creating Gross Margin chart:', error);
+        }
+      }
     }, 100); // Petit délai pour s'assurer que le DOM est prêt
 
      return () => {
@@ -981,9 +1847,18 @@ function ReportPage({ token, userProfile }) {
          if (revparChartInstance.current) { revparChartInstance.current.destroy(); }
          if (iaChartInstance.current) { iaChartInstance.current.destroy(); }
          if (marketTrendChartInstance.current) { marketTrendChartInstance.current.destroy(); }
+         if (adrVsMarketChartInstance.current) { adrVsMarketChartInstance.current.destroy(); }
+         if (priceDistributionChartInstance.current) { priceDistributionChartInstance.current.destroy(); }
+         if (forecastRevenueChartInstance.current) { forecastRevenueChartInstance.current.destroy(); }
+         if (forecastAdrChartInstance.current) { forecastAdrChartInstance.current.destroy(); }
+         if (forecastScenariosChartInstance.current) { forecastScenariosChartInstance.current.destroy(); }
+         if (forecastRadarChartInstance.current) { forecastRadarChartInstance.current.destroy(); }
+         if (revenueVsTargetChartInstance.current) { revenueVsTargetChartInstance.current.destroy(); }
+         if (adrByChannelChartInstance.current) { adrByChannelChartInstance.current.destroy(); }
+         if (grossMarginChartInstance.current) { grossMarginChartInstance.current.destroy(); }
      };
 
-  }, [chartData, performanceData, revparData, iaData, marketData, isKpiLoading]); // Se redéclenche si les données des graphiques changent ou si le chargement change
+  }, [chartData, performanceData, revparData, iaData, marketData, adrVsMarketData, priceDistributionData, forecastRevenueData, forecastAdrData, forecastScenariosData, forecastRadarData, revenueVsTargetData, adrByChannelData, grossMarginData, isKpiLoading, activeTab]); // Se redéclenche si les données des graphiques changent, si le chargement change, ou si l'onglet change
 
   const handleExport = () => {
     if (filteredProperties.length === 0) {
@@ -1355,35 +2230,85 @@ function ReportPage({ token, userProfile }) {
 
         {/* Graphique Tendance marché - Offre vs Demande (onglet Marché) */}
         {activeTab === 'market' && (
-          <div className="bg-[rgba(15,23,43,0.40)] rounded-[14px] border-solid border-[rgba(49,65,88,0.50)] border pt-[25px] pr-[25px] pb-[25px] pl-[25px] flex flex-col gap-6 items-start justify-start self-stretch relative">
-            <div className="self-stretch shrink-0 h-7 relative">
-              <div className="text-[#ffffff] text-left font-['Inter-Medium',_sans-serif] text-xl leading-7 font-medium" style={{ letterSpacing: "-0.45px" }}>
-                Tendance marché - Offre vs Demande
-              </div>
-            </div>
-            <div className="self-stretch shrink-0 h-[350px] relative">
-              {isKpiLoading ? (
-                <div className="flex items-center justify-center h-full w-full">
-                  <p className="text-global-inactive">Chargement...</p>
-                </div>
-              ) : (
-                <div className="w-full h-full relative">
-                  <canvas ref={marketTrendChartRef} className="w-full h-full"></canvas>
-                </div>
-              )}
-            </div>
-            {/* Légende personnalisée */}
-            <div className="flex flex-row gap-6 items-center justify-center self-stretch shrink-0 relative">
-              <div className="shrink-0 h-6 relative flex items-center gap-2">
-                <div className="w-3.5 h-3.5 rounded-full bg-global-content-highlight-2nd shrink-0"></div>
-                <div className="text-global-content-highlight-2nd text-center font-['Inter-Regular',_sans-serif] text-base leading-6 font-normal" style={{ letterSpacing: "-0.31px" }}>
-                  Demande
+          <div className="self-stretch shrink-0 grid gap-6 relative" style={{ gridTemplateColumns: '2fr 1fr' }}>
+            {/* Graphique Tendance marché - Offre vs Demande */}
+            <div className="bg-[rgba(15,23,43,0.40)] rounded-[14px] border-solid border-[rgba(49,65,88,0.50)] border pt-[25px] pr-[25px] pb-px pl-[25px] flex flex-col gap-6 items-start justify-start h-[452px] relative">
+              <div className="self-stretch shrink-0 h-7 relative">
+                <div className="text-[#ffffff] text-left font-['Inter-Medium',_sans-serif] text-xl leading-7 font-medium" style={{ letterSpacing: "-0.45px" }}>
+                  Tendance marché - Offre vs Demande
                 </div>
               </div>
-              <div className="shrink-0 h-6 relative flex items-center gap-2">
-                <div className="w-3.5 h-3.5 rounded-full bg-global-mid-impact shrink-0"></div>
-                <div className="text-global-mid-impact text-center font-['Inter-Regular',_sans-serif] text-base leading-6 font-normal" style={{ letterSpacing: "-0.31px" }}>
-                  Offre
+              <div className="self-stretch shrink-0 h-[350px] relative">
+                {isKpiLoading ? (
+                  <div className="flex items-center justify-center h-full w-full">
+                    <p className="text-global-inactive">Chargement...</p>
+                  </div>
+                ) : (
+                  <div className="w-full h-full relative">
+                    <canvas ref={marketTrendChartRef} className="w-full h-full"></canvas>
+                  </div>
+                )}
+              </div>
+              {/* Légende personnalisée */}
+              <div className="flex flex-row gap-6 items-center justify-center self-stretch shrink-0 relative">
+                <div className="shrink-0 h-6 relative flex items-center gap-2">
+                  <div className="w-3.5 h-3.5 rounded-full bg-global-content-highlight-2nd shrink-0"></div>
+                  <div className="text-global-content-highlight-2nd text-center font-['Inter-Regular',_sans-serif] text-base leading-6 font-normal" style={{ letterSpacing: "-0.31px" }}>
+                    Demande
+                  </div>
+                </div>
+                <div className="shrink-0 h-6 relative flex items-center gap-2">
+                  <div className="w-3.5 h-3.5 rounded-full bg-global-mid-impact shrink-0"></div>
+                  <div className="text-global-mid-impact text-center font-['Inter-Regular',_sans-serif] text-base leading-6 font-normal" style={{ letterSpacing: "-0.31px" }}>
+                    Offre
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Analyse demande 24h */}
+            <div className="bg-[rgba(15,23,43,0.40)] rounded-[14px] border-solid border-[rgba(49,65,88,0.50)] border pt-[25px] pr-[25px] pb-px pl-[25px] flex flex-col gap-6 items-start justify-start h-[352px] relative">
+              <div className="self-stretch shrink-0 h-7 relative">
+                <div className="text-[#ffffff] text-left font-['Inter-Regular',_sans-serif] text-xl leading-7 font-normal" style={{ letterSpacing: "-0.45px" }}>
+                  Analyse demande 24h
+                </div>
+              </div>
+              <div className="flex flex-col gap-4 items-start justify-start self-stretch shrink-0 h-56 relative">
+                <div className="bg-[rgba(29,41,61,0.50)] rounded-[10px] pr-4 pl-4 flex flex-row items-center justify-between self-stretch shrink-0 h-16 relative">
+                  <div className="shrink-0 w-[141.06px] h-6 relative">
+                    <div className="text-[#90a1b9] text-left font-['Inter-Regular',_sans-serif] text-base leading-6 font-normal absolute left-0 top-[-0.5px]" style={{ letterSpacing: "-0.31px" }}>
+                      Recherches actives
+                    </div>
+                  </div>
+                  <div className="shrink-0 w-[52.02px] h-8 relative">
+                    <div className="text-[#00d3f2] text-left font-['Inter-Regular',_sans-serif] text-2xl leading-8 font-normal absolute left-0 top-0" style={{ letterSpacing: "0.07px" }}>
+                      +127
+                    </div>
+                  </div>
+                </div>
+                <div className="bg-[rgba(29,41,61,0.50)] rounded-[10px] pr-4 pl-4 flex flex-row items-center justify-between self-stretch shrink-0 h-16 relative">
+                  <div className="shrink-0 w-[122.53px] h-6 relative">
+                    <div className="text-[#90a1b9] text-left font-['Inter-Regular',_sans-serif] text-base leading-6 font-normal absolute left-0 top-[-0.5px]" style={{ letterSpacing: "-0.31px" }}>
+                      Visites annonces
+                    </div>
+                  </div>
+                  <div className="shrink-0 w-[44.08px] h-8 relative">
+                    <div className="text-[#51a2ff] text-left font-['Inter-Regular',_sans-serif] text-2xl leading-8 font-normal absolute left-0 top-0" style={{ letterSpacing: "0.07px" }}>
+                      +84
+                    </div>
+                  </div>
+                </div>
+                <div className="bg-[rgba(29,41,61,0.50)] rounded-[10px] pr-4 pl-4 flex flex-row items-center justify-between self-stretch shrink-0 h-16 relative">
+                  <div className="shrink-0 w-[139.38px] h-6 relative">
+                    <div className="text-[#90a1b9] text-left font-['Inter-Regular',_sans-serif] text-base leading-6 font-normal absolute left-0 top-[-0.5px]" style={{ letterSpacing: "-0.31px" }}>
+                      Taux de conversion
+                    </div>
+                  </div>
+                  <div className="shrink-0 w-[64.31px] h-8 relative">
+                    <div className="text-[#00d492] text-left font-['Inter-Regular',_sans-serif] text-2xl leading-8 font-normal absolute left-0 top-0" style={{ letterSpacing: "0.07px" }}>
+                      18.2%
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
@@ -1392,20 +2317,353 @@ function ReportPage({ token, userProfile }) {
 
         {/* Contenu pour les autres onglets (Positionnement, Prévisions, Performance Financière) */}
         {activeTab === 'positioning' && (
-          <div className="bg-global-bg-box rounded-[14px] border-solid border-global-stroke-box border p-6 flex flex-col gap-6 items-center justify-center self-stretch shrink-0 relative min-h-[400px]">
-            <p className="text-global-inactive text-center">Le contenu de l'onglet Positionnement sera bientôt disponible.</p>
+          <div className="self-stretch shrink-0 grid gap-6 relative" style={{ gridTemplateColumns: 'repeat(2, minmax(0, 1fr))' }}>
+            {/* Graphique ADR vs Marché */}
+            <div className="bg-[rgba(15,23,43,0.40)] rounded-[14px] border-solid border-[rgba(49,65,88,0.50)] border pt-[25px] pr-[25px] pb-px pl-[25px] flex flex-col gap-6 items-start justify-start h-[402px] relative">
+              <div className="self-stretch shrink-0 h-7 relative">
+                <div className="text-[#ffffff] text-left font-['Inter-Medium',_sans-serif] text-xl leading-7 font-medium" style={{ letterSpacing: "-0.45px" }}>
+                  ADR vs Marché
+                </div>
+              </div>
+              <div className="self-stretch shrink-0 h-[300px] relative">
+                {isKpiLoading ? (
+                  <div className="flex items-center justify-center h-full w-full">
+                    <p className="text-global-inactive">Chargement...</p>
+                  </div>
+                ) : (
+                  <div className="w-full h-full relative">
+                    <canvas ref={adrVsMarketChartRef} className="w-full h-full"></canvas>
+                  </div>
+                )}
+              </div>
+              {/* Légende personnalisée */}
+              <div className="flex flex-row gap-6 items-center justify-center self-stretch shrink-0 relative">
+                <div className="shrink-0 h-6 relative flex items-center gap-2">
+                  <div className="w-3.5 h-3.5 rounded-full bg-[#94a3b8] shrink-0"></div>
+                  <div className="text-global-inactive text-center font-['Inter-Regular',_sans-serif] text-base leading-6 font-normal" style={{ letterSpacing: "-0.31px" }}>
+                    ADR Marché
+                  </div>
+                </div>
+                <div className="shrink-0 h-6 relative flex items-center gap-2">
+                  <div className="w-3.5 h-3.5 rounded-full bg-global-content-highlight-2nd shrink-0"></div>
+                  <div className="text-global-content-highlight-2nd text-center font-['Inter-Regular',_sans-serif] text-base leading-6 font-normal" style={{ letterSpacing: "-0.31px" }}>
+                    Votre ADR
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Graphique Distribution prix concurrents */}
+            <div className="bg-[rgba(15,23,43,0.40)] rounded-[14px] border-solid border-[rgba(49,65,88,0.50)] border pt-[25px] pr-[25px] pb-px pl-[25px] flex flex-col gap-6 items-start justify-start h-[402px] relative">
+              <div className="self-stretch shrink-0 h-7 relative">
+                <div className="text-[#ffffff] text-left font-['Inter-Regular',_sans-serif] text-xl leading-7 font-normal" style={{ letterSpacing: "-0.45px" }}>
+                  Distribution prix concurrents
+                </div>
+              </div>
+              <div className="self-stretch shrink-0 h-[300px] relative">
+                {isKpiLoading ? (
+                  <div className="flex items-center justify-center h-full w-full">
+                    <p className="text-global-inactive">Chargement...</p>
+                  </div>
+                ) : (
+                  <div className="w-full h-full relative">
+                    <canvas ref={priceDistributionChartRef} className="w-full h-full"></canvas>
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
         )}
 
         {activeTab === 'forecast' && (
-          <div className="bg-global-bg-box rounded-[14px] border-solid border-global-stroke-box border p-6 flex flex-col gap-6 items-center justify-center self-stretch shrink-0 relative min-h-[400px]">
-            <p className="text-global-inactive text-center">Le contenu de l'onglet Prévisions sera bientôt disponible.</p>
+          <div className="flex flex-col gap-6 items-start justify-start relative">
+            {/* Première ligne : Revenus futurs & Occupation prévue / ADR, RevPAR & Occupation prévus */}
+            <div className="self-stretch shrink-0 grid gap-6 relative" style={{ gridTemplateColumns: 'repeat(2, minmax(0, 1fr))' }}>
+              {/* Graphique Revenus futurs & Occupation prévue */}
+              <div className="bg-[rgba(15,23,43,0.40)] rounded-[14px] border-solid border-[rgba(49,65,88,0.50)] border pt-[25px] pr-[25px] pb-px pl-[25px] flex flex-col gap-6 items-start justify-start h-[402px] relative">
+                <div className="self-stretch shrink-0 h-7 relative">
+                  <div className="text-[#ffffff] text-left font-['Inter-Medium',_sans-serif] text-xl leading-7 font-medium" style={{ letterSpacing: "-0.45px" }}>
+                    Revenus futurs & Occupation prévue
+                  </div>
+                </div>
+                <div className="self-stretch shrink-0 h-[300px] relative">
+                  {isKpiLoading ? (
+                    <div className="flex items-center justify-center h-full w-full">
+                      <p className="text-global-inactive">Chargement...</p>
+                    </div>
+                  ) : (
+                    <div className="w-full h-full relative">
+                      <canvas ref={forecastRevenueChartRef} className="w-full h-full"></canvas>
+                    </div>
+                  )}
+                </div>
+                {/* Légende personnalisée */}
+                <div className="flex flex-row gap-6 items-center justify-center self-stretch shrink-0 relative">
+                  <div className="shrink-0 h-6 relative flex items-center gap-2">
+                    <div className="w-3.5 h-3.5 rounded-full bg-[#06b6d4] shrink-0"></div>
+                    <div className="text-[#06b6d4] text-center font-['Inter-Regular',_sans-serif] text-base leading-6 font-normal" style={{ letterSpacing: "-0.31px" }}>
+                      Occupation (%)
+                    </div>
+                  </div>
+                  <div className="shrink-0 h-6 relative flex items-center gap-2">
+                    <div className="w-3.5 h-3.5 rounded-full bg-[#1e40af] shrink-0"></div>
+                    <div className="text-[#1e40af] text-center font-['Inter-Regular',_sans-serif] text-base leading-6 font-normal" style={{ letterSpacing: "-0.31px" }}>
+                      Revenu prévu (€)
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Graphique ADR, RevPAR & Occupation prévus */}
+              <div className="bg-[rgba(15,23,43,0.40)] rounded-[14px] border-solid border-[rgba(49,65,88,0.50)] border pt-[25px] pr-[25px] pb-px pl-[25px] flex flex-col gap-6 items-start justify-start h-[402px] relative">
+                <div className="self-stretch shrink-0 h-7 relative">
+                  <div className="text-[#ffffff] text-left font-['Inter-Medium',_sans-serif] text-xl leading-7 font-medium" style={{ letterSpacing: "-0.45px" }}>
+                    ADR, RevPAR & Occupation prévus
+                  </div>
+                </div>
+                <div className="self-stretch shrink-0 h-[300px] relative">
+                  {isKpiLoading ? (
+                    <div className="flex items-center justify-center h-full w-full">
+                      <p className="text-global-inactive">Chargement...</p>
+                    </div>
+                  ) : (
+                    <div className="w-full h-full relative">
+                      <canvas ref={forecastAdrChartRef} className="w-full h-full"></canvas>
+                    </div>
+                  )}
+                </div>
+                {/* Légende personnalisée */}
+                <div className="flex flex-row gap-6 items-center justify-center self-stretch shrink-0 relative">
+                  <div className="shrink-0 h-6 relative flex items-center gap-2">
+                    <div className="w-3.5 h-3.5 rounded-full bg-[#8b5cf6] shrink-0"></div>
+                    <div className="text-[#8b5cf6] text-center font-['Inter-Regular',_sans-serif] text-base leading-6 font-normal" style={{ letterSpacing: "-0.31px" }}>
+                      ADR (€)
+                    </div>
+                  </div>
+                  <div className="shrink-0 h-6 relative flex items-center gap-2">
+                    <div className="w-3.5 h-3.5 rounded-full bg-[#10b981] shrink-0"></div>
+                    <div className="text-[#10b981] text-center font-['Inter-Regular',_sans-serif] text-base leading-6 font-normal" style={{ letterSpacing: "-0.31px" }}>
+                      Occupation (%)
+                    </div>
+                  </div>
+                  <div className="shrink-0 h-6 relative flex items-center gap-2">
+                    <div className="w-3.5 h-3.5 rounded-full bg-[#06b6d4] shrink-0"></div>
+                    <div className="text-[#06b6d4] text-center font-['Inter-Regular',_sans-serif] text-base leading-6 font-normal" style={{ letterSpacing: "-0.31px" }}>
+                      RevPAR (€)
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Deuxième ligne : Scénarios de prévision */}
+            <div className="bg-[rgba(15,23,43,0.40)] rounded-[14px] border-solid border-[rgba(49,65,88,0.50)] border pt-[25px] pr-[25px] pb-px pl-[25px] flex flex-col gap-6 items-start justify-start self-stretch shrink-0 h-[452px] relative">
+              <div className="self-stretch shrink-0 h-7 relative">
+                <div className="text-[#ffffff] text-left font-['Inter-Medium',_sans-serif] text-xl leading-7 font-medium" style={{ letterSpacing: "-0.45px" }}>
+                  Scénarios de prévision
+                </div>
+              </div>
+              <div className="self-stretch shrink-0 h-[350px] relative">
+                {isKpiLoading ? (
+                  <div className="flex items-center justify-center h-full w-full">
+                    <p className="text-global-inactive">Chargement...</p>
+                  </div>
+                ) : (
+                  <div className="w-full h-full relative">
+                    <canvas ref={forecastScenariosChartRef} className="w-full h-full"></canvas>
+                  </div>
+                )}
+              </div>
+              {/* Légende personnalisée */}
+              <div className="flex flex-row gap-6 items-center justify-center self-stretch shrink-0 relative">
+                <div className="shrink-0 h-6 relative flex items-center gap-2">
+                  <div className="w-3.5 h-3.5 rounded-full bg-[#06b6d4] shrink-0"></div>
+                  <div className="text-[#06b6d4] text-center font-['Inter-Regular',_sans-serif] text-base leading-6 font-normal" style={{ letterSpacing: "-0.31px" }}>
+                    Scénario baseline
+                  </div>
+                </div>
+                <div className="shrink-0 h-6 relative flex items-center gap-2">
+                  <div className="w-3.5 h-3.5 rounded-full bg-[#10b981] shrink-0"></div>
+                  <div className="text-[#10b981] text-center font-['Inter-Regular',_sans-serif] text-base leading-6 font-normal" style={{ letterSpacing: "-0.31px" }}>
+                    Scénario optimiste (+10%)
+                  </div>
+                </div>
+                <div className="shrink-0 h-6 relative flex items-center gap-2">
+                  <div className="w-3.5 h-3.5 rounded-full bg-[#ef4444] shrink-0"></div>
+                  <div className="text-[#ef4444] text-center font-['Inter-Regular',_sans-serif] text-base leading-6 font-normal" style={{ letterSpacing: "-0.31px" }}>
+                    Scénario pessimiste (-10%)
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Troisième ligne : Prévisions synthétiques par propriété */}
+            <div className="bg-[rgba(15,23,43,0.40)] rounded-[14px] border-solid border-[rgba(49,65,88,0.50)] border pt-[25px] pr-[25px] pb-px pl-[25px] flex flex-col gap-6 items-start justify-start self-stretch shrink-0 h-[452px] relative">
+              <div className="self-stretch shrink-0 h-7 relative">
+                <div className="text-[#ffffff] text-left font-['Inter-Medium',_sans-serif] text-xl leading-7 font-medium" style={{ letterSpacing: "-0.45px" }}>
+                  Prévisions synthétiques par propriété
+                </div>
+              </div>
+              <div className="self-stretch shrink-0 h-[350px] relative">
+                {isKpiLoading ? (
+                  <div className="flex items-center justify-center h-full w-full">
+                    <p className="text-global-inactive">Chargement...</p>
+                  </div>
+                ) : (
+                  <div className="w-full h-full relative">
+                    <canvas ref={forecastRadarChartRef} className="w-full h-full"></canvas>
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
         )}
 
         {activeTab === 'financial' && (
-          <div className="bg-global-bg-box rounded-[14px] border-solid border-global-stroke-box border p-6 flex flex-col gap-6 items-center justify-center self-stretch shrink-0 relative min-h-[400px]">
-            <p className="text-global-inactive text-center">Le contenu de l'onglet Performance Financière sera bientôt disponible.</p>
+          <div className="flex flex-col gap-6 items-start justify-start relative">
+            {/* Revenu total vs Objectif */}
+            <div className="bg-[rgba(15,23,43,0.40)] rounded-[14px] border-solid border-[rgba(49,65,88,0.50)] border pt-[25px] pr-[25px] pb-px pl-[25px] flex flex-col gap-6 items-start justify-start self-stretch shrink-0 h-[452px] relative">
+              <div className="self-stretch shrink-0 h-7 relative">
+                <div className="text-[#ffffff] text-left font-['Inter-Medium',_sans-serif] text-xl leading-7 font-medium" style={{ letterSpacing: "-0.45px" }}>
+                  Revenu total vs Objectif
+                </div>
+              </div>
+              <div className="self-stretch shrink-0 h-[350px] relative">
+                {isKpiLoading ? (
+                  <div className="flex items-center justify-center h-full w-full">
+                    <p className="text-global-inactive">Chargement...</p>
+                  </div>
+                ) : (
+                  <div className="w-full h-full relative">
+                    <canvas ref={revenueVsTargetChartRef} className="w-full h-full"></canvas>
+                  </div>
+                )}
+              </div>
+              {/* Légende personnalisée */}
+              <div className="flex flex-row gap-6 items-center justify-center self-stretch shrink-0 relative">
+                <div className="shrink-0 h-6 relative flex items-center gap-2">
+                  <div className="w-3.5 h-3.5 rounded-full bg-[#64748b] shrink-0"></div>
+                  <div className="text-[#64748b] text-center font-['Inter-Regular',_sans-serif] text-base leading-6 font-normal" style={{ letterSpacing: "-0.31px" }}>
+                    Objectif
+                  </div>
+                </div>
+                <div className="shrink-0 h-6 relative flex items-center gap-2">
+                  <div className="w-3.5 h-3.5 rounded-full bg-[#06b6d4] shrink-0"></div>
+                  <div className="text-[#06b6d4] text-center font-['Inter-Regular',_sans-serif] text-base leading-6 font-normal" style={{ letterSpacing: "-0.31px" }}>
+                    Revenu réel
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* ADR par canal et ROI PricEye */}
+            <div className="self-stretch shrink-0 grid gap-6 relative" style={{ gridTemplateColumns: 'repeat(2, minmax(0, 1fr))' }}>
+              {/* ADR par canal */}
+              <div className="bg-[rgba(15,23,43,0.40)] rounded-[14px] border-solid border-[rgba(49,65,88,0.50)] border pt-[25px] pr-[25px] pb-px pl-[25px] flex flex-col gap-6 items-start justify-start h-[530px] relative">
+                <div className="self-stretch shrink-0 h-7 relative">
+                  <div className="text-[#ffffff] text-left font-['Inter-Regular',_sans-serif] text-xl leading-7 font-normal" style={{ letterSpacing: "-0.45px" }}>
+                    ADR par canal
+                  </div>
+                </div>
+                <div className="self-stretch shrink-0 h-[300px] relative">
+                  {isKpiLoading ? (
+                    <div className="flex items-center justify-center h-full w-full">
+                      <p className="text-global-inactive">Chargement...</p>
+                    </div>
+                  ) : (
+                    <div className="w-full h-full relative">
+                      <canvas ref={adrByChannelChartRef} className="w-full h-full"></canvas>
+                    </div>
+                  )}
+                </div>
+                {/* Statistiques par canal */}
+                <div className="flex flex-col gap-2 items-start justify-start self-stretch shrink-0 h-28 relative">
+                  {adrByChannelData && adrByChannelData.labels.map((channel, index) => (
+                    <div key={channel} className="flex flex-row items-center justify-between self-stretch shrink-0 h-[22px] relative">
+                      <div className="shrink-0 relative">
+                        <div className="text-[#90a1b9] text-left font-['Inter-Regular',_sans-serif] text-sm leading-5 font-normal" style={{ letterSpacing: "-0.15px" }}>
+                          {channel}
+                        </div>
+                      </div>
+                      <div className="bg-[rgba(0,153,102,0.20)] rounded-lg border-solid border-[rgba(0,188,125,0.30)] border pt-0.5 pr-2 pb-0.5 pl-2 flex flex-row gap-1 items-center justify-center shrink-0 h-[22px] relative overflow-hidden">
+                        <div className="text-[#00d492] text-left font-['Inter-Medium',_sans-serif] text-xs leading-4 font-medium relative">
+                          +{adrByChannelData.variations[index].toFixed(1)}%
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* ROI PricEye */}
+              <div className="bg-[rgba(15,23,43,0.40)] rounded-[14px] border-solid border-[rgba(49,65,88,0.50)] border pt-[25px] pr-[25px] pb-px pl-[25px] flex flex-col gap-6 items-center justify-center h-[530px] relative">
+                <div className="self-stretch shrink-0 h-7 relative">
+                  <div className="text-[#ffffff] text-left font-['Inter-Regular',_sans-serif] text-xl leading-7 font-normal" style={{ letterSpacing: "-0.45px" }}>
+                    ROI PricEye
+                  </div>
+                </div>
+                <div className="flex flex-col gap-6 items-center justify-center self-stretch shrink-0 h-[250px] relative">
+                  <div className="flex flex-col gap-2 items-start justify-start shrink-0 w-[187.41px] h-[92px] relative">
+                    <div className="self-stretch shrink-0 h-[60px] relative">
+                      <div className="text-center font-['Inter-Regular',_sans-serif] text-6xl leading-[60px] font-normal absolute left-[13.89px] top-[0.5px]" style={{ background: "linear-gradient(to left, rgba(0, 0, 0, 0.00), rgba(0, 0, 0, 0.00)), linear-gradient(90deg, rgba(81, 162, 255, 1.00) 0%,rgba(0, 211, 242, 1.00) 100%)", backgroundClip: "text", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent", letterSpacing: "0.26px" }}>
+                        295%
+                      </div>
+                    </div>
+                    <div className="self-stretch shrink-0 h-6 relative">
+                      <div className="text-[#90a1b9] text-center font-['Inter-Regular',_sans-serif] text-base leading-6 font-normal absolute left-0 top-[-0.5px]" style={{ letterSpacing: "-0.31px" }}>
+                        Retour sur investissement
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex flex-col gap-3 items-start justify-start shrink-0 w-96 h-[108px] relative">
+                    <div className="bg-[rgba(29,41,61,0.50)] rounded-[10px] pr-3 pl-3 flex flex-row items-center justify-between self-stretch shrink-0 h-12 relative">
+                      <div className="shrink-0 w-[82.87px] h-5 relative">
+                        <div className="text-[#90a1b9] text-left font-['Inter-Regular',_sans-serif] text-sm leading-5 font-normal absolute left-0 top-[0.5px]" style={{ letterSpacing: "-0.15px" }}>
+                          Coût PricEye
+                        </div>
+                      </div>
+                      <div className="shrink-0 w-[49.59px] h-6 relative">
+                        <div className="text-[#00d492] text-left font-['Inter-Regular',_sans-serif] text-base leading-6 font-normal absolute left-0 top-[-0.5px]" style={{ letterSpacing: "-0.31px" }}>
+                          1,000€
+                        </div>
+                      </div>
+                    </div>
+                    <div className="bg-[rgba(29,41,61,0.50)] rounded-[10px] pr-3 pl-3 flex flex-row items-center justify-between self-stretch shrink-0 h-12 relative">
+                      <div className="shrink-0 w-[92.27px] h-5 relative">
+                        <div className="text-[#90a1b9] text-left font-['Inter-Regular',_sans-serif] text-sm leading-5 font-normal absolute left-0 top-[0.5px]" style={{ letterSpacing: "-0.15px" }}>
+                          Gains générés
+                        </div>
+                      </div>
+                      <div className="shrink-0 w-[51.91px] h-6 relative">
+                        <div className="text-[#00d3f2] text-left font-['Inter-Regular',_sans-serif] text-base leading-6 font-normal absolute left-0 top-[-0.5px]" style={{ letterSpacing: "-0.31px" }}>
+                          2,950€
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Marge brute (%) */}
+            <div className="bg-[rgba(15,23,43,0.40)] rounded-[14px] border-solid border-[rgba(49,65,88,0.50)] border pt-[25px] pr-[25px] pb-px pl-[25px] flex flex-col gap-6 items-start justify-start self-stretch shrink-0 h-[402px] relative">
+              <div className="self-stretch shrink-0 h-7 relative">
+                <div className="text-[#ffffff] text-left font-['Inter-Medium',_sans-serif] text-xl leading-7 font-medium" style={{ letterSpacing: "-0.45px" }}>
+                  Marge brute (%)
+                </div>
+              </div>
+              <div className="self-stretch shrink-0 h-[300px] relative">
+                {isKpiLoading ? (
+                  <div className="flex items-center justify-center h-full w-full">
+                    <p className="text-global-inactive">Chargement...</p>
+                  </div>
+                ) : (
+                  <div className="w-full h-full relative">
+                    <canvas ref={grossMarginChartRef} className="w-full h-full"></canvas>
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
         )}
       </div>

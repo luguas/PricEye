@@ -4373,79 +4373,180 @@ app.post('/api/properties/:id/pricing-strategy', authenticateToken, async (req, 
         const property = propertyDoc.data();
         const today = new Date().toISOString().split('T')[0];
 
+        // Nouveau prompt : moteur de tarification intelligente (Revenue Management complet)
         const prompt = `
-            Tu es un expert mondial en tarification dynamique pour le marché de la location saisonnière (${property.location}).
-            Ton objectif est de créer une stratégie de prix détaillée, jour par jour, pour les 180 prochains jours, en respectant les règles définies par l'utilisateur.
+### RÔLE DU SYSTÈME : MOTEUR DE TARIFICATION INTELLIGENTE 
 
-            PROPRIÉTÉ À ANALYSER:
-            ${JSON.stringify({
-                address: property.address,
-                location: property.location,
-                property_type: property.property_type,
-                capacity: property.capacity,
-                surface: property.surface,
-                amenities: property.amenities || []
-            })}
+Tu es l'IA centrale d'un système de Revenue Management (Yield Management) comparable aux leaders mondiaux (PriceLabs, Wheelhouse, Beyond). Ta capacité d'analyse dépasse celle d'un humain : tu croises des millions de signaux faibles pour déterminer le "Prix Juste" (Fair Price) à l'instant T.
 
-            RÈLES UTILISATEUR À RESPECTER IMPÉRATIVEMENT:
-            - Stratégie Générale: ${property.strategy || 'Équilibré'}
+PARAMÈTRES DE LA MISSION :
 
-            INSTRUCTIONS DE STRATÉGIE DÉTAILLÉES:
-            Tu dois pondérer les facteurs de demande (saisonnalité, événements) différemment selon la stratégie choisie:
-            
-            1.  **Si "Prudent":**
-                * **Objectif:** Maximiser le taux d'occupation.
-                * **Basse saison:** N'hésite pas à baisser le prix (vers le Prix Plancher) pour sécuriser des réservations.
-                * **Haute saison/Événements:** Augmente le prix, mais reste légèrement *en dessous* du pic du marché pour garantir une réservation rapide.
-                * **Pondération:** Taux d'occupation (Élevé) > Saisonnalité (Moyen) > Tendance Marché (Faible).
+- **Lieu :** ${property.location}
+- **Date d'exécution :** ${today}
+- **Horizon :** 180 jours
+- **Objectif :** Maximisation du RevPAR (Revenu par chambre disponible) + Taux de Conversion.
 
-            2.  **Si "Équilibré" (Défaut):**
-                * **Objectif:** Équilibre parfait entre Taux d'occupation et ADR.
-                * **Basse saison:** Applique des réductions modérées.
-                * **Haute saison/Événements:** Augmente le prix significativement pour suivre la demande du marché.
-                * **Pondération:** Saisonnalité (Élevé) > Taux d'occupation (Moyen) > Tendance Marché (Moyen).
+---
 
-            3.  **Si "Agressif":**
-                * **Objectif:** Maximiser l'ADR (Prix moyen par nuit).
-                * **Basse saison:** Maintiens le prix proche du Prix de Base. Ne pas brader.
-                * **Haute saison/Événements:** Augmente le prix *au-dessus* du marché. Il vaut mieux avoir moins de réservations mais à un prix très élevé.
-                * **Pondération:** Tendance Marché/Événements (Élevé) > Saisonnalité (Moyen) > Taux d'occupation (Faible).
+### PARTIE 1 : INGESTION PROFONDE DU CONTEXTE (INPUTS)
 
-            - Prix Plancher Absolu: ${property.floor_price} € (Ne JAMAIS proposer un prix inférieur)
-            - Prix de Référence (Base): ${property.base_price} € (Utilise comme point de départ pour tes ajustements)
-            - Prix Plafond (Optionnel): ${property.ceiling_price != null ? property.ceiling_price + ' €' : 'Aucun'} (Ne JAMAIS proposer un prix supérieur si défini)
-            - Durée Minimale de Séjour: ${property.min_stay != null ? property.min_stay + ' nuits' : 'Aucune'}
-            - Durée Maximale de Séjour: ${property.max_stay != null ? property.max_stay + ' nuits' : 'Aucune'}
-            - Réduction Hebdomadaire: ${property.weekly_discount_percent != null ? property.weekly_discount_percent + '%' : 'Aucune'}
-            - Réduction Mensuelle: ${property.monthly_discount_percent != null ? property.monthly_discount_percent + '%' : 'Aucune'}
-            - Majoration Week-end (Ven/Sam): ${property.weekend_markup_percent != null ? property.weekend_markup_percent + '%' : 'Aucune'}
+**1. PROFILAGE DE L'ACTIF (PROPERTY SCORING)**
 
-            INSTRUCTIONS DÉTAILLÉES (SUITE):
-            1.  **Analyse des Facteurs de Demande (180 jours à partir du ${today}) pour "${property.location}"**:
-                * **Saisonnalité:** Haute, moyenne, basse saison.
-                * **Effet Week-end:** Majoration si définie.
-                * **Jours Fériés & Vacances Scolaires (France Zone A, B, C):** Impact sur la demande.
-                * **Événements Locaux:** Recherche simulée (festivals, conférences, etc.).
-                * **Qualité du bien:** Prendre en compte les équipements fournis.
+Analyse la valeur perçue de ce bien spécifique par rapport au marché local :
 
-            2.  **Génération des Prix Journaliers (180 jours):**
-                * Pour CHAQUE jour, calcule un prix optimal.
-                * Commence par le prix de base, puis ajuste en fonction des facteurs de demande ET des règles utilisateur (surtout la stratégie).
-                * **Contraintes:** Le prix final doit TOUJOURS être >= Prix Plancher et <= Prix Plafond (si défini).
-                * **Justification:** Fournis une raison CLAIRE pour chaque prix (ex: "Base + Majoration WE", "Haute saison + Vacances", "Événement + Agressif").
+${JSON.stringify({
+    address: property.address,
+    type: property.property_type,
+    capacity: property.capacity,
+    surface: property.surface,
+    amenities: property.amenities || [],
+    listing_quality_assessment:
+      "AUTO-ÉVALUATION REQUISE : Détermine si ce bien est 'Économique', 'Standard', 'Premium' ou 'Luxe' en fonction des équipements (Piscine ? Vue ? AC ?) et de la surface vs capacité."
+  }, null, 2)}
 
-            FORMAT DE SORTIE OBLIGATOIRE (JSON uniquement, sans texte avant/après):
-            {
-              "strategy_summary": "Résumé très bref de la stratégie globale.",
-              "daily_prices": [ { "date": "YYYY-MM-DD", "price": 135, "reason": "Basse saison" }, /* ... autres jours ... */ ]
-            }
+**2. RÈGLES FINANCIÈRES INVIOLABLES (HARD CONSTRAINTS)**
+
+Ces bornes sont des "Kill Switches". Si ton calcul théorique les dépasse, tu dois couper.
+
+- **Floor Price (Plancher Absolu):** ${property.floor_price} € (Ligne de survie).
+- **Base Price (Pivot):** ${property.base_price} € (Prix de référence neutre).
+- **Ceiling Price (Plafond):** ${property.ceiling_price || property.base_price * 4} € (Sécurité anti-aberration).
+- **Min Stay:** ${property.min_stay || 1} nuits.
+- **Réductions:** Semaine -${property.weekly_discount_percent || 0}%, Mois -${property.monthly_discount_percent || 0}%.
+- **Majoration Week-end:** Ven/Sam +${property.weekend_markup_percent || 0}%.
+
+**3. STRATÉGIE UTILISATEUR : [ ${property.strategy || 'Équilibré'} ]**
+
+Tu dois moduler ton agressivité selon ce profil :
+
+* **PRUDENT :** "Occupation First". Tu préfères louer à -15% que de rester vide. Tu es très réactif à la baisse en dernière minute (Last Minute).
+* **ÉQUILIBRÉ :** "Market Follower". Tu cherches le ratio parfait. Tu ne prends pas de risques inutiles.
+* **AGRESSIF :** "Yield First". Tu vises l'ADR (Prix Moyen) maximum. Tu ne brades pas. Tu sais que ton bien est unique et tu le fais payer. Tu acceptes d'avoir des jours vides pour vendre très cher les jours pleins.
+
+---
+
+### PARTIE 2 : LE "PIPELINE" DE CALCUL (8 ÉTAPES OBLIGATOIRES)
+
+Pour **CHAQUE JOUR** du calendrier, tu dois exécuter mentalement cette séquence précise. Ne saute aucune étape.
+
+**ÉTAPE 1 : ANALYSE MACRO-ÉCONOMIQUE & TENDANCES (MARKET HEALTH)**
+
+* Prends en compte l'inflation actuelle en zone Euro/Locale.
+* Analyse la "Force de la destination" : Est-ce que ${property.location} est "tendance" cette année ? (Basé sur tes données d'entraînement).
+* *Impact :* Ajuste le Prix de Base global de +/- 5% selon la santé économique du tourisme.
+
+**ÉTAPE 2 : COURBE DE SAISONNALITÉ HYPER-LOCALE (SEASONAL WAVE)**
+
+* Ne fais pas juste "Été vs Hiver". Fais une analyse mois par mois fine.
+* Identifie les "Saisons d'épaule" (Shoulder Seasons) où les opportunités sont les meilleures.
+* *Calcul :* Applique un coefficient multiplicateur (ex: x0.6 en Janvier, x1.8 en Août).
+
+**ÉTAPE 3 : JOUR DE LA SEMAINE (DOW - DAY OF WEEK)**
+
+* Analyse la typologie de la ville :
+    * Ville Affaires ? (Mardi/Mercredi chers, Week-end moins cher).
+    * Ville Loisirs ? (Vendredi/Samedi explosifs, Dimanche modéré).
+* *Action :* Applique la majoration week-end définie, ou ajuste selon la logique locale.
+
+**ÉTAPE 4 : INTELLIGENCE ÉVÉNEMENTIELLE (DEMAND SPIKES)**
+
+* Effectue une recherche approfondie des événements à ${property.location} sur les 180 jours :
+    * Vacances Scolaires (Toutes zones + Pays limitrophes).
+    * Jours Fériés et "Ponts" (Gaps entre férié et week-end).
+    * Événements "Tier 1" : Grands concerts, Festivals, Compétitions sportives, Foires commerciales majeures.
+* *Règle :* Si un Événement Tier 1 est détecté -> Ignore le "Prix Plafond" habituel (sauf si contrainte stricte) et passe en mode "Yield Maximization" (x2 à x4 le prix de base).
+
+**ÉTAPE 5 : PRESSION CONCURRENTIELLE SIMULÉE (COMPSET)**
+
+* Simule le comportement de 10 concurrents directs.
+* Si la date est dans < 14 jours et que la demande est faible : Tes concurrents vont baisser. Tu dois anticiper.
+* Si la date est très demandée : Tes concurrents sont déjà pleins (Sold Out). Tu es le dernier choix, tu as le "Pricing Power". Augmente le prix.
+
+**ÉTAPE 6 : FACTEUR TEMPOREL (BOOKING WINDOW / LEAD TIME)**
+
+* **Far Out (90j+) :** Ajoute une prime (+10%). Les gens qui réservent tôt sont moins sensibles au prix ou cherchent la sécurité.
+* **Mid Range (21-90j) :** Prix de marché ("Fair Price").
+* **Close In (0-21j) :**
+    * Si Stratégie = Prudent : Baisse progressive (jusqu'au Floor Price).
+    * Si Stratégie = Agressif : Maintien du prix (on ne dévalorise pas le bien).
+
+**ÉTAPE 7 : GESTION DES JOURS ISOLÉS (ORPHAN DAYS LOGIC)**
+
+* *Concept :* Bien que tu génères un calendrier neuf, simule cette logique : Si un mardi est isolé entre deux dates à forte probabilité de réservation (ex: Lundi férié et Mercredi business), baisse son prix pour inciter à combler le trou, ou augmente-le si c'est une date "pivot".
+
+**ÉTAPE 8 : PSYCHOLOGIE DES PRIX (CHARM PRICING)**
+
+* Nettoyage final du chiffre.
+* JAMAIS de centimes.
+* Évite les chiffres ronds "trop parfaits" comme 100€ (ça fait amateur). Préfère 99€ ou 105€.
+* Règles : Terminaisons en 5, 9, ou 0.
+* *Cohérence (Smoothing) :* Vérifie que le prix du jour J n'est pas > 50% plus cher que J-1 sans raison majeure (événement). Lisse la courbe.
+
+---
+
+### PARTIE 3 : FORMAT DE SORTIE (JSON ULTRA-RICHE)
+
+Tu dois répondre UNIQUEMENT par un JSON valide. Ce JSON servira à alimenter un Dashboard professionnel.
+
+Structure attendue :
+
+{
+  "audit_metadata": {
+    "generated_at": "${today}",
+    "property_grade": "Luxe/Standard/Éco",
+    "market_sentiment": "Bullish (Hausier) ou Bearish (Baissier) - Courte explication.",
+    "top_demand_drivers": ["Liste des 3 événements majeurs identifiés"],
+    "strategy_active": "${property.strategy || 'Équilibré'}"
+  },
+  "calendar": [
+    {
+      "date": "YYYY-MM-DD",
+      "weekday": "String",
+      "final_suggested_price": 0,
+      "currency": "EUR",
+      "price_breakdown": {
+        "base": ${property.base_price},
+        "seasonality_impact": "+0%",
+        "event_impact": "+0%",
+        "lead_time_impact": "+0%"
+      },
+      "demand_score": 0,
+      "competition_status": "High/Medium/Low (Pression concurrentielle)",
+      "tags": [],
+      "reasoning": "Phrase concise mais technique expliquant le prix."
+    }
+    // ... Répéter pour les 180 jours, en produisant des objets complets et cohérents
+  ]
+}
+
+RAPPEL CRITIQUE : La réponse finale doit être UNIQUEMENT ce JSON, sans texte additionnel, sans commentaires, sans markdown.
         `;
 
-        const strategyResult = await callGeminiAPI(prompt);
+        const iaResult = await callGeminiAPI(prompt);
 
-        if (!strategyResult || !Array.isArray(strategyResult.daily_prices) || strategyResult.daily_prices.length === 0) {
-            throw new Error("La réponse de l'IA est invalide ou ne contient pas de prix journaliers.");
+        if (!iaResult || !Array.isArray(iaResult.calendar) || iaResult.calendar.length === 0) {
+            throw new Error("La réponse de l'IA est invalide ou ne contient pas de calendrier de prix.");
         }
+
+        // Adapter le nouveau format (calendar) en daily_prices pour le reste du backend
+        const daily_prices = iaResult.calendar.map(day => {
+            const rawPrice = day.final_suggested_price;
+            let priceNum = Number(rawPrice);
+            if (isNaN(priceNum)) {
+                priceNum = property.base_price;
+            }
+            return {
+                date: day.date,
+                price: priceNum,
+                reason: day.reasoning || "Tarification IA dynamique"
+            };
+        });
+
+        const strategyResult = {
+            strategy_summary: iaResult.audit_metadata?.market_sentiment || "Stratégie IA dynamique générée.",
+            daily_prices,
+            raw: iaResult
+        };
 
         // --- NOUVELLE ÉTAPE: Synchronisation PMS (AVANT la sauvegarde Firestore) ---
         if (property.pmsId && property.pmsType) {
@@ -4797,81 +4898,181 @@ async function generateAndApplyPricingForProperty(propertyId, property, userId, 
     try {
         const today = new Date().toISOString().split('T')[0];
 
-        // Construire le prompt pour l'IA (identique à celui de l'endpoint)
+        // Construire le nouveau prompt pour l'IA (identique à l'endpoint de pricing-strategy)
         const prompt = `
-            Tu es un expert mondial en tarification dynamique pour le marché de la location saisonnière (${property.location}).
-            Ton objectif est de créer une stratégie de prix détaillée, jour par jour, pour les 180 prochains jours, en respectant les règles définies par l'utilisateur.
+### RÔLE DU SYSTÈME : MOTEUR DE TARIFICATION INTELLIGENTE 
 
-            PROPRIÉTÉ À ANALYSER:
-            ${JSON.stringify({
-                address: property.address,
-                location: property.location,
-                property_type: property.property_type,
-                capacity: property.capacity,
-                surface: property.surface,
-                amenities: property.amenities || []
-            })}
+Tu es l'IA centrale d'un système de Revenue Management (Yield Management) comparable aux leaders mondiaux (PriceLabs, Wheelhouse, Beyond). Ta capacité d'analyse dépasse celle d'un humain : tu croises des millions de signaux faibles pour déterminer le "Prix Juste" (Fair Price) à l'instant T.
 
-            RÈLES UTILISATEUR À RESPECTER IMPÉRATIVEMENT:
-            - Stratégie Générale: ${property.strategy || 'Équilibré'}
+PARAMÈTRES DE LA MISSION :
 
-            INSTRUCTIONS DE STRATÉGIE DÉTAILLÉES:
-            Tu dois pondérer les facteurs de demande (saisonnalité, événements) différemment selon la stratégie choisie:
-            
-            1.  **Si "Prudent":**
-                * **Objectif:** Maximiser le taux d'occupation.
-                * **Basse saison:** N'hésite pas à baisser le prix (vers le Prix Plancher) pour sécuriser des réservations.
-                * **Haute saison/Événements:** Augmente le prix, mais reste légèrement *en dessous* du pic du marché pour garantir une réservation rapide.
-                * **Pondération:** Taux d'occupation (Élevé) > Saisonnalité (Moyen) > Tendance Marché (Faible).
+- **Lieu :** ${property.location}
+- **Date d'exécution :** ${today}
+- **Horizon :** 180 jours
+- **Objectif :** Maximisation du RevPAR (Revenu par chambre disponible) + Taux de Conversion.
 
-            2.  **Si "Équilibré" (Défaut):**
-                * **Objectif:** Équilibre parfait entre Taux d'occupation et ADR.
-                * **Basse saison:** Applique des réductions modérées.
-                * **Haute saison/Événements:** Augmente le prix significativement pour suivre la demande du marché.
-                * **Pondération:** Saisonnalité (Élevé) > Taux d'occupation (Moyen) > Tendance Marché (Moyen).
+---
 
-            3.  **Si "Agressif":**
-                * **Objectif:** Maximiser l'ADR (Prix moyen par nuit).
-                * **Basse saison:** Maintiens le prix proche du Prix de Base. Ne pas brader.
-                * **Haute saison/Événements:** Augmente le prix *au-dessus* du marché. Il vaut mieux avoir moins de réservations mais à un prix très élevé.
-                * **Pondération:** Tendance Marché/Événements (Élevé) > Saisonnalité (Moyen) > Taux d'occupation (Faible).
+### PARTIE 1 : INGESTION PROFONDE DU CONTEXTE (INPUTS)
 
-            - Prix Plancher Absolu: ${property.floor_price} € (Ne JAMAIS proposer un prix inférieur)
-            - Prix de Référence (Base): ${property.base_price} € (Utilise comme point de départ pour tes ajustements)
-            - Prix Plafond (Optionnel): ${property.ceiling_price != null ? property.ceiling_price + ' €' : 'Aucun'} (Ne JAMAIS proposer un prix supérieur si défini)
-            - Durée Minimale de Séjour: ${property.min_stay != null ? property.min_stay + ' nuits' : 'Aucune'}
-            - Durée Maximale de Séjour: ${property.max_stay != null ? property.max_stay + ' nuits' : 'Aucune'}
-            - Réduction Hebdomadaire: ${property.weekly_discount_percent != null ? property.weekly_discount_percent + '%' : 'Aucune'}
-            - Réduction Mensuelle: ${property.monthly_discount_percent != null ? property.monthly_discount_percent + '%' : 'Aucune'}
-            - Majoration Week-end (Ven/Sam): ${property.weekend_markup_percent != null ? property.weekend_markup_percent + '%' : 'Aucune'}
+**1. PROFILAGE DE L'ACTIF (PROPERTY SCORING)**
 
-            INSTRUCTIONS DÉTAILLÉES (SUITE):
-            1.  **Analyse des Facteurs de Demande (180 jours à partir du ${today}) pour "${property.location}":**
-                * **Saisonnalité:** Haute, moyenne, basse saison.
-                * **Effet Week-end:** Majoration si définie.
-                * **Jours Fériés & Vacances Scolaires (France Zone A, B, C):** Impact sur la demande.
-                * **Événements Locaux:** Recherche simulée (festivals, conférences, etc.).
-                * **Qualité du bien:** Prendre en compte les équipements fournis.
+Analyse la valeur perçue de ce bien spécifique par rapport au marché local :
 
-            2.  **Génération des Prix Journaliers (180 jours):**
-                * Pour CHAQUE jour, calcule un prix optimal.
-                * Commence par le prix de base, puis ajuste en fonction des facteurs de demande ET des règles utilisateur (surtout la stratégie).
-                * **Contraintes:** Le prix final doit TOUJOURS être >= Prix Plancher et <= Prix Plafond (si défini).
-                * **Justification:** Fournis une raison CLAIRE pour chaque prix (ex: "Base + Majoration WE", "Haute saison + Vacances", "Événement + Agressif").
+${JSON.stringify({
+    address: property.address,
+    type: property.property_type,
+    capacity: property.capacity,
+    surface: property.surface,
+    amenities: property.amenities || [],
+    listing_quality_assessment:
+      "AUTO-ÉVALUATION REQUISE : Détermine si ce bien est 'Économique', 'Standard', 'Premium' ou 'Luxe' en fonction des équipements (Piscine ? Vue ? AC ?) et de la surface vs capacité."
+  }, null, 2)}
 
-            FORMAT DE SORTIE OBLIGATOIRE (JSON uniquement, sans texte avant/après):
-            {
-              "strategy_summary": "Résumé très bref de la stratégie globale.",
-              "daily_prices": [ { "date": "YYYY-MM-DD", "price": 135, "reason": "Basse saison" }, /* ... autres jours ... */ ]
-            }
+**2. RÈGLES FINANCIÈRES INVIOLABLES (HARD CONSTRAINTS)**
+
+Ces bornes sont des "Kill Switches". Si ton calcul théorique les dépasse, tu dois couper.
+
+- **Floor Price (Plancher Absolu):** ${property.floor_price} € (Ligne de survie).
+- **Base Price (Pivot):** ${property.base_price} € (Prix de référence neutre).
+- **Ceiling Price (Plafond):** ${property.ceiling_price || property.base_price * 4} € (Sécurité anti-aberration).
+- **Min Stay:** ${property.min_stay || 1} nuits.
+- **Réductions:** Semaine -${property.weekly_discount_percent || 0}%, Mois -${property.monthly_discount_percent || 0}%.
+- **Majoration Week-end:** Ven/Sam +${property.weekend_markup_percent || 0}%.
+
+**3. STRATÉGIE UTILISATEUR : [ ${property.strategy || 'Équilibré'} ]**
+
+Tu dois moduler ton agressivité selon ce profil :
+
+* **PRUDENT :** "Occupation First". Tu préfères louer à -15% que de rester vide. Tu es très réactif à la baisse en dernière minute (Last Minute).
+* **ÉQUILIBRÉ :** "Market Follower". Tu cherches le ratio parfait. Tu ne prends pas de risques inutiles.
+* **AGRESSIF :** "Yield First". Tu vises l'ADR (Prix Moyen) maximum. Tu ne brades pas. Tu sais que ton bien est unique et tu le fais payer. Tu acceptes d'avoir des jours vides pour vendre très cher les jours pleins.
+
+---
+
+### PARTIE 2 : LE "PIPELINE" DE CALCUL (8 ÉTAPES OBLIGATOIRES)
+
+Pour **CHAQUE JOUR** du calendrier, tu dois exécuter mentalement cette séquence précise. Ne saute aucune étape.
+
+**ÉTAPE 1 : ANALYSE MACRO-ÉCONOMIQUE & TENDANCES (MARKET HEALTH)**
+
+* Prends en compte l'inflation actuelle en zone Euro/Locale.
+* Analyse la "Force de la destination" : Est-ce que ${property.location} est "tendance" cette année ? (Basé sur tes données d'entraînement).
+* *Impact :* Ajuste le Prix de Base global de +/- 5% selon la santé économique du tourisme.
+
+**ÉTAPE 2 : COURBE DE SAISONNALITÉ HYPER-LOCALE (SEASONAL WAVE)**
+
+* Ne fais pas juste "Été vs Hiver". Fais une analyse mois par mois fine.
+* Identifie les "Saisons d'épaule" (Shoulder Seasons) où les opportunités sont les meilleures.
+* *Calcul :* Applique un coefficient multiplicateur (ex: x0.6 en Janvier, x1.8 en Août).
+
+**ÉTAPE 3 : JOUR DE LA SEMAINE (DOW - DAY OF WEEK)**
+
+* Analyse la typologie de la ville :
+    * Ville Affaires ? (Mardi/Mercredi chers, Week-end moins cher).
+    * Ville Loisirs ? (Vendredi/Samedi explosifs, Dimanche modéré).
+* *Action :* Applique la majoration week-end définie, ou ajuste selon la logique locale.
+
+**ÉTAPE 4 : INTELLIGENCE ÉVÉNEMENTIELLE (DEMAND SPIKES)**
+
+* Effectue une recherche approfondie des événements à ${property.location} sur les 180 jours :
+    * Vacances Scolaires (Toutes zones + Pays limitrophes).
+    * Jours Fériés et "Ponts" (Gaps entre férié et week-end).
+    * Événements "Tier 1" : Grands concerts, Festivals, Compétitions sportives, Foires commerciales majeures.
+* *Règle :* Si un Événement Tier 1 est détecté -> Ignore le "Prix Plafond" habituel (sauf si contrainte stricte) et passe en mode "Yield Maximization" (x2 à x4 le prix de base).
+
+**ÉTAPE 5 : PRESSION CONCURRENTIELLE SIMULÉE (COMPSET)**
+
+* Simule le comportement de 10 concurrents directs.
+* Si la date est dans < 14 jours et que la demande est faible : Tes concurrents vont baisser. Tu dois anticiper.
+* Si la date est très demandée : Tes concurrents sont déjà pleins (Sold Out). Tu es le dernier choix, tu as le "Pricing Power". Augmente le prix.
+
+**ÉTAPE 6 : FACTEUR TEMPOREL (BOOKING WINDOW / LEAD TIME)**
+
+* **Far Out (90j+) :** Ajoute une prime (+10%). Les gens qui réservent tôt sont moins sensibles au prix ou cherchent la sécurité.
+* **Mid Range (21-90j) :** Prix de marché ("Fair Price").
+* **Close In (0-21j) :**
+    * Si Stratégie = Prudent : Baisse progressive (jusqu'au Floor Price).
+    * Si Stratégie = Agressif : Maintien du prix (on ne dévalorise pas le bien).
+
+**ÉTAPE 7 : GESTION DES JOURS ISOLÉS (ORPHAN DAYS LOGIC)**
+
+* *Concept :* Bien que tu génères un calendrier neuf, simule cette logique : Si un mardi est isolé entre deux dates à forte probabilité de réservation (ex: Lundi férié et Mercredi business), baisse son prix pour inciter à combler le trou, ou augmente-le si c'est une date "pivot".
+
+**ÉTAPE 8 : PSYCHOLOGIE DES PRIX (CHARM PRICING)**
+
+* Nettoyage final du chiffre.
+* JAMAIS de centimes.
+* Évite les chiffres ronds "trop parfaits" comme 100€ (ça fait amateur). Préfère 99€ ou 105€.
+* Règles : Terminaisons en 5, 9, ou 0.
+* *Cohérence (Smoothing) :* Vérifie que le prix du jour J n'est pas > 50% plus cher que J-1 sans raison majeure (événement). Lisse la courbe.
+
+---
+
+### PARTIE 3 : FORMAT DE SORTIE (JSON ULTRA-RICHE)
+
+Tu dois répondre UNIQUEMENT par un JSON valide. Ce JSON servira à alimenter un Dashboard professionnel.
+
+Structure attendue :
+
+{
+  "audit_metadata": {
+    "generated_at": "${today}",
+    "property_grade": "Luxe/Standard/Éco",
+    "market_sentiment": "Bullish (Hausier) ou Bearish (Baissier) - Courte explication.",
+    "top_demand_drivers": ["Liste des 3 événements majeurs identifiés"],
+    "strategy_active": "${property.strategy || 'Équilibré'}"
+  },
+  "calendar": [
+    {
+      "date": "YYYY-MM-DD",
+      "weekday": "String",
+      "final_suggested_price": 0,
+      "currency": "EUR",
+      "price_breakdown": {
+        "base": ${property.base_price},
+        "seasonality_impact": "+0%",
+        "event_impact": "+0%",
+        "lead_time_impact": "+0%"
+      },
+      "demand_score": 0,
+      "competition_status": "High/Medium/Low (Pression concurrentielle)",
+      "tags": [],
+      "reasoning": "Phrase concise mais technique expliquant le prix."
+    }
+    // ... Répéter pour les 180 jours, en produisant des objets complets et cohérents
+  ]
+}
+
+RAPPEL CRITIQUE : La réponse finale doit être UNIQUEMENT ce JSON, sans texte additionnel, sans commentaires, sans markdown.
         `;
 
         // Appeler l'API Gemini
-        const strategyResult = await callGeminiAPI(prompt);
+        const iaResult = await callGeminiAPI(prompt);
 
-        if (!strategyResult || !Array.isArray(strategyResult.daily_prices) || strategyResult.daily_prices.length === 0) {
-            throw new Error("La réponse de l'IA est invalide ou ne contient pas de prix journaliers.");
+        if (!iaResult || !Array.isArray(iaResult.calendar) || iaResult.calendar.length === 0) {
+            throw new Error("La réponse de l'IA est invalide ou ne contient pas de calendrier de prix.");
         }
+
+        // Adapter le nouveau format (calendar) en daily_prices pour le reste du backend
+        const daily_prices = iaResult.calendar.map(day => {
+            const rawPrice = day.final_suggested_price;
+            let priceNum = Number(rawPrice);
+            if (isNaN(priceNum)) {
+                priceNum = property.base_price;
+            }
+            return {
+                date: day.date,
+                price: priceNum,
+                reason: day.reasoning || "Tarification IA dynamique (auto)"
+            };
+        });
+
+        const strategyResult = {
+            strategy_summary: iaResult.audit_metadata?.market_sentiment || "Stratégie IA dynamique générée (auto).",
+            daily_prices,
+            raw: iaResult
+        };
 
         // Synchronisation PMS si nécessaire
         if (property.pmsId && property.pmsType) {
