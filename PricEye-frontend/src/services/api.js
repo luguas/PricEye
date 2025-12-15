@@ -516,6 +516,13 @@ export function getMarketDemandSnapshot(token, timezone) {
     });
 }
 
+export function getPositioningReport(token, startDate, endDate) {
+    const params = new URLSearchParams({ startDate, endDate });
+    return apiRequest(`/api/reports/positioning?${params.toString()}`, {
+        token,
+    });
+}
+
 export function getDateAnalysis(propertyId, date, token) {
     return apiRequest(`/api/reports/analyze-date`, {
         method: 'POST',

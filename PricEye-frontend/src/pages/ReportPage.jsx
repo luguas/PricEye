@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { getProperties, getReportKpis, getRevenueOverTime, getPerformanceOverTime, getMarketDemandSnapshot } from '../services/api.js'; // Importer getPerformanceOverTime
+import { getProperties, getReportKpis, getRevenueOverTime, getPerformanceOverTime, getMarketDemandSnapshot, getPositioningReport } from '../services/api.js'; // Importer getPerformanceOverTime
 import { exportToExcel } from '../utils/exportUtils.js';
 import Chart from 'chart.js/auto'; 
 import { getDatesFromRange, getPreviousDates } from '../utils/dateUtils.js'; // Importer les deux fonctions
@@ -560,12 +560,13 @@ function ReportPage({ token, userProfile }) {
           const { startDate: prevStartDate, endDate: prevEndDate } = getPreviousDates(currentStartDate, currentEndDate);
 
           // 2. Appeler l'API pour les deux périodes en parallèle
-          const [currentData, prevData, revenueData, perfData, marketSnapshotData] = await Promise.all([
+          const [currentData, prevData, revenueData, perfData, marketSnapshotData, positioningReport] = await Promise.all([
               getReportKpis(token, currentStartDate, currentEndDate),
               getReportKpis(token, prevStartDate, prevEndDate),
               getRevenueOverTime(token, currentStartDate, currentEndDate),
               getPerformanceOverTime(token, currentStartDate, currentEndDate), // NOUVEL APPEL
-              getMarketDemandSnapshot(token, userProfile.timezone || 'Europe/Paris')
+              getMarketDemandSnapshot(token, userProfile.timezone || 'Europe/Paris'),
+              getPositioningReport(token, currentStartDate, currentEndDate)
           ]);
           
           setKpis(currentData);
@@ -573,6 +574,12 @@ function ReportPage({ token, userProfile }) {
           setChartData(revenueData); // Sauvegarder les données du graphique de revenus
           setPerformanceData(perfData); // NOUVEAU: Sauvegarder les données du graphique de performance
           setMarketSnapshot(marketSnapshotData || null);
+          if (positioningReport && positioningReport.adrVsMarket) {
+            setAdrVsMarketData(positioningReport.adrVsMarket);
+          }
+          if (positioningReport && positioningReport.priceDistribution) {
+            setPriceDistributionData(positioningReport.priceDistribution);
+          }
           
           // Transformer les données pour les nouveaux graphiques
           if (revenueData && revenueData.labels && Array.isArray(revenueData.labels) && revenueData.labels.length > 0) {
@@ -623,6 +630,8 @@ function ReportPage({ token, userProfile }) {
           setIaData(null);
           setMarketData(null);
           setMarketSnapshot(null);
+          setAdrVsMarketData(null);
+          setPriceDistributionData(null);
       } finally {
           setIsKpiLoading(false);
       }

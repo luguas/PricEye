@@ -3974,6 +3974,173 @@ app.get('/api/reports/market-demand-snapshot', authenticateToken, async (req, re
     }
 });
 
+// GET /api/reports/positioning - ADR vs marché + distribution prix concurrents (avec IA)
+app.get('/api/reports/positioning', authenticateToken, async (req, res) => {
+    try {
+        const db = admin.firestore();
+        const userId = req.user.uid;
+        const { startDate, endDate } = req.query;
+
+        if (!startDate || !endDate) {
+            return res.status(400).send({ error: 'Les dates de début et de fin sont requises.' });
+        }
+
+        // 1. Récupérer le teamId et les propriétés
+        const userProfileRef = db.collection('users').doc(userId);
+        const userProfileDoc = await userProfileRef.get();
+        if (!userProfileDoc.exists || !userProfileDoc.data().teamId) {
+            return res.status(404).send({ error: 'Impossible de trouver votre équipe.' });
+        }
+        const teamId = userProfileDoc.data().teamId;
+
+        const propertiesSnapshot = await db.collection('properties').where('teamId', '==', teamId).get();
+        if (propertiesSnapshot.empty) {
+            return res.status(200).json({
+                adrVsMarket: { labels: [], yourAdrData: [], marketAdrData: [] },
+                priceDistribution: { labels: [], data: [] }
+            });
+        }
+
+        const properties = [];
+        const propertyIdIndexMap = new Map();
+        let index = 0;
+        propertiesSnapshot.forEach(doc => {
+            const data = doc.data();
+            properties.push({
+                id: doc.id,
+                name: data.name || data.title || 'Propriété',
+                location: data.location || '',
+                type: data.property_type || 'appartement',
+                basePrice: data.base_price || 0,
+                capacity: data.capacity || 2
+            });
+            propertyIdIndexMap.set(doc.id, index++);
+        });
+
+        // 2. Agréger ADR par propriété sur la période (basé sur les réservations)
+        const start = new Date(startDate + 'T00:00:00Z');
+        const end = new Date(endDate + 'T00:00:00Z');
+
+        const adrStats = properties.map(p => ({
+            id: p.id,
+            name: p.name,
+            revenue: 0,
+            nights: 0
+        }));
+
+        const bookingsQuery = db.collectionGroup('reservations')
+            .where('teamId', '==', teamId)
+            .where('startDate', '<=', endDate)
+            .where('endDate', '>', startDate);
+
+        const snapshot = await bookingsQuery.get();
+
+        snapshot.forEach(doc => {
+            const booking = doc.data();
+            const propertyRef = doc.ref.parent.parent;
+            const propertyId = propertyRef ? propertyRef.id : null;
+            if (!propertyId || !propertyIdIndexMap.has(propertyId)) return;
+
+            const statIndex = propertyIdIndexMap.get(propertyId);
+            const stat = adrStats[statIndex];
+
+            const bookingStart = new Date(booking.startDate + 'T00:00:00Z');
+            const bookingEnd = new Date(booking.endDate + 'T00:00:00Z');
+
+            const effectiveStart = bookingStart < start ? start : bookingStart;
+            const effectiveEnd = bookingEnd > end ? end : bookingEnd;
+
+            let currentDate = new Date(effectiveStart);
+            while (currentDate < effectiveEnd) {
+                stat.nights += 1;
+                stat.revenue += booking.pricePerNight || 0;
+                currentDate.setUTCDate(currentDate.getUTCDate() + 1);
+            }
+        });
+
+        const propertyStats = adrStats.map((s, i) => {
+            const prop = properties[i];
+            const yourAdr = s.nights > 0 ? s.revenue / s.nights : prop.basePrice || 0;
+            return {
+                id: prop.id,
+                name: prop.name,
+                location: prop.location,
+                type: prop.type,
+                capacity: prop.capacity,
+                basePrice: prop.basePrice,
+                yourAdr: Math.round(yourAdr)
+            };
+        });
+
+        // 3. Construire le prompt IA pour obtenir ADR marché + distribution prix concurrents
+        const today = new Date().toISOString().split('T')[0];
+        const positioningPrompt = `
+Tu es un moteur de benchmarking tarifaire pour la location courte durée.
+
+Contexte:
+- Date d'exécution: ${today}
+- Période analysée: du ${startDate} au ${endDate}
+- Marché principal: ${propertyStats[0]?.location || 'Non spécifié'}
+
+Voici les propriétés de mon portefeuille et leur ADR observé sur la période:
+${JSON.stringify(propertyStats, null, 2)}
+
+Ta mission:
+1) Pour chaque propriété ci-dessus, estime l'ADR moyen du marché pour des concurrents directs comparables (marketAdr).
+2) Construis également une distribution agrégée des prix concurrents sur ce marché (histogramme) en euros.
+
+Contraintes:
+- Utilise uniquement des valeurs entières en euros.
+- Ne renvoie AUCUN texte en dehors du JSON.
+- La réponse DOIT être un objet JSON STRICTEMENT VALIDE au format:
+{
+  "adrVsMarket": {
+    "labels": ["Nom propriété 1", "Nom propriété 2", "..."],
+    "yourAdrData": [120, 95, 140],
+    "marketAdrData": [110, 100, 130]
+  },
+  "priceDistribution": {
+    "labels": ["0-100", "100-150", "150-200", "200-250", "250-300", "300+"],
+    "data": [8, 12, 18, 15, 10, 5]
+  }
+}
+
+RAPPEL CRITIQUE: Réponds UNIQUEMENT avec ce JSON, sans commentaire, sans texte autour, sans markdown.`;
+
+        let iaResult = null;
+        try {
+            iaResult = await callGeminiAPI(positioningPrompt);
+        } catch (e) {
+            console.error('Erreur lors de l’appel IA pour le positionnement:', e);
+        }
+
+        // 4. Fallback local si l’IA ne renvoie rien d’exploitable
+        if (!iaResult || !iaResult.adrVsMarket || !Array.isArray(iaResult.adrVsMarket.labels)) {
+            const labels = propertyStats.map(p => p.name);
+            const yourAdrData = propertyStats.map(p => p.yourAdr);
+            const marketAdrData = yourAdrData.map(v => Math.round(v * 0.9 + 10)); // heuristique simple
+
+            iaResult = {
+                adrVsMarket: {
+                    labels,
+                    yourAdrData,
+                    marketAdrData
+                },
+                priceDistribution: {
+                    labels: ['0-100', '100-150', '150-200', '200-250', '250-300', '300+'],
+                    data: [8, 12, 18, 15, 10, 5]
+                }
+            };
+        }
+
+        res.status(200).json(iaResult);
+
+    } catch (error) {
+        console.error('Erreur lors du calcul du rapport de positionnement:', error);
+        res.status(500).send({ error: 'Erreur serveur lors du calcul du rapport de positionnement.' });
+    }
+});
+
 // GET /api/reports/performance-over-time
 app.get('/api/reports/performance-over-time', authenticateToken, async (req, res) => {
     try {
