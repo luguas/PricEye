@@ -160,7 +160,50 @@
       "integrationLoadError": "Impossible de charger le statut de l'intégration PMS."
     },
     "integration": {
-      "loading": "Chargement de l'intégration..."
+      "loading": "Chargement de l'intégration...",
+      "title": "Intégration PMS",
+      "notConnected": "Statut : ❌ Non connecté",
+      "connected": "Statut : ✅ Connecté à",
+      "choosePMS": "Choisir un PMS",
+      "test": "Tester",
+      "connect": "Connecter",
+      "disconnect": "Se déconnecter",
+      "synchronizeProperties": "Synchroniser les propriétés",
+      "testInProgress": "Test en cours...",
+      "connectionSuccess": "Connexion réussie ✅",
+      "testFailed": "Échec du test",
+      "saving": "Sauvegarde en cours...",
+      "connectionFailed": "Échec de la connexion",
+      "disconnecting": "Déconnexion...",
+      "disconnectSuccess": "Déconnexion réussie.",
+      "disconnectFailed": "Échec",
+      "oauthNotImplemented": "OAuth n'est pas encore implémenté.",
+      "connectWith": "Se connecter avec",
+      "disconnectConfirm": "Êtes-vous sûr de vouloir déconnecter",
+      "fields": {
+        "smoobuToken": "Clé API Smoobu (Token)",
+        "beds24ApiKey": "Clé API (apiKey)",
+        "beds24PropKey": "Clé Propriété (propKey)"
+      },
+      "syncModal": {
+        "title": "Synchroniser les Propriétés",
+        "analyzing": "Analyse de votre connexion PMS...",
+        "newProperties": "Nouvelles propriétés trouvées",
+        "syncedProperties": "Propriétés déjà synchronisées",
+        "noNewProperties": "Aucune nouvelle propriété à importer.",
+        "alreadySynced": "Ces propriétés sont déjà liées à votre compte Priceye.",
+        "noneSynced": "Aucune propriété n'est encore liée.",
+        "close": "Fermer",
+        "importing": "Importation en cours...",
+        "import": "Importer",
+        "newPropertiesCount": "nouvelle(s) propriété(s)",
+        "noPropertiesToImport": "Aucune nouvelle propriété à importer ou type de PMS manquant.",
+        "importError": "Une erreur est survenue lors de l'import des propriétés.",
+        "success": "Succès",
+        "importSuccess": "Importation réussie !",
+        "reservationsImported": "nouvelle(s) réservation(s) importée(s).",
+        "reservationsUpdated": "réservation(s) mise(s) à jour."
+      }
     }
   },
   "login": {

@@ -1492,10 +1492,11 @@ app.post('/api/checkout/create-session', authenticateToken, async (req, res) => 
         // 7. Créer la session Stripe Checkout
         const frontendUrl = process.env.FRONTEND_URL || 'https://pric-eye.vercel.app';
         
-        const session = await stripe.checkout.sessions.create({
+        // Stripe ne permet pas de spécifier à la fois customer et customer_email
+        // Si on a un customerId, on utilise seulement customer
+        // Sinon, on utilise customer_email pour créer automatiquement un customer
+        const sessionParams = {
             mode: 'subscription',
-            customer: customerId,
-            customer_email: userProfile.email || req.user.email,
             line_items: lineItems,
             subscription_data: {
                 trial_period_days: trialPeriodDays,
@@ -1505,7 +1506,16 @@ app.post('/api/checkout/create-session', authenticateToken, async (req, res) => 
             },
             success_url: `${frontendUrl}/dashboard?success=true&session_id={CHECKOUT_SESSION_ID}`,
             cancel_url: `${frontendUrl}/billing?canceled=true`
-        });
+        };
+        
+        // Ajouter customer ou customer_email (mais pas les deux)
+        if (customerId) {
+            sessionParams.customer = customerId;
+        } else {
+            sessionParams.customer_email = userProfile.email || req.user.email;
+        }
+        
+        const session = await stripe.checkout.sessions.create(sessionParams);
         
         console.log(`[Checkout] Session créée pour ${userId}: ${session.id} (essai: ${trialPeriodDays} jours)`);
         

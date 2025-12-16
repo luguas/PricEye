@@ -2,23 +2,24 @@ import React, { useState, useEffect } from 'react';
 // Importer les fonctions API nécessaires
 import { testConnection, connectPMS, disconnectPMS } from '../services/api.js'; 
 import PropertySyncModal from './PropertySyncModal.jsx';
-import ConfirmModal from './ConfirmModal.jsx'; 
+import ConfirmModal from './ConfirmModal.jsx';
+import { useLanguage } from '../contexts/LanguageContext.jsx'; 
 
-// Configuration pour chaque PMS géré
-const PMS_CONFIG = {
+// Configuration pour chaque PMS géré (les labels seront traduits dynamiquement)
+const getPMSConfig = (t) => ({
   smoobu: { 
     name: 'Smoobu', 
     type: 'apikey', 
     fields: [
-      { name: 'token', label: 'Clé API Smoobu (Token)', type: 'password' }
+      { name: 'token', labelKey: 'settings.integration.fields.smoobuToken', type: 'password' }
     ] 
   },
   beds24: { 
     name: 'Beds24', 
     type: 'apikey', 
     fields: [
-      { name: 'apiKey', label: 'Clé API (apiKey)', type: 'password' },
-      { name: 'propKey', label: 'Clé Propriété (propKey)', type: 'password' }
+      { name: 'apiKey', labelKey: 'settings.integration.fields.beds24ApiKey', type: 'password' },
+      { name: 'propKey', labelKey: 'settings.integration.fields.beds24PropKey', type: 'password' }
     ] 
   },
   cloudbeds: { 
@@ -27,7 +28,7 @@ const PMS_CONFIG = {
     fields: [] 
   },
   // ... Ajoutez d'autres PMS ici
-};
+});
 
 /**
  * @param {object} props
@@ -36,6 +37,7 @@ const PMS_CONFIG = {
  * @param {Function} props.onConnectionUpdate - Fonction pour rafraîchir le profil utilisateur parent
  */
 function PMSIntegrationPanel({ token, currentIntegration, onConnectionUpdate }) {
+  const { t } = useLanguage();
   const [selectedPms, setSelectedPms] = useState('smoobu');
   const [credentials, setCredentials] = useState({});
   
@@ -48,6 +50,8 @@ function PMSIntegrationPanel({ token, currentIntegration, onConnectionUpdate }) 
 
   // État pour la modale de confirmation
   const [confirmModal, setConfirmModal] = useState({ isOpen: false, message: '', onConfirm: null });
+  
+  const PMS_CONFIG = getPMSConfig(t);
 
   // Met à jour le formulaire si une intégration existe déjà
   useEffect(() => {
@@ -74,13 +78,13 @@ function PMSIntegrationPanel({ token, currentIntegration, onConnectionUpdate }) 
   // 1. Tester la connexion
   const handleTest = async () => {
     setIsLoading(true);
-    setTestMessage({ type: 'loading', text: 'Test en cours...' });
+    setTestMessage({ type: 'loading', text: t('settings.integration.testInProgress') });
     setConnectMessage({ type: '', text: '' });
     try {
       const result = await testConnection(selectedPms, credentials, token);
-      setTestMessage({ type: 'success', text: result.message || 'Connexion réussie ✅' });
+      setTestMessage({ type: 'success', text: result.message || t('settings.integration.connectionSuccess') });
     } catch (error) {
-      setTestMessage({ type: 'error', text: `Échec du test: ${error.message}` });
+      setTestMessage({ type: 'error', text: `${t('settings.integration.testFailed')}: ${error.message}` });
     } finally {
       setIsLoading(false);
     }
@@ -90,14 +94,14 @@ function PMSIntegrationPanel({ token, currentIntegration, onConnectionUpdate }) 
   const handleConnect = async (e) => {
     e.preventDefault();
     setIsLoading(true);
-    setConnectMessage({ type: 'loading', text: 'Sauvegarde en cours...' });
+    setConnectMessage({ type: 'loading', text: t('settings.integration.saving') });
     setTestMessage({ type: '', text: '' });
     try {
       const result = await connectPMS(selectedPms, credentials, token);
       setConnectMessage({ type: 'success', text: result.message });
       onConnectionUpdate(); // Rafraîchit la page Paramètres
     } catch (error) {
-      setConnectMessage({ type: 'error', text: `Échec de la connexion: ${error.message}` });
+      setConnectMessage({ type: 'error', text: `${t('settings.integration.connectionFailed')}: ${error.message}` });
     } finally {
       setIsLoading(false);
     }
@@ -110,18 +114,18 @@ function PMSIntegrationPanel({ token, currentIntegration, onConnectionUpdate }) 
   const handleDisconnect = async () => {
     setConfirmModal({
       isOpen: true,
-      message: `Êtes-vous sûr de vouloir déconnecter ${currentIntegration.type} ?`,
+      message: `${t('settings.integration.disconnectConfirm')} ${currentIntegration.type} ?`,
       onConfirm: async () => {
         setIsLoading(true);
-        setConnectMessage({ type: 'loading', text: 'Déconnexion...' });
+        setConnectMessage({ type: 'loading', text: t('settings.integration.disconnecting') });
         try {
           // CORRECTION: Appeler la nouvelle route DELETE au lieu de connectPMS
           await disconnectPMS(currentIntegration.type, token); 
-          setConnectMessage({ type: 'success', text: 'Déconnexion réussie.' });
+          setConnectMessage({ type: 'success', text: t('settings.integration.disconnectSuccess') });
           setCredentials({});
           onConnectionUpdate(); // Rafraîchit la page
         } catch (error) {
-          setConnectMessage({ type: 'error', text: `Échec: ${error.message}` });
+          setConnectMessage({ type: 'error', text: `${t('settings.integration.disconnectFailed')}: ${error.message}` });
         } finally {
           setIsLoading(false);
         }
@@ -131,12 +135,12 @@ function PMSIntegrationPanel({ token, currentIntegration, onConnectionUpdate }) 
 
   const renderCurrentIntegration = () => {
     if (!currentIntegration) {
-      return <p className="text-sm text-text-muted">Statut : ❌ Non connecté</p>;
+      return <p className="text-sm text-text-muted">{t('settings.integration.notConnected')}</p>;
     }
     return (
       <div className="space-y-4">
         <p className="text-sm text-green-400">
-          Statut : ✅ Connecté à <span className="font-bold">{PMS_CONFIG[currentIntegration.type]?.name || currentIntegration.type}</span>
+          {t('settings.integration.connected')} <span className="font-bold">{PMS_CONFIG[currentIntegration.type]?.name || currentIntegration.type}</span>
         </p>
         <button
           type="button"
@@ -144,7 +148,7 @@ function PMSIntegrationPanel({ token, currentIntegration, onConnectionUpdate }) 
           disabled={isLoading} // n'est désactivé que si la connexion/déconnexion est en cours
           className="w-full px-4 py-2 font-semibold text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:bg-gray-500"
         >
-          Synchroniser les propriétés
+          {t('settings.integration.synchronizeProperties')}
         </button>
         {/* Le message de synchronisation est maintenant dans la modale */}
         <button
@@ -153,7 +157,7 @@ function PMSIntegrationPanel({ token, currentIntegration, onConnectionUpdate }) 
           disabled={isLoading}
           className="w-full text-sm text-red-400 hover:text-red-300 disabled:text-gray-500"
         >
-          Se déconnecter
+          {t('settings.integration.disconnect')}
         </button>
       </div>
     );
@@ -166,7 +170,7 @@ function PMSIntegrationPanel({ token, currentIntegration, onConnectionUpdate }) 
       <form onSubmit={handleConnect} className="space-y-4">
         <div>
           <label htmlFor="pms-select" className="block text-sm font-medium text-text-secondary">
-            Choisir un PMS
+            {t('settings.integration.choosePMS')}
           </label>
           <select 
             id="pms-select"
@@ -183,7 +187,7 @@ function PMSIntegrationPanel({ token, currentIntegration, onConnectionUpdate }) 
         {config.type === 'apikey' && config.fields.map(field => (
            <div key={field.name}>
              <label htmlFor={field.name} className="block text-sm font-medium text-text-secondary">
-               {field.label}
+               {t(field.labelKey)}
              </label>
              <input
                type={field.type || 'text'}
@@ -200,9 +204,9 @@ function PMSIntegrationPanel({ token, currentIntegration, onConnectionUpdate }) 
             <button 
                 type="button" 
                 className="w-full px-4 py-2 font-semibold text-white bg-gray-600 rounded-md hover:bg-gray-700"
-                onClick={() => setConnectMessage({ type: 'error', text: 'OAuth n\'est pas encore implémenté.'})}
+                onClick={() => setConnectMessage({ type: 'error', text: t('settings.integration.oauthNotImplemented')})}
             >
-                Se connecter avec {config.name}
+                {t('settings.integration.connectWith')} {config.name}
             </button>
         )}
         
@@ -214,14 +218,14 @@ function PMSIntegrationPanel({ token, currentIntegration, onConnectionUpdate }) 
                     disabled={isLoading}
                     className="flex-1 px-4 py-2 font-semibold text-text-primary bg-bg-muted rounded-md hover:bg-border-primary disabled:opacity-50"
                  >
-                    {isLoading && testMessage.text ? '...' : 'Tester'}
+                    {isLoading && testMessage.text ? '...' : t('settings.integration.test')}
                   </button>
                   <button 
                     type="submit" 
                     disabled={isLoading}
                     className="flex-1 px-4 py-2 font-semibold text-white bg-green-600 rounded-md hover:bg-green-700 disabled:bg-gray-500"
                   >
-                    {isLoading && connectMessage.text ? '...' : 'Connecter'}
+                    {isLoading && connectMessage.text ? '...' : t('settings.integration.connect')}
                   </button>
             </div>
         )}
@@ -243,7 +247,7 @@ function PMSIntegrationPanel({ token, currentIntegration, onConnectionUpdate }) 
   return (
     <>
       <fieldset className="border border-border-secondary p-4 rounded-md">
-        <legend className="text-lg font-semibold px-2 text-text-primary">Intégration PMS</legend>
+        <legend className="text-lg font-semibold px-2 text-text-primary">{t('settings.integration.title')}</legend>
         <div className="mt-2">
           {currentIntegration ? renderCurrentIntegration() : renderConnectionForm()}
         </div>
@@ -268,10 +272,10 @@ function PMSIntegrationPanel({ token, currentIntegration, onConnectionUpdate }) 
         isOpen={confirmModal.isOpen}
         onClose={() => setConfirmModal({ isOpen: false, message: '', onConfirm: null })}
         onConfirm={confirmModal.onConfirm || (() => {})}
-        title="Confirmation"
+        title={t('common.confirm')}
         message={confirmModal.message}
-        confirmText="Confirmer"
-        cancelText="Annuler"
+        confirmText={t('common.confirm')}
+        cancelText={t('common.cancel')}
       />
     </>
   );

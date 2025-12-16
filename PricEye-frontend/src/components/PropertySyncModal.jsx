@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { syncProperties, getProperties, importPmsProperties } from '../services/api.js';
 import CustomScrollbar from './CustomScrollbar.jsx';
 import AlertModal from './AlertModal.jsx';
+import { useLanguage } from '../contexts/LanguageContext.jsx';
 
 /**
  * Une modale qui gère la synchronisation et l'importation de propriétés
@@ -12,6 +13,7 @@ import AlertModal from './AlertModal.jsx';
  * @param {Function} props.onClose - Fonction pour fermer la modale (passe 'true' si un rafraîchissement est nécessaire)
  */
 function PropertySyncModal({ token, pmsType, onClose }) {
+  const { t } = useLanguage();
   const [isLoading, setIsLoading] = useState(true);
   const [isImporting, setIsImporting] = useState(false);
   const [error, setError] = useState(null);
@@ -72,7 +74,7 @@ function PropertySyncModal({ token, pmsType, onClose }) {
   // Étape 3: Gérer l'action d'importation
   const handleImport = async () => {
     if (!stats || stats.newProperties.length === 0 || !pmsType) {
-      setError("Aucune nouvelle propriété à importer ou type de PMS manquant.");
+      setError(t('settings.integration.syncModal.noPropertiesToImport'));
       return;
     }
     
@@ -83,15 +85,15 @@ function PropertySyncModal({ token, pmsType, onClose }) {
       const result = await importPmsProperties(stats.newProperties, pmsType, token);
       
       // Construire le message avec les détails des réservations
-      let message = result.message || 'Importation réussie !';
+      let message = result.message || t('settings.integration.syncModal.importSuccess');
       if (result.reservationsImported > 0 || result.reservationsUpdated > 0) {
-        message += `\n\n${result.reservationsImported} nouvelle(s) réservation(s) importée(s).`;
+        message += `\n\n${result.reservationsImported} ${t('settings.integration.syncModal.reservationsImported')}`;
         if (result.reservationsUpdated > 0) {
-          message += `\n${result.reservationsUpdated} réservation(s) mise(s) à jour.`;
+          message += `\n${result.reservationsUpdated} ${t('settings.integration.syncModal.reservationsUpdated')}`;
         }
       }
       
-      setAlertModal({ isOpen: true, message: message, title: 'Succès' });
+      setAlertModal({ isOpen: true, message: message, title: t('settings.integration.syncModal.success') });
       // Fermer la modale après confirmation
       setTimeout(() => {
         onClose(true); // Fermer et signaler qu'il faut rafraîchir
@@ -118,10 +120,10 @@ function PropertySyncModal({ token, pmsType, onClose }) {
           }
         } else {
           // Fallback si la fonction n'est pas disponible
-          setError('Vous avez atteint la limite de 10 propriétés pendant votre essai gratuit. Veuillez terminer votre essai pour continuer.');
+          setError(t('billing.limitExceededMessage') + ' ' + t('billing.limitExceededAction'));
         }
       } else {
-        setError(errorMessage || 'Une erreur est survenue lors de l\'import des propriétés.');
+        setError(errorMessage || t('settings.integration.syncModal.importError'));
       }
     } finally {
       setIsImporting(false);
@@ -134,7 +136,7 @@ function PropertySyncModal({ token, pmsType, onClose }) {
       return (
         <div className="flex flex-col items-center justify-center h-48">
           <div className="loader"></div>
-          <p className="text-text-muted mt-4">Analyse de votre connexion PMS...</p>
+          <p className="text-text-muted mt-4">{t('settings.integration.syncModal.analyzing')}</p>
         </div>
       );
     }
@@ -147,7 +149,7 @@ function PropertySyncModal({ token, pmsType, onClose }) {
       return (
         <div className="space-y-4">
           <div>
-            <h4 className="font-semibold text-text-primary">Nouvelles propriétés trouvées ({stats.newProperties.length})</h4>
+            <h4 className="font-semibold text-text-primary">{t('settings.integration.syncModal.newProperties')} ({stats.newProperties.length})</h4>
             {stats.newProperties.length > 0 ? (
               <ul className="list-disc list-inside text-sm text-text-secondary max-h-32 overflow-y-auto bg-bg-muted p-2 rounded-md mt-1">
                 {stats.newProperties.map(p => (
@@ -155,15 +157,15 @@ function PropertySyncModal({ token, pmsType, onClose }) {
                 ))}
               </ul>
             ) : (
-              <p className="text-sm text-text-muted mt-1">Aucune nouvelle propriété à importer.</p>
+              <p className="text-sm text-text-muted mt-1">{t('settings.integration.syncModal.noNewProperties')}</p>
             )}
           </div>
           <div>
-            <h4 className="font-semibold text-text-primary">Propriétés déjà synchronisées ({stats.syncedProperties.length})</h4>
+            <h4 className="font-semibold text-text-primary">{t('settings.integration.syncModal.syncedProperties')} ({stats.syncedProperties.length})</h4>
             <p className="text-sm text-text-muted mt-1">
               {stats.syncedProperties.length > 0 
-                ? "Ces propriétés sont déjà liées à votre compte Priceye." 
-                : "Aucune propriété n'est encore liée."}
+                ? t('settings.integration.syncModal.alreadySynced')
+                : t('settings.integration.syncModal.noneSynced')}
             </p>
           </div>
         </div>
@@ -176,7 +178,7 @@ function PropertySyncModal({ token, pmsType, onClose }) {
   return (
     <div className="fixed inset-0 bg-black bg-opacity-90 flex items-center justify-center p-4 z-50">
       <div className="bg-bg-secondary rounded-lg shadow-xl w-full max-w-lg p-6 max-h-[90vh] flex flex-col">
-        <h3 className="text-xl font-bold mb-6 text-text-primary shrink-0">Synchroniser les Propriétés</h3>
+        <h3 className="text-xl font-bold mb-6 text-text-primary shrink-0">{t('settings.integration.syncModal.title')}</h3>
         
         <CustomScrollbar className="flex-1 min-h-0">
           {renderContent()}
@@ -188,7 +190,7 @@ function PropertySyncModal({ token, pmsType, onClose }) {
             onClick={() => onClose(false)} // Fermer sans rafraîchir
             className="px-4 py-2 font-semibold text-text-secondary bg-bg-muted rounded-md hover:bg-border-primary"
           >
-            Fermer
+            {t('settings.integration.syncModal.close')}
           </button>
           <button 
             type="button" 
@@ -196,7 +198,7 @@ function PropertySyncModal({ token, pmsType, onClose }) {
             disabled={isLoading || isImporting || !stats || stats.newProperties.length === 0}
             className="px-4 py-2 font-semibold text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:bg-gray-500"
           >
-            {isImporting ? 'Importation en cours...' : `Importer ${stats?.newProperties.length || 0} nouvelle(s) propriété(s)`}
+            {isImporting ? t('settings.integration.syncModal.importing') : `${t('settings.integration.syncModal.import')} ${stats?.newProperties.length || 0} ${t('settings.integration.syncModal.newPropertiesCount')}`}
           </button>
         </div>
       </div>
