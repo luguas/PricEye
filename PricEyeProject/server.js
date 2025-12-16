@@ -4912,31 +4912,78 @@ app.get('/api/news', authenticateToken, async (req, res) => {
         const newsRef = db.collection('system').doc(`marketNews_${language}`);
         const newsDoc = await newsRef.get();
 
-        // Si le cache n'existe pas pour cette langue, générer les actualités
-        if (!newsDoc.exists) {
+        // Si le cache n'existe pas pour cette langue, vérifier l'ancien format puis générer
+        if (!newsDoc.exists || !newsDoc.data()) {
+            // Essayer d'abord l'ancien format de cache (marketNews sans suffixe) comme fallback temporaire
+            if (language === 'fr') {
+                const oldCacheRef = db.collection('system').doc('marketNews');
+                const oldCacheDoc = await oldCacheRef.get();
+                if (oldCacheDoc.exists && oldCacheDoc.data()) {
+                    const oldData = oldCacheDoc.data().data || oldCacheDoc.data();
+                    if (Array.isArray(oldData)) {
+                        console.log(`Utilisation de l'ancien format de cache pour migration...`);
+                        // Migrer vers le nouveau format en arrière-plan (ne bloque pas la réponse)
+                        updateMarketNewsCache(language).catch(err => 
+                            console.error(`Erreur lors de la migration du cache:`, err)
+                        );
+                        return res.status(200).json(oldData);
+                    }
+                }
+            }
             console.log(`Cache d'actualités non trouvé pour la langue ${language}, génération en cours...`);
             try {
                 await updateMarketNewsCache(language);
                 // Réessayer après génération
                 const newNewsDoc = await newsRef.get();
-                if (newNewsDoc.exists) {
+                if (newNewsDoc.exists && newNewsDoc.data() && newNewsDoc.data().data) {
                     return res.status(200).json(newNewsDoc.data().data);
                 }
             } catch (genError) {
                 console.error(`Erreur lors de la génération des actualités pour ${language}:`, genError);
-                // Fallback sur le français si disponible
+                // Fallback sur le français si disponible (nouveau format)
                 if (language !== 'fr') {
                     const fallbackRef = db.collection('system').doc('marketNews_fr');
                     const fallbackDoc = await fallbackRef.get();
-                    if (fallbackDoc.exists) {
+                    if (fallbackDoc.exists && fallbackDoc.data() && fallbackDoc.data().data) {
                         return res.status(200).json(fallbackDoc.data().data);
+                    }
+                }
+                // Fallback sur l'ancien format de cache (marketNews sans suffixe)
+                const oldCacheRef = db.collection('system').doc('marketNews');
+                const oldCacheDoc = await oldCacheRef.get();
+                if (oldCacheDoc.exists && oldCacheDoc.data()) {
+                    const oldData = oldCacheDoc.data().data || oldCacheDoc.data();
+                    if (Array.isArray(oldData)) {
+                        return res.status(200).json(oldData);
                     }
                 }
                 return res.status(404).send({ error: 'Cache d\'actualités non encore généré. Veuillez patienter.' });
             }
         }
         
-        res.status(200).json(newsDoc.data().data); 
+        // Vérifier que le document a bien des données
+        const docData = newsDoc.data();
+        if (!docData) {
+            // Fallback sur l'ancien format de cache
+            const oldCacheRef = db.collection('system').doc('marketNews');
+            const oldCacheDoc = await oldCacheRef.get();
+            if (oldCacheDoc.exists && oldCacheDoc.data()) {
+                const oldData = oldCacheDoc.data().data || oldCacheDoc.data();
+                if (Array.isArray(oldData)) {
+                    return res.status(200).json(oldData);
+                }
+            }
+            return res.status(404).send({ error: 'Cache d\'actualités non encore généré. Veuillez patienter.' });
+        }
+
+        // Récupérer les actualités (gérer les deux formats : avec .data ou directement)
+        const newsData = docData.data || docData;
+        if (!Array.isArray(newsData)) {
+            console.error(`Format de cache invalide pour marketNews_${language}:`, docData);
+            return res.status(500).send({ error: 'Format de cache invalide. Veuillez réessayer plus tard.' });
+        }
+
+        res.status(200).json(newsData); 
 
     } catch (error) {
         console.error('Erreur lors de la récupération des actualités depuis le cache:', error);
