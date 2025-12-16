@@ -3,11 +3,11 @@ import { createGroup, addPropertiesToGroup } from '../services/api.js';
 import { useLanguage } from '../contexts/LanguageContext.jsx';
 
 /**
- * Affiche les suggestions de regroupement de propriétés.
+ * Displays property grouping suggestions.
  * @param {object} props
- * @param {string} props.token - Le jeton d'authentification.
- * @param {Array} props.recommendations - Tableau des recommandations.
- * @param {Function} props.onGroupCreated - Callback pour rafraîchir le dashboard.
+ * @param {string} props.token - Authentication token.
+ * @param {Array} props.recommendations - Array of recommendations.
+ * @param {Function} props.onGroupCreated - Callback to refresh the dashboard.
  */
 function GroupRecommendations({ token, recommendations, onGroupCreated }) {
   const { t } = useLanguage();
@@ -15,7 +15,7 @@ function GroupRecommendations({ token, recommendations, onGroupCreated }) {
   const [error, setError] = useState('');
 
   if (!recommendations || recommendations.length === 0) {
-    return null; // Ne rien afficher s'il n'y a pas de suggestions
+    return null; // Don't display anything if there are no suggestions
   }
 
   const handleCreateGroup = async (recommendation) => {
@@ -28,22 +28,22 @@ function GroupRecommendations({ token, recommendations, onGroupCreated }) {
     setError('');
 
     try {
-      // 1. Créer un nom de groupe (ex: "Groupe Similaire - Paris")
+      // 1. Create a group name (e.g., "Similar Group - Paris")
       const firstPropAddress = recommendation.properties[0].address;
       const groupName = `${t('groupRecommendations.groupNamePrefix')} (${firstPropAddress.split(',')[0]})`;
       
-      // 2. Créer le groupe
+      // 2. Create the group
       const newGroup = await createGroup({ name: groupName }, token);
       
-      // 3. Ajouter les propriétés au groupe
+      // 3. Add properties to the group
       const propertyIds = recommendation.properties.map(p => p.id);
       await addPropertiesToGroup(newGroup.id, propertyIds, token);
       
-      // 4. Rafraîchir le dashboard
+      // 4. Refresh the dashboard
       onGroupCreated();
       
     } catch (err) {
-      console.error("Erreur lors de la création du groupe suggéré:", err);
+      console.error("Error creating suggested group:", err);
       setError(err.message);
     } finally {
       setIsLoading(false);

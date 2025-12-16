@@ -8,7 +8,43 @@ import ConfirmModal from '../components/ConfirmModal.jsx';
 import NewsFeed from '../components/NewsFeed.jsx';
 import GroupRecommendations from '../components/GroupRecommendations.jsx'; 
 import { getDatesFromRange } from '../utils/dateUtils.js';
-import { useLanguage } from '../contexts/LanguageContext.jsx'; 
+import { useLanguage } from '../contexts/LanguageContext.jsx';
+
+/**
+ * Generates AI-related prompts and messages in the user's language
+ * @param {string} language - User's language code (e.g., 'fr', 'en')
+ * @returns {Object} Object containing localized AI prompts and messages
+ */
+const getAIPrompts = (language = 'en') => {
+  const prompts = {
+    fr: {
+      errorRefreshing: "Erreur lors du rafraîchissement",
+      errorFetchingGroup: "Erreur lors de la récupération du groupe",
+      loadingKPIs: "Chargement des indicateurs de performance IA",
+      loadingRecommendations: "Chargement des recommandations IA",
+      aiGainDescription: "Gains générés par l'IA sur la période",
+      aiScoreDescription: "Score de performance de l'IA (sur 100)",
+      aiRecommendationsTitle: "Recommandations de l'IA",
+      aiStrategyDescription: "Stratégie optimisée par l'IA pour maximiser les revenus",
+      errorFetchingData: "Erreur lors de la récupération des données",
+      refreshing: "Rafraîchissement en cours..."
+    },
+    en: {
+      errorRefreshing: "Error refreshing",
+      errorFetchingGroup: "Error fetching group",
+      loadingKPIs: "Loading AI performance indicators",
+      loadingRecommendations: "Loading AI recommendations",
+      aiGainDescription: "AI-generated gains over the period",
+      aiScoreDescription: "AI performance score (out of 100)",
+      aiRecommendationsTitle: "AI Recommendations",
+      aiStrategyDescription: "AI-optimized strategy to maximize revenue",
+      errorFetchingData: "Error fetching data",
+      refreshing: "Refreshing..."
+    }
+  };
+  
+  return prompts[language] || prompts.en;
+}; 
 
 const fallbackPropertyImages = [
   'https://images.unsplash.com/photo-1505691938895-1758d7feb511?auto=format&fit=crop&w=900&q=60',
@@ -132,6 +168,8 @@ function DashboardPage({ token, userProfile }) {
   // Fonction de rafraîchissement des groupes et propriétés (sans condition de modale)
   const refreshGroupsAndProperties = useCallback(async () => {
     if (!token) return;
+    const currentLanguage = userProfile?.language || language || 'en';
+    const prompts = getAIPrompts(currentLanguage);
     try {
       const [propertiesData, groupsData] = await Promise.all([
           getProperties(token),
@@ -141,9 +179,9 @@ function DashboardPage({ token, userProfile }) {
       setProperties(propertiesData);
       setAllGroups(groupsData); 
     } catch (err) {
-      console.error('Erreur lors du rafraîchissement:', err);
+      console.error(`${prompts.errorRefreshing}:`, err);
     }
-  }, [token]);
+  }, [token, userProfile?.language, language]);
 
   const fetchInitialData = useCallback(async () => {
     if (isPropertyModalOpen || isStrategyModalOpen || isRulesModalOpen) return;
@@ -160,20 +198,32 @@ function DashboardPage({ token, userProfile }) {
       setAllGroups(groupsData); 
       setError('');
 
+      const currentLanguage = userProfile?.language || language || 'en';
+      const prompts = getAIPrompts(currentLanguage);
+      
       if (userProfile) {
           const { startDate, endDate } = getDatesFromRange('1m', userProfile.timezone); 
-          const kpiData = await getReportKpis(token, startDate, endDate);
-          setKpis({
-              totalRevenue: kpiData.totalRevenue || 0,
-              avgOccupancy: kpiData.occupancy || 0,
-              adr: kpiData.adr || 0,
-              iaGain: kpiData.iaGain || 0,
-              iaScore: kpiData.iaScore || 0,
-          });
+          try {
+            const kpiData = await getReportKpis(token, startDate, endDate);
+            setKpis({
+                totalRevenue: kpiData.totalRevenue || 0,
+                avgOccupancy: kpiData.occupancy || 0,
+                adr: kpiData.adr || 0,
+                iaGain: kpiData.iaGain || 0,
+                iaScore: kpiData.iaScore || 0,
+            });
+          } catch (kpiError) {
+            console.error(`${prompts.errorFetchingData} (KPIs):`, kpiError);
+          }
       }
       
-      const recs = await getGroupRecommendations(token);
-      setRecommendations(recs);
+      try {
+        const recs = await getGroupRecommendations(token);
+        setRecommendations(recs);
+      } catch (recError) {
+        console.error(`${prompts.errorFetchingData} (${prompts.aiRecommendationsTitle}):`, recError);
+        setRecommendations([]);
+      }
 
     } catch (err) {
       setError(err.message);
@@ -235,6 +285,8 @@ function DashboardPage({ token, userProfile }) {
 
   const handleOpenStrategyModal = async (item) => {
     setOpenMenuId(null);
+    const currentLanguage = userProfile?.language || language || 'en';
+    const prompts = getAIPrompts(currentLanguage);
     // Si c'est un groupe, récupérer les données les plus récentes depuis le serveur
     if (!item.address && item.id) {
       try {
@@ -246,7 +298,7 @@ function DashboardPage({ token, userProfile }) {
           setEditingGroup(item);
         }
       } catch (err) {
-        console.error('Erreur lors de la récupération du groupe:', err);
+        console.error(`${prompts.errorFetchingGroup}:`, err);
         setEditingGroup(item);
       }
     } else {
@@ -330,36 +382,40 @@ function DashboardPage({ token, userProfile }) {
       });
   };
   
-  const statsCards = [
-    {
-      id: 'totalRevenue',
-      title: t('dashboard.kpi.revenue'),
-      value: formatCurrency(kpis.totalRevenue),
-      helper: t('dashboard.kpi.revenueHelper'),
-      icon: RevenueIcon,
-    },
-    {
-      id: 'avgOccupancy',
-      title: t('dashboard.kpi.occupancy'),
-      value: `${(kpis.avgOccupancy || 0).toFixed(1)}%`,
-      helper: t('dashboard.kpi.occupancyHelper'),
-      icon: OccupancyIcon,
-    },
-    {
-      id: 'adr',
-      title: t('dashboard.kpi.adr'),
-      value: formatCurrencyAdr(kpis.adr),
-      helper: t('dashboard.kpi.adrHelper'),
-      icon: AdrIcon,
-    },
-    {
-      id: 'iaGain',
-      title: t('dashboard.kpi.iaGain'),
-      value: formatCurrency(kpis.iaGain),
-      helper: t('dashboard.kpi.iaGainHelper'),
-      icon: AiIcon,
-    },
-  ];
+  const statsCards = useMemo(() => {
+    const currentLanguage = userProfile?.language || language || 'en';
+    const prompts = getAIPrompts(currentLanguage);
+    return [
+      {
+        id: 'totalRevenue',
+        title: t('dashboard.kpi.revenue'),
+        value: formatCurrency(kpis.totalRevenue),
+        helper: t('dashboard.kpi.revenueHelper'),
+        icon: RevenueIcon,
+      },
+      {
+        id: 'avgOccupancy',
+        title: t('dashboard.kpi.occupancy'),
+        value: `${(kpis.avgOccupancy || 0).toFixed(1)}%`,
+        helper: t('dashboard.kpi.occupancyHelper'),
+        icon: OccupancyIcon,
+      },
+      {
+        id: 'adr',
+        title: t('dashboard.kpi.adr'),
+        value: formatCurrencyAdr(kpis.adr),
+        helper: t('dashboard.kpi.adrHelper'),
+        icon: AdrIcon,
+      },
+      {
+        id: 'iaGain',
+        title: t('dashboard.kpi.iaGain'),
+        value: formatCurrency(kpis.iaGain),
+        helper: prompts.aiGainDescription || t('dashboard.kpi.iaGainHelper'),
+        icon: AiIcon,
+      },
+    ];
+  }, [kpis, userProfile?.language, language, t]);
   
   const renderStatsCards = () => (
     <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
@@ -376,6 +432,11 @@ function DashboardPage({ token, userProfile }) {
               <div className="text-global-blanc text-left font-h1-font-family text-h1-font-size font-h1-font-weight font-bold relative">
                 {value || '—'}
               </div>
+              {helper && (
+                <div className="text-global-inactive text-left text-xs font-normal relative mt-1">
+                  {helper}
+                </div>
+              )}
             </div>
             <div
               className="rounded-[10px] border border-solid border-global-stroke-highlight-2nd flex flex-col gap-2.5 items-center justify-center shrink-0 w-[50px] h-[50px] relative"

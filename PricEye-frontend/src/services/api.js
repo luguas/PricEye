@@ -537,14 +537,14 @@ export function getGroupRecommendations(token) {
     });
 }
 
-export function getMarketNews(token) {
-    return apiRequest('/api/news', {
+export function getMarketNews(token, language = 'fr') {
+    return apiRequest(`/api/news?language=${language}`, {
         token,
     });
 }
 
-export function getPropertySpecificNews(propertyId, token) {
-    return apiRequest(`/api/properties/${propertyId}/news`, {
+export function getPropertySpecificNews(propertyId, token, language = 'fr') {
+    return apiRequest(`/api/properties/${propertyId}/news?language=${language}`, {
         token,
     });
 }

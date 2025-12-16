@@ -3044,8 +3044,9 @@ app.get('/api/properties/:id/news', authenticateToken, async (req, res) => {
         const fullLocation = property.location || 'France';
         const city = fullLocation.split(',')[0].trim();
 
-        // 2. Vérifier le cache de cette propriété
-        const cacheRef = db.collection('properties').doc(propertyId).collection('cache').doc('localNews');
+        // 2. Vérifier le cache de cette propriété (avec langue)
+        const language = req.query.language || userProfileDoc.data()?.language || 'fr';
+        const cacheRef = db.collection('properties').doc(propertyId).collection('cache').doc(`localNews_${language}`);
         const cacheDoc = await cacheRef.get();
         const now = new Date();
         const oneDay = 24 * 60 * 60 * 1000; 
@@ -3054,15 +3055,17 @@ app.get('/api/properties/:id/news', authenticateToken, async (req, res) => {
             const cacheData = cacheDoc.data();
             const cacheAge = (now.getTime() - cacheData.updatedAt.toDate().getTime());
             
-            if (cacheAge < oneDay) {
-                console.log(`Utilisation du cache pour les actualités de ${propertyId}`);
+            if (cacheAge < oneDay && cacheData.language === language) {
+                console.log(`Utilisation du cache pour les actualités de ${propertyId} (${language})`);
                 return res.status(200).json(cacheData.data);
             }
         }
 
         // 3. Si cache vide ou expiré, appeler l'IA
-        console.log(`Cache expiré ou absent pour ${propertyId} (ville: ${city}), appel de Gemini...`);
-        const prompt = `
+        const isFrench = language === 'fr' || language === 'fr-FR';
+        console.log(`Cache expiré ou absent pour ${propertyId} (ville: ${city}, langue: ${language}), appel de Gemini...`);
+        
+        const prompt = isFrench ? `
             Tu es un analyste de marché expert pour la location saisonnière.
             Utilise l'outil de recherche pour trouver 2-3 actualités ou événements 
             très récents (moins de 7 jours) OU à venir (6 prochains mois)
@@ -3071,8 +3074,8 @@ app.get('/api/properties/:id/news', authenticateToken, async (req, res) => {
             les tendances qui impactent la demande de location dans cette ville.
 
             Pour chaque actualité/événement:
-            1. Fournis un titre concis.
-            2. Fais un résumé d'une phrase.
+            1. Fournis un titre concis en français.
+            2. Fais un résumé d'une phrase en français.
             3. Estime l'impact sur les prix en pourcentage (ex: 15 pour +15%, -5 pour -5%).
             4. Catégorise cet impact comme "élevé", "modéré", ou "faible".
 
@@ -3088,6 +3091,32 @@ app.get('/api/properties/:id/news', authenticateToken, async (req, res) => {
                     "impact_category": "élevé"
                 }
             ]
+        ` : `
+            You are an expert market analyst for seasonal rentals.
+            Use the search tool to find 2-3 very recent news items or events 
+            (less than 7 days old) OR upcoming (next 6 months)
+            specific to the city: "${city}".
+            Focus on events (concerts, festivals, trade shows) or
+            trends that impact rental demand in this city.
+
+            For each news item/event:
+            1. Provide a concise title in English.
+            2. Write a one-sentence summary in English.
+            3. Estimate the impact on prices as a percentage (e.g., 15 for +15%, -5 for -5%).
+            4. Categorize this impact as "high", "medium", or "low".
+
+            Respond ONLY with a valid JSON array. 
+            Do not include any text before or after the array, not even \`\`\`json.
+            The format should be:
+            [
+                {
+                    "title": "News title",
+                    "summary": "News summary.",
+                    "source": "Source name (e.g., 'Le Monde')",
+                    "impact_percentage": 15,
+                    "impact_category": "high"
+                }
+            ]
         `;
 
         const newsData = await callGeminiWithSearch(prompt);
@@ -3097,9 +3126,10 @@ app.get('/api/properties/:id/news', authenticateToken, async (req, res) => {
              console.warn("Aucune actualité pertinente trouvée par Gemini pour", city);
         }
 
-        // 4. Mettre à jour le cache
+        // 4. Mettre à jour le cache (avec langue)
         await cacheRef.set({
             data: newsDataArray,
+            language: language,
             updatedAt: admin.firestore.FieldValue.serverTimestamp()
         });
         
@@ -4878,11 +4908,32 @@ RAPPEL CRITIQUE : La réponse finale doit être UNIQUEMENT ce JSON, sans texte a
 app.get('/api/news', authenticateToken, async (req, res) => {
     try {
         const db = admin.firestore();
-        const newsRef = db.collection('system').doc('marketNews');
+        const language = req.query.language || 'fr'; // Par défaut français
+        const newsRef = db.collection('system').doc(`marketNews_${language}`);
         const newsDoc = await newsRef.get();
 
+        // Si le cache n'existe pas pour cette langue, générer les actualités
         if (!newsDoc.exists) {
-            return res.status(404).send({ error: 'Cache d\'actualités non encore généré. Veuillez patienter.' });
+            console.log(`Cache d'actualités non trouvé pour la langue ${language}, génération en cours...`);
+            try {
+                await updateMarketNewsCache(language);
+                // Réessayer après génération
+                const newNewsDoc = await newsRef.get();
+                if (newNewsDoc.exists) {
+                    return res.status(200).json(newNewsDoc.data().data);
+                }
+            } catch (genError) {
+                console.error(`Erreur lors de la génération des actualités pour ${language}:`, genError);
+                // Fallback sur le français si disponible
+                if (language !== 'fr') {
+                    const fallbackRef = db.collection('system').doc('marketNews_fr');
+                    const fallbackDoc = await fallbackRef.get();
+                    if (fallbackDoc.exists) {
+                        return res.status(200).json(fallbackDoc.data().data);
+                    }
+                }
+                return res.status(404).send({ error: 'Cache d\'actualités non encore généré. Veuillez patienter.' });
+            }
         }
         
         res.status(200).json(newsDoc.data().data); 
@@ -4918,8 +4969,9 @@ app.get('/api/properties/:id/news', authenticateToken, async (req, res) => {
         const fullLocation = property.location || 'France';
         const city = fullLocation.split(',')[0].trim();
 
-        // 2. Vérifier le cache de cette propriété
-        const cacheRef = db.collection('properties').doc(propertyId).collection('cache').doc('localNews');
+        // 2. Vérifier le cache de cette propriété (avec langue)
+        const language = req.query.language || userProfileDoc.data()?.language || 'fr';
+        const cacheRef = db.collection('properties').doc(propertyId).collection('cache').doc(`localNews_${language}`);
         const cacheDoc = await cacheRef.get();
         const now = new Date();
         const oneDay = 24 * 60 * 60 * 1000; 
@@ -4928,15 +4980,17 @@ app.get('/api/properties/:id/news', authenticateToken, async (req, res) => {
             const cacheData = cacheDoc.data();
             const cacheAge = (now.getTime() - cacheData.updatedAt.toDate().getTime());
             
-            if (cacheAge < oneDay) {
-                console.log(`Utilisation du cache pour les actualités de ${propertyId}`);
+            if (cacheAge < oneDay && cacheData.language === language) {
+                console.log(`Utilisation du cache pour les actualités de ${propertyId} (${language})`);
                 return res.status(200).json(cacheData.data);
             }
         }
 
         // 3. Si cache vide ou expiré, appeler l'IA
-        console.log(`Cache expiré ou absent pour ${propertyId} (ville: ${city}), appel de Gemini...`);
-        const prompt = `
+        const isFrench = language === 'fr' || language === 'fr-FR';
+        console.log(`Cache expiré ou absent pour ${propertyId} (ville: ${city}, langue: ${language}), appel de Gemini...`);
+        
+        const prompt = isFrench ? `
             Tu es un analyste de marché expert pour la location saisonnière.
             Utilise l'outil de recherche pour trouver 2-3 actualités ou événements 
             très récents (moins de 7 jours) OU à venir (6 prochains mois)
@@ -4945,8 +4999,8 @@ app.get('/api/properties/:id/news', authenticateToken, async (req, res) => {
             les tendances qui impactent la demande de location dans cette ville.
 
             Pour chaque actualité/événement:
-            1. Fournis un titre concis.
-            2. Fais un résumé d'une phrase.
+            1. Fournis un titre concis en français.
+            2. Fais un résumé d'une phrase en français.
             3. Estime l'impact sur les prix en pourcentage (ex: 15 pour +15%, -5 pour -5%).
             4. Catégorise cet impact comme "élevé", "modéré", ou "faible".
 
@@ -4962,6 +5016,32 @@ app.get('/api/properties/:id/news', authenticateToken, async (req, res) => {
                     "impact_category": "élevé"
                 }
             ]
+        ` : `
+            You are an expert market analyst for seasonal rentals.
+            Use the search tool to find 2-3 very recent news items or events 
+            (less than 7 days old) OR upcoming (next 6 months)
+            specific to the city: "${city}".
+            Focus on events (concerts, festivals, trade shows) or
+            trends that impact rental demand in this city.
+
+            For each news item/event:
+            1. Provide a concise title in English.
+            2. Write a one-sentence summary in English.
+            3. Estimate the impact on prices as a percentage (e.g., 15 for +15%, -5 for -5%).
+            4. Categorize this impact as "high", "medium", or "low".
+
+            Respond ONLY with a valid JSON array. 
+            Do not include any text before or after the array, not even \`\`\`json.
+            The format should be:
+            [
+                {
+                    "title": "News title",
+                    "summary": "News summary.",
+                    "source": "Source name (e.g., 'Le Monde')",
+                    "impact_percentage": 15,
+                    "impact_category": "high"
+                }
+            ]
         `;
 
         const newsData = await callGeminiWithSearch(prompt);
@@ -4971,9 +5051,10 @@ app.get('/api/properties/:id/news', authenticateToken, async (req, res) => {
              console.warn("Aucune actualité pertinente trouvée par Gemini pour", city);
         }
 
-        // 4. Mettre à jour le cache
+        // 4. Mettre à jour le cache (avec langue)
         await cacheRef.set({
             data: newsDataArray,
+            language: language,
             updatedAt: admin.firestore.FieldValue.serverTimestamp()
         });
         
@@ -5000,10 +5081,12 @@ app.get('/api/properties/:id/news', authenticateToken, async (req, res) => {
 /**
  * Met à jour le cache des actualités du marché dans Firestore.
  */
-async function updateMarketNewsCache() {
-    console.log('Tâche planifiée : Démarrage de la mise à jour des actualités...');
+async function updateMarketNewsCache(language = 'fr') {
+    console.log(`Tâche planifiée : Démarrage de la mise à jour des actualités (${language})...`);
     try {
-        const prompt = `
+        const isFrench = language === 'fr' || language === 'fr-FR';
+        
+        const prompt = isFrench ? `
             Tu es un analyste de marché expert pour la location saisonnière en France.
             Utilise l'outil de recherche pour trouver les 3-4 actualités ou tendances 
             les plus récentes et pertinentes (moins de 7 jours) qui impactent 
@@ -5012,8 +5095,8 @@ async function updateMarketNewsCache() {
             annoncés récemment en France pour les 6 prochains mois.
 
             Pour chaque actualité:
-            1. Fournis un titre concis.
-            2. Fais un résumé d'une phrase.
+            1. Fournis un titre concis en français.
+            2. Fais un résumé d'une phrase en français.
             3. Estime l'impact sur les prix en pourcentage (ex: 15 pour +15%, -5 pour -5%).
             4. Catégorise cet impact comme "élevé", "modéré", ou "faible".
 
@@ -5029,6 +5112,31 @@ async function updateMarketNewsCache() {
                     "impact_category": "élevé"
                 }
             ]
+        ` : `
+            You are an expert market analyst for seasonal rentals in France.
+            Use the search tool to find the 3-4 most recent and relevant news or trends 
+            (less than 7 days old) that impact the rental market (Airbnb, Booking type) in France.
+            Also search for major events (concerts, festivals, trade shows) 
+            recently announced in France for the next 6 months.
+
+            For each news item:
+            1. Provide a concise title in English.
+            2. Write a one-sentence summary in English.
+            3. Estimate the impact on prices as a percentage (e.g., 15 for +15%, -5 for -5%).
+            4. Categorize this impact as "high", "medium", or "low".
+
+            Respond ONLY with a valid JSON array. 
+            Do not include any text before or after the array, not even \`\`\`json.
+            The format should be:
+            [
+                {
+                    "title": "News title",
+                    "summary": "News summary.",
+                    "source": "Source name (e.g., 'Le Monde')",
+                    "impact_percentage": 15,
+                    "impact_category": "high"
+                }
+            ]
         `;
         
         const newsData = await callGeminiWithSearch(prompt); // Appelle la fonction avec retry
@@ -5038,22 +5146,24 @@ async function updateMarketNewsCache() {
         }
 
         const db = admin.firestore();
-        const newsRef = db.collection('system').doc('marketNews');
+        const newsRef = db.collection('system').doc(`marketNews_${language}`);
         await newsRef.set({
             data: newsData,
-            updatedAt: admin.firestore.FieldValue.serverTimestamp()
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            language: language
         });
-        console.log('Mise à jour du cache des actualités terminée avec succès.');
+        console.log(`Mise à jour du cache des actualités (${language}) terminée avec succès.`);
 
     } catch (error) {
-        console.error('Erreur lors de la mise à jour du cache des actualités:', error.message);
+        console.error(`Erreur lors de la mise à jour du cache des actualités (${language}):`, error.message);
     }
 }
 
 // Planifier la tâche pour s'exécuter tous les jours à 3h00 du matin
 console.log("Mise en place de la tâche planifiée pour les actualités (tous les jours à 3h00).");
 cron.schedule('0 3 * * *', () => {
-    updateMarketNewsCache();
+    updateMarketNewsCache('fr');
+    updateMarketNewsCache('en');
 }, {
     scheduled: true,
     timezone: "Europe/Paris"
@@ -5070,7 +5180,10 @@ cron.schedule('0 4 * * *', () => {
 
 
 // Lancer une mise à jour au démarrage du serveur (pour avoir des données fraîches)
-setTimeout(updateMarketNewsCache, 10000); // Délai de 10s
+setTimeout(() => {
+    updateMarketNewsCache('fr');
+    updateMarketNewsCache('en');
+}, 10000); // Délai de 10s
 
 
 // ============================================================================

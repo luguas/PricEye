@@ -78,7 +78,7 @@ function PropertyNewsFeed({ token, propertyId }) {
       setIsLoading(true);
       setError('');
       try {
-        const data = await getPropertySpecificNews(propertyId, token);
+        const data = await getPropertySpecificNews(propertyId, token, language);
         setNews(data); 
       } catch (err) {
         setError(t('propertyNewsFeed.error', { message: err.message }));
@@ -88,7 +88,7 @@ function PropertyNewsFeed({ token, propertyId }) {
     };
 
     fetchNews();
-  }, [token, propertyId, t]);
+  }, [token, propertyId, language, t]);
 
   // Fonction pour déterminer la couleur et l'icône de l'impact
   const getImpactStyle = (percentage, category) => {

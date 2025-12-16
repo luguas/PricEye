@@ -11,16 +11,57 @@ import IconsStateProp from '../components/IconsStateProp.jsx';
 import IconsStateArgent from '../components/IconsStateArgent.jsx';
 import IconsStateLogoPriceye from '../components/IconsStateLogoPriceye.jsx';
 import AlertModal from '../components/AlertModal.jsx';
+import { useLanguage } from '../contexts/LanguageContext.jsx';
 
 /**
- * Calcule la tendance entre deux valeurs.
- * @param {number} current - Période N
- * @param {number} previous - Période N-1
+ * Generates AI-related prompts and messages in the user's language
+ * @param {string} language - User's language code (e.g., 'fr', 'en')
+ * @returns {Object} Object containing localized AI prompts and messages
+ */
+const getAIPrompts = (language = 'en') => {
+  const prompts = {
+    fr: {
+      baseRevenueEstimation: "Estimation du revenu de base (à ajuster selon vos données)",
+      approximation: "Approximation",
+      aiGainCalculation: "Calcul du gain généré par l'IA",
+      aiScoreCalculation: "Calcul du score de performance de l'IA",
+      demandExplanation: "Demande = nombre de nuits réservées (nightsBookedData représente la demande satisfaite)",
+      supplyExplanation: "Offre = nuits disponibles (supply)",
+      groupDataByMonth: "Grouper les données par mois",
+      createDataForAI: "Créer les données pour Gain IA & Score IA (groupées par mois)",
+      errorProcessingDate: "Erreur lors du traitement de la date",
+      continueWithNextDate: "Continuer avec la prochaine date",
+      ignoreInvalidValues: "Ignorer les valeurs invalides",
+      ignoreInvalidDates: "Ignorer les dates invalides"
+    },
+    en: {
+      baseRevenueEstimation: "Base revenue estimation (to be adjusted according to your data)",
+      approximation: "Approximation",
+      aiGainCalculation: "AI gain calculation",
+      aiScoreCalculation: "AI performance score calculation",
+      demandExplanation: "Demand = number of nights booked (nightsBookedData represents satisfied demand)",
+      supplyExplanation: "Supply = available nights (supply)",
+      groupDataByMonth: "Group data by month",
+      createDataForAI: "Create data for AI Gain & AI Score (grouped by month)",
+      errorProcessingDate: "Error processing date",
+      continueWithNextDate: "Continue with next date",
+      ignoreInvalidValues: "Ignore invalid values",
+      ignoreInvalidDates: "Ignore invalid dates"
+    }
+  };
+  
+  return prompts[language] || prompts.en;
+};
+
+/**
+ * Calculates the trend between two values.
+ * @param {number} current - Period N
+ * @param {number} previous - Period N-1
  * @returns {{percent: number | null, change: 'increase' | 'decrease' | 'neutral'}}
  */
 const calculateTrend = (current, previous) => {
   if (previous === 0 || previous == null) {
-      // Si N-1 est 0, toute augmentation est "infinie"
+      // If N-1 is 0, any increase is "infinite"
       return { percent: current > 0 ? 100.0 : 0, change: current > 0 ? 'increase' : 'neutral' };
   }
   
@@ -33,14 +74,14 @@ const calculateTrend = (current, previous) => {
 };
 
 /**
- * Sous-composant pour afficher un KPI avec sa tendance.
+ * Sub-component to display a KPI with its trend.
  */
 function KpiCard({ title, value, previousValue, formatter, isLoading }) {
     if (isLoading) {
         return (
              <div className="bg-bg-secondary p-5 rounded-xl shadow-lg">
                 <p className="text-sm text-text-muted">{title}</p>
-                <p className="text-2xl font-bold text-text-muted animate-pulse">Chargement...</p>
+                <p className="text-2xl font-bold text-text-muted animate-pulse">Loading...</p>
                 <p className="text-sm text-text-muted h-5"></p>
              </div>
         );
@@ -74,6 +115,9 @@ function KpiCard({ title, value, previousValue, formatter, isLoading }) {
 
 
 function ReportPage({ token, userProfile }) { 
+  const { language: userLanguage } = useLanguage();
+  const aiPrompts = getAIPrompts(userProfile?.language || userLanguage || 'en');
+  
   const [allProperties, setAllProperties] = useState([]);
   const [filteredProperties, setFilteredProperties] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -165,7 +209,8 @@ function ReportPage({ token, userProfile }) {
   };
 
   // Fonctions de transformation des données pour les nouveaux graphiques
-  const transformToMonthlyRevparData = (revenueData, perfData) => {
+  const transformToMonthlyRevparData = (revenueData, perfData, language = 'en') => {
+    const prompts = getAIPrompts(language);
     if (!revenueData || !revenueData.labels || !Array.isArray(revenueData.labels) || revenueData.labels.length === 0) {
       return null;
     }
@@ -174,22 +219,22 @@ function ReportPage({ token, userProfile }) {
       return null;
     }
     
-    // Grouper les données par mois
+    // Group data by month
     const monthlyData = new Map();
     
     revenueData.labels.forEach((dateStr, index) => {
       try {
-        // Vérifier si c'est une date valide
+        // Check if it's a valid date
         if (!dateStr || typeof dateStr !== 'string') {
-          return; // Ignorer les valeurs invalides
+          return; // Ignore invalid values
         }
         
         let date;
-        // Vérifier si c'est un format de semaine (YYYY-W##)
+        // Check if it's a week format (YYYY-W##)
         if (dateStr.match(/^\d{4}-W\d{2}$/)) {
-          // Extraire l'année et la semaine
+          // Extract year and week
           const [year, week] = dateStr.split('-W');
-          // Approximer la date au début de la semaine
+          // Approximate date to the beginning of the week
           const jan1 = new Date(parseInt(year), 0, 1);
           const daysOffset = (parseInt(week) - 1) * 7;
           date = new Date(jan1);
@@ -199,11 +244,12 @@ function ReportPage({ token, userProfile }) {
         }
         
         if (isNaN(date.getTime())) {
-          return; // Ignorer les dates invalides
+          return; // Ignore invalid dates
         }
         
         const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
-        const monthLabel = date.toLocaleDateString('fr-FR', { month: 'short' });
+        const locale = language === 'fr' ? 'fr-FR' : 'en-US';
+        const monthLabel = date.toLocaleDateString(locale, { month: 'short' });
         
         if (!monthlyData.has(monthKey)) {
           monthlyData.set(monthKey, {
@@ -223,8 +269,8 @@ function ReportPage({ token, userProfile }) {
         monthData.nightsBooked += nightsBookedValue;
         monthData.totalNights += nightsBookedValue + supplyValue;
       } catch (err) {
-        console.error('Erreur lors du traitement de la date:', dateStr, err);
-        // Continuer avec la prochaine date
+        console.error(`${prompts.errorProcessingDate}:`, dateStr, err);
+        // Continue with next date
       }
     });
     
@@ -232,7 +278,7 @@ function ReportPage({ token, userProfile }) {
       return null;
     }
     
-    // Calculer ADR, RevPAR et Occupation
+    // Calculate ADR, RevPAR and Occupancy
     const labels = [];
     const adrData = [];
     const revparData = [];
@@ -252,7 +298,8 @@ function ReportPage({ token, userProfile }) {
     return { labels, adrData, revparData, occupancyData };
   };
 
-  const transformToMonthlyIaData = (revenueData, perfData) => {
+  const transformToMonthlyIaData = (revenueData, perfData, language = 'en') => {
+    const prompts = getAIPrompts(language);
     if (!revenueData || !revenueData.labels || !Array.isArray(revenueData.labels) || revenueData.labels.length === 0) {
       return null;
     }
@@ -261,22 +308,22 @@ function ReportPage({ token, userProfile }) {
       return null;
     }
     
-    // Grouper les données par mois
+    // Group data by month
     const monthlyData = new Map();
     
     revenueData.labels.forEach((dateStr, index) => {
       try {
-        // Vérifier si c'est une date valide
+        // Check if it's a valid date
         if (!dateStr || typeof dateStr !== 'string') {
-          return; // Ignorer les valeurs invalides
+          return; // Ignore invalid values
         }
         
         let date;
-        // Vérifier si c'est un format de semaine (YYYY-W##)
+        // Check if it's a week format (YYYY-W##)
         if (dateStr.match(/^\d{4}-W\d{2}$/)) {
-          // Extraire l'année et la semaine
+          // Extract year and week
           const [year, week] = dateStr.split('-W');
-          // Approximer la date au début de la semaine
+          // Approximate date to the beginning of the week
           const jan1 = new Date(parseInt(year), 0, 1);
           const daysOffset = (parseInt(week) - 1) * 7;
           date = new Date(jan1);
@@ -286,11 +333,12 @@ function ReportPage({ token, userProfile }) {
         }
         
         if (isNaN(date.getTime())) {
-          return; // Ignorer les dates invalides
+          return; // Ignore invalid dates
         }
         
         const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
-        const monthLabel = date.toLocaleDateString('fr-FR', { month: 'short' });
+        const locale = language === 'fr' ? 'fr-FR' : 'en-US';
+        const monthLabel = date.toLocaleDateString(locale, { month: 'short' });
         
         if (!monthlyData.has(monthKey)) {
           monthlyData.set(monthKey, {
@@ -307,11 +355,11 @@ function ReportPage({ token, userProfile }) {
         
         monthData.revenue += revenueValue;
         monthData.nightsBooked += nightsBookedValue;
-        // Estimation du revenu de base (à ajuster selon vos données)
+        // Base revenue estimation (to be adjusted according to your data)
         monthData.baseRevenue += revenueValue * 0.8; // Approximation
       } catch (err) {
-        console.error('Erreur lors du traitement de la date:', dateStr, err);
-        // Continuer avec la prochaine date
+        console.error(`${prompts.errorProcessingDate}:`, dateStr, err);
+        // Continue with next date
       }
     });
     
@@ -336,7 +384,8 @@ function ReportPage({ token, userProfile }) {
   };
 
   // NOUVEAU: Transformer les données pour le graphique Offre vs Demande
-  const transformToMarketTrendData = (revenueData, perfData) => {
+  const transformToMarketTrendData = (revenueData, perfData, language = 'en') => {
+    const prompts = getAIPrompts(language);
     if (!revenueData || !revenueData.labels || !Array.isArray(revenueData.labels) || revenueData.labels.length === 0) {
       return null;
     }
@@ -345,7 +394,7 @@ function ReportPage({ token, userProfile }) {
       return null;
     }
     
-    // Grouper les données par mois
+    // Group data by month
     const monthlyData = new Map();
     
     revenueData.labels.forEach((dateStr, index) => {
@@ -370,7 +419,8 @@ function ReportPage({ token, userProfile }) {
         }
         
         const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
-        const monthLabel = date.toLocaleDateString('fr-FR', { month: 'short' });
+        const locale = language === 'fr' ? 'fr-FR' : 'en-US';
+        const monthLabel = date.toLocaleDateString(locale, { month: 'short' });
         
         if (!monthlyData.has(monthKey)) {
           monthlyData.set(monthKey, {
@@ -381,15 +431,15 @@ function ReportPage({ token, userProfile }) {
         }
         
         const monthData = monthlyData.get(monthKey);
-        // Demande = nombre de nuits réservées (nightsBookedData représente la demande satisfaite)
+        // Demand = number of nights booked (nightsBookedData represents satisfied demand)
         const demandeValue = revenueData.nightsBookedData?.[index] || 0;
-        // Offre = nuits disponibles (supply)
+        // Supply = available nights (supply)
         const offreValue = revenueData.supplyData?.[index] || 0;
         
         monthData.demande += demandeValue;
         monthData.offre += offreValue;
       } catch (err) {
-        console.error('Erreur lors du traitement de la date:', dateStr, err);
+        console.error(`${prompts.errorProcessingDate}:`, dateStr, err);
       }
     });
     
@@ -412,8 +462,8 @@ function ReportPage({ token, userProfile }) {
 
   // Transformer les données pour le graphique ADR vs Marché
   const transformToAdrVsMarketData = (allProperties) => {
-    // Pour l'instant, on utilise des données de test basées sur le design Figma
-    // Plus tard, cela pourra être remplacé par de vraies données de l'API
+    // For now, we use test data based on Figma design
+    // Later, this can be replaced with real API data
     if (!allProperties || allProperties.length === 0) {
       // Données de test par défaut
       return {
@@ -469,7 +519,7 @@ function ReportPage({ token, userProfile }) {
       },
       // Prévisions synthétiques par propriété (radar)
       radar: {
-        labels: ['Revenu', 'Occupation', 'ADR', 'Score IA', 'ROI'],
+        labels: ['Revenue', 'Occupancy', 'ADR', 'AI Score', 'ROI'],
         data: [75, 60, 80, 70, 65]
       }
     };
@@ -507,7 +557,7 @@ function ReportPage({ token, userProfile }) {
       setAllProperties(data);
       setError('');
     } catch (err) {
-      setError(`Erreur de chargement des propriétés: ${err.message}`);
+      setError(`Error loading properties: ${err.message}`);
     } finally {
       setIsLoading(false);
     }
@@ -584,31 +634,32 @@ function ReportPage({ token, userProfile }) {
           // Transformer les données pour les nouveaux graphiques
           if (revenueData && revenueData.labels && Array.isArray(revenueData.labels) && revenueData.labels.length > 0) {
             try {
-              // Créer les données pour RevPAR, ADR & Occupation (groupées par mois)
-              const revparChartData = transformToMonthlyRevparData(revenueData, perfData);
+              // Create data for RevPAR, ADR & Occupancy (grouped by month)
+              const currentLanguage = userProfile?.language || userLanguage || 'en';
+              const revparChartData = transformToMonthlyRevparData(revenueData, perfData, currentLanguage);
               if (revparChartData) {
                 setRevparData(revparChartData);
               } else {
                 setRevparData(null);
               }
               
-              // Créer les données pour Gain IA & Score IA (groupées par mois)
-              const iaChartData = transformToMonthlyIaData(revenueData, perfData);
+              // Create data for AI Gain & AI Score (grouped by month)
+              const iaChartData = transformToMonthlyIaData(revenueData, perfData, currentLanguage);
               if (iaChartData) {
                 setIaData(iaChartData);
               } else {
                 setIaData(null);
               }
               
-              // NOUVEAU: Créer les données pour Offre vs Demande (groupées par mois)
-              const marketTrendChartData = transformToMarketTrendData(revenueData, perfData);
+              // NEW: Create data for Supply vs Demand (grouped by month)
+              const marketTrendChartData = transformToMarketTrendData(revenueData, perfData, currentLanguage);
               if (marketTrendChartData) {
                 setMarketData(marketTrendChartData);
               } else {
                 setMarketData(null);
               }
             } catch (err) {
-              console.error('Erreur lors de la transformation des données:', err);
+              console.error('Error transforming data:', err);
               setRevparData(null);
               setIaData(null);
               setMarketData(null);
@@ -620,8 +671,8 @@ function ReportPage({ token, userProfile }) {
           }
           
       } catch (err) {
-          console.error('Erreur lors du chargement des KPIs:', err);
-          setError(`Erreur de chargement des KPIs: ${err.message || 'Erreur inconnue'}`);
+          console.error('Error loading KPIs:', err);
+          setError(`Error loading KPIs: ${err.message || 'Unknown error'}`);
           setKpis(null);
           setPrevKpis(null);
           setChartData(null);
@@ -755,7 +806,7 @@ function ReportPage({ token, userProfile }) {
             data: { 
               labels: chartData.labels, 
               datasets: [{ 
-                label: 'Revenus Réels', 
+                label: 'Real Revenue', 
                 data: chartData.revenueData, 
                 borderColor: '#3b82f6', 
                 backgroundColor: 'rgba(59, 130, 246, 0.1)', 
@@ -797,7 +848,7 @@ function ReportPage({ token, userProfile }) {
           labels: performanceData.labels,
           datasets: [
             { 
-              label: 'Réservations', 
+              label: 'Bookings', 
               data: performanceData.bookingCounts, 
               backgroundColor: '#00d3f2', // Couleur highlight-2nd
               borderColor: '#00d3f2',
@@ -1002,7 +1053,7 @@ function ReportPage({ token, userProfile }) {
           labels: iaData.labels,
           datasets: [
             {
-              label: 'Gain IA (€)',
+              label: 'AI Gain (€)',
               data: iaData.gainIaData,
               borderColor: '#fef137',
               backgroundColor: 'transparent',
@@ -1014,7 +1065,7 @@ function ReportPage({ token, userProfile }) {
               yAxisID: 'y',
             },
             {
-              label: 'Score IA (/100)',
+              label: 'AI Score (/100)',
               data: iaData.scoreIaData,
               borderColor: '#00d3f2',
               backgroundColor: 'transparent',
@@ -1100,7 +1151,7 @@ function ReportPage({ token, userProfile }) {
           labels: marketData.labels,
           datasets: [
             {
-              label: 'Demande',
+              label: 'Demand',
               data: marketData.demandeData,
               borderColor: '#00d3f2',
               backgroundColor: 'transparent',
@@ -1113,7 +1164,7 @@ function ReportPage({ token, userProfile }) {
               pointHoverRadius: 6,
             },
             {
-              label: 'Offre',
+              label: 'Supply',
               data: marketData.offreData,
               borderColor: '#fef137',
               backgroundColor: 'transparent',
@@ -1179,14 +1230,14 @@ function ReportPage({ token, userProfile }) {
           labels: adrVsMarketData.labels,
           datasets: [
             {
-              label: 'ADR Marché',
+              label: 'Market ADR',
               data: adrVsMarketData.marketAdrData,
               backgroundColor: 'rgba(148, 163, 184, 0.3)',
               borderColor: '#94a3b8',
               borderWidth: 1,
             },
             {
-              label: 'Votre ADR',
+              label: 'Your ADR',
               data: adrVsMarketData.yourAdrData,
               backgroundColor: '#00d3f2',
               borderColor: '#00d3f2',
@@ -1246,7 +1297,7 @@ function ReportPage({ token, userProfile }) {
           labels: priceDistributionData.labels,
           datasets: [
             {
-              label: 'Nombre de concurrents',
+              label: 'Number of competitors',
               data: priceDistributionData.data,
               backgroundColor: '#00d3f2',
               borderColor: '#00d3f2',
@@ -1306,7 +1357,7 @@ function ReportPage({ token, userProfile }) {
           labels: forecastRevenueData.labels,
           datasets: [
             {
-              label: 'Revenu prévu (€)',
+              label: 'Forecasted Revenue (€)',
               data: forecastRevenueData.revenueData,
               backgroundColor: '#1e40af',
               borderColor: '#1e40af',
@@ -1513,7 +1564,7 @@ function ReportPage({ token, userProfile }) {
           labels: forecastScenariosData.labels,
           datasets: [
             {
-              label: 'Scénario baseline',
+              label: 'Baseline scenario',
               data: forecastScenariosData.baselineData,
               borderColor: '#06b6d4',
               backgroundColor: 'transparent',
@@ -1526,7 +1577,7 @@ function ReportPage({ token, userProfile }) {
               pointHoverRadius: 6,
             },
             {
-              label: 'Scénario optimiste (+10%)',
+              label: 'Optimistic scenario (+10%)',
               data: forecastScenariosData.optimisticData,
               borderColor: '#10b981',
               backgroundColor: 'transparent',
@@ -1539,7 +1590,7 @@ function ReportPage({ token, userProfile }) {
               pointHoverRadius: 6,
             },
             {
-              label: 'Scénario pessimiste (-10%)',
+              label: 'Pessimistic scenario (-10%)',
               data: forecastScenariosData.pessimisticData,
               borderColor: '#ef4444',
               backgroundColor: 'transparent',
@@ -1605,7 +1656,7 @@ function ReportPage({ token, userProfile }) {
           labels: forecastRadarData.labels,
           datasets: [
             {
-              label: 'Prévisions',
+              label: 'Forecasts',
               data: forecastRadarData.data,
               borderColor: '#00d3f2',
               backgroundColor: 'rgba(0, 211, 242, 0.2)',
@@ -1657,7 +1708,7 @@ function ReportPage({ token, userProfile }) {
           labels: revenueVsTargetData.labels,
           datasets: [
             {
-              label: 'Objectif',
+              label: 'Target',
               data: revenueVsTargetData.targetData,
               borderColor: '#64748b',
               backgroundColor: 'transparent',
@@ -1670,7 +1721,7 @@ function ReportPage({ token, userProfile }) {
               borderDash: [5, 5],
             },
             {
-              label: 'Revenu réel',
+              label: 'Real revenue',
               data: revenueVsTargetData.revenueData,
               borderColor: '#06b6d4',
               backgroundColor: 'transparent',
@@ -1796,7 +1847,7 @@ function ReportPage({ token, userProfile }) {
           labels: grossMarginData.labels,
           datasets: [
             {
-              label: 'Marge brute (%)',
+              label: 'Gross Margin (%)',
               data: grossMarginData.data,
               borderColor: '#00d3f2',
               backgroundColor: 'rgba(0, 211, 242, 0.1)',
@@ -1875,11 +1926,11 @@ function ReportPage({ token, userProfile }) {
 
   const handleExport = () => {
     if (filteredProperties.length === 0) {
-      setAlertModal({ isOpen: true, message: "Aucune donnée à exporter.", title: 'Information' });
+      setAlertModal({ isOpen: true, message: "No data to export.", title: 'Information' });
       return;
     }
     exportToExcel(filteredProperties, `Rapport_Proprietes_${dateRange}`, (errorMessage) => {
-      setAlertModal({ isOpen: true, message: errorMessage, title: 'Erreur' });
+      setAlertModal({ isOpen: true, message: errorMessage, title: 'Error' });
     });
   };
 
@@ -1898,7 +1949,7 @@ function ReportPage({ token, userProfile }) {
         {/* Titre de la page */}
         <div className="flex flex-row gap-0 items-start justify-start self-stretch shrink-0 relative">
           <div className="text-global-blanc text-left font-h1-font-family text-h1-font-size font-h1-font-weight relative">
-            Rapports d'Activité
+            Activity Reports
           </div>
         </div>
 
@@ -1914,13 +1965,13 @@ function ReportPage({ token, userProfile }) {
             <>
               <PremiReStats
                 state="big"
-                text="Revenu total (Réel)"
+                text="Total Revenue (Real)"
                 value={formatCurrency(kpis?.totalRevenue || 0)}
                 className="!flex-1 !shrink-[unset]"
               />
               <PremiReStats
                 state="big"
-                text="Taux d'occupation (Réel)"
+                text="Occupancy Rate (Real)"
                 value={formatPercent(kpis?.avgOccupancy || 0)}
                 icon={IconsStateProp}
                 iconState="prop"
@@ -1928,7 +1979,7 @@ function ReportPage({ token, userProfile }) {
               />
               <PremiReStats
                 state="big"
-                text="ADR (Réel)"
+                text="ADR (Real)"
                 value={formatCurrencyAdr(kpis?.adr || 0)}
                 icon={IconsStateArgent}
                 iconState="argent"
@@ -1936,7 +1987,7 @@ function ReportPage({ token, userProfile }) {
               />
               <PremiReStats
                 state="big"
-                text="Gains par l'IA"
+                text="AI Gains"
                 value={formatCurrency(kpis?.iaGain || 0)}
                 icon={IconsStateLogoPriceye}
                 iconState="logo-priceye"
@@ -1951,13 +2002,13 @@ function ReportPage({ token, userProfile }) {
           <div className="flex flex-row items-center justify-between self-stretch shrink-0 relative">
             <div className="flex flex-row gap-3 items-center justify-start shrink-0 relative">
               <div className="text-global-blanc text-left font-h2-font-family text-h2-font-size font-h2-font-weight relative">
-                Filtres :{" "}
+                Filters :{" "}
               </div>
             </div>
             <div className="flex flex-row gap-3 items-center justify-start shrink-0 relative">
               <BoutonStatePrincipal
                 component={<IconsStateExport className="!w-5 !h-5" state="export" />}
-                text="Exporter"
+                text="Export"
                 onClick={handleExport}
                 className="!shrink-0"
               />
@@ -1978,7 +2029,7 @@ function ReportPage({ token, userProfile }) {
                 className={`text-center font-['Inter-Regular',_sans-serif] text-base leading-6 font-normal absolute left-[17px] top-[8.5px] ${activeTab === 'overview' ? 'text-[#00d3f2]' : 'text-[#90a1b9]'}`}
                 style={{ letterSpacing: "-0.31px" }}
               >
-                Vue d'ensemble{" "}
+                Overview{" "}
               </div>
             </button>
             <button
@@ -1993,7 +2044,7 @@ function ReportPage({ token, userProfile }) {
                 className={`text-center font-['Inter-Regular',_sans-serif] text-base leading-6 font-normal absolute left-4 top-[8.5px] ${activeTab === 'market' ? 'text-[#00d3f2]' : 'text-[#90a1b9]'}`}
                 style={{ letterSpacing: "-0.31px" }}
               >
-                Marché{" "}
+                Market{" "}
               </div>
             </button>
             <button
@@ -2008,7 +2059,7 @@ function ReportPage({ token, userProfile }) {
                 className={`text-center font-['Inter-Regular',_sans-serif] text-base leading-6 font-normal absolute left-4 top-[8.5px] ${activeTab === 'positioning' ? 'text-[#00d3f2]' : 'text-[#90a1b9]'}`}
                 style={{ letterSpacing: "-0.31px" }}
               >
-                Positionnement{" "}
+                Positioning{" "}
               </div>
             </button>
             <button
@@ -2023,7 +2074,7 @@ function ReportPage({ token, userProfile }) {
                 className={`text-center font-['Inter-Regular',_sans-serif] text-base leading-6 font-normal absolute left-[17px] top-[8.5px] ${activeTab === 'forecast' ? 'text-[#00d3f2]' : 'text-[#90a1b9]'}`}
                 style={{ letterSpacing: "-0.31px" }}
               >
-                Prévisions{" "}
+                Forecast{" "}
               </div>
             </button>
             <button
@@ -2038,7 +2089,7 @@ function ReportPage({ token, userProfile }) {
                 className={`text-center font-['Inter-Regular',_sans-serif] text-base leading-6 font-normal absolute left-4 top-[8.5px] ${activeTab === 'financial' ? 'text-[#00d3f2]' : 'text-[#90a1b9]'}`}
                 style={{ letterSpacing: "-0.31px" }}
               >
-                Performance Financière{" "}
+                Financial Performance{" "}
               </div>
             </button>
           </div>
@@ -2046,48 +2097,48 @@ function ReportPage({ token, userProfile }) {
           {/* Filtres */}
           <div className="flex flex-row gap-5 gap-y-3 items-start justify-start flex-wrap content-start self-stretch shrink-0 relative">
             {isLoading ? (
-              <p className="text-xs text-global-inactive">Chargement des filtres...</p>
+              <p className="text-xs text-global-inactive">Loading filters...</p>
             ) : (
               <>
                 <Filtre
-                  text="Période"
-                  text2={dateRange === '7d' ? '7 derniers jours' : 
-                        dateRange === '1m' ? '1 mois' :
-                        dateRange === '6m' ? '6 mois' :
-                        dateRange === 'ytd' ? 'Année en cours' :
-                        dateRange === '1y' ? '1 an' :
-                        dateRange === 'all' ? 'Tout' : '1 mois'}
+                  text="Period"
+                  text2={dateRange === '7d' ? 'Last 7 days' : 
+                        dateRange === '1m' ? '1 month' :
+                        dateRange === '6m' ? '6 months' :
+                        dateRange === 'ytd' ? 'Year to date' :
+                        dateRange === '1y' ? '1 year' :
+                        dateRange === 'all' ? 'All' : '1 month'}
                   value={dateRange}
                   onChange={(e) => setDateRange(e.target.value)}
                   options={[
-                    { value: '7d', label: '7 derniers jours' },
-                    { value: '1m', label: '1 mois' },
-                    { value: '6m', label: '6 mois' },
-                    { value: 'ytd', label: 'Année en cours' },
-                    { value: '1y', label: '1 an' },
-                    { value: 'all', label: 'Tout' }
+                    { value: '7d', label: 'Last 7 days' },
+                    { value: '1m', label: '1 month' },
+                    { value: '6m', label: '6 months' },
+                    { value: 'ytd', label: 'Year to date' },
+                    { value: '1y', label: '1 year' },
+                    { value: 'all', label: 'All' }
                   ]}
                   className="!shrink-0"
                 />
                 <Filtre
-                  text="Type de propriété"
-                  text2={propertyType ? allProperties.find(p => p.property_type === propertyType)?.property_type || 'Tous types' : 'Tous types'}
+                  text="Property Type"
+                  text2={propertyType ? allProperties.find(p => p.property_type === propertyType)?.property_type || 'All types' : 'All types'}
                   value={propertyType}
                   onChange={(e) => setPropertyType(e.target.value)}
                   options={[...new Set(allProperties.map(p => p.property_type))].filter(Boolean)}
                   className="!shrink-0"
                 />
                 <Filtre
-                  text="Canal"
-                  text2={channel ? channel : 'Tous les canaux'}
+                  text="Channel"
+                  text2={channel ? channel : 'All channels'}
                   value={channel}
                   onChange={(e) => setChannel(e.target.value)}
                   options={[...new Set(allProperties.map(p => p.channel))].filter(Boolean)}
                   className="!shrink-0"
                 />
                 <Filtre
-                  text="Statut"
-                  text2={status ? status : 'Tous les statuts'}
+                  text="Status"
+                  text2={status ? status : 'All statuses'}
                   value={status}
                   onChange={(e) => setStatus(e.target.value)}
                   options={[...new Set(allProperties.map(p => p.status))].filter(Boolean)}
@@ -2095,14 +2146,14 @@ function ReportPage({ token, userProfile }) {
                 />
                 <div className="flex flex-col gap-2 items-start justify-start shrink-0 relative">
                   <div className="text-global-blanc text-left font-p1-font-family text-p1-font-size font-p1-font-weight relative self-stretch">
-                    Pays / Ville / Adresse{" "}
+                    Country / City / Address{" "}
                   </div>
                   <div className="bg-global-bg-small-box rounded-lg border-solid border-global-stroke-box border pt-[7px] pr-3 pb-[7px] pl-3 flex flex-row gap-3 items-center justify-start self-stretch shrink-0 h-[38px] relative">
                     <input
                       type="text"
                       value={location}
                       onChange={(e) => setLocation(e.target.value)}
-                      placeholder="Ex : Paris"
+                      placeholder="Ex: Paris"
                       className="flex-1 bg-transparent border-none outline-none text-global-inactive font-h4-font-family text-h4-font-size leading-h4-line-height font-h4-font-weight placeholder:text-global-inactive"
                     />
                   </div>
@@ -2123,14 +2174,14 @@ function ReportPage({ token, userProfile }) {
             <div className="bg-global-bg-box rounded-[14px] border-solid border-global-stroke-box border p-6 flex flex-col gap-6 items-start justify-start self-stretch shrink-0 relative">
               <div className="self-stretch shrink-0 h-7 relative">
                 <div className="text-global-blanc text-left font-['Inter-Medium',_sans-serif] text-xl leading-7 font-medium" style={{ letterSpacing: '-0.45px' }}>
-                  Performance hebdomadaire
+                  Weekly Performance
                 </div>
               </div>
               <div className="flex flex-col gap-2.5 items-start justify-start self-stretch shrink-0 relative">
                 <div className="self-stretch shrink-0 h-[261.74px] relative w-full">
                   {isKpiLoading ? (
                     <div className="flex items-center justify-center h-full w-full">
-                      <p className="text-global-inactive">Chargement...</p>
+                      <p className="text-global-inactive">Loading...</p>
                     </div>
                   ) : (
                     <div className="w-full h-full relative">
@@ -2143,13 +2194,13 @@ function ReportPage({ token, userProfile }) {
                   <div className="shrink-0 h-6 relative flex items-center gap-2">
                     <div className="w-3.5 h-3.5 rounded-full bg-global-mid-impact shrink-0"></div>
                     <div className="text-global-mid-impact text-center font-['Inter-Regular',_sans-serif] text-base leading-6 font-normal" style={{ letterSpacing: '-0.31px' }}>
-                      Occupation (%)
+                      Occupancy (%)
                     </div>
                   </div>
                   <div className="shrink-0 h-6 relative flex items-center gap-2">
                     <div className="w-3.5 h-3.5 rounded-full bg-global-content-highlight-2nd shrink-0"></div>
                     <div className="text-global-content-highlight-2nd text-center font-['Inter-Regular',_sans-serif] text-base leading-6 font-normal" style={{ letterSpacing: '-0.31px' }}>
-                      Réservations
+                      Bookings
                     </div>
                   </div>
                 </div>
@@ -2162,14 +2213,14 @@ function ReportPage({ token, userProfile }) {
               <div className="bg-global-bg-box rounded-[14px] border-solid border-global-stroke-box border p-6 flex flex-col gap-6 items-start justify-start relative" style={{ gridColumn: '1 / span 1', gridRow: '1 / span 1' }}>
               <div className="self-stretch shrink-0 h-7 relative">
                 <div className="text-global-blanc text-left font-['Inter-Medium',_sans-serif] text-xl leading-7 font-medium" style={{ letterSpacing: '-0.45px' }}>
-                  RevPAR, ADR & Occupation
+                  RevPAR, ADR & Occupancy
                 </div>
               </div>
               <div className="pt-[5px] pb-[5px] flex flex-col gap-2.5 items-start justify-start self-stretch shrink-0 relative">
                 <div className="self-stretch shrink-0 h-[256.26px] relative w-full">
                   {isKpiLoading ? (
                     <div className="flex items-center justify-center h-full w-full">
-                      <p className="text-global-inactive">Chargement...</p>
+                      <p className="text-global-inactive">Loading...</p>
                     </div>
                   ) : (
                     <div className="w-full h-full relative">
@@ -2188,7 +2239,7 @@ function ReportPage({ token, userProfile }) {
                   <div className="shrink-0 h-6 relative flex items-center gap-2">
                     <div className="w-3.5 h-3.5 rounded-full bg-global-positive-impact shrink-0"></div>
                     <div className="text-global-positive-impact text-center font-['Inter-Regular',_sans-serif] text-base leading-6 font-normal" style={{ letterSpacing: '-0.31px' }}>
-                      Occupation (%)
+                      Occupancy (%)
                     </div>
                   </div>
                   <div className="shrink-0 h-6 relative flex items-center gap-2">
@@ -2205,14 +2256,14 @@ function ReportPage({ token, userProfile }) {
               <div className="bg-global-bg-box rounded-[14px] border-solid border-global-stroke-box border p-6 flex flex-col gap-6 items-start justify-start relative" style={{ gridColumn: '2 / span 1', gridRow: '1 / span 1' }}>
               <div className="self-stretch shrink-0 h-7 relative">
                 <div className="text-global-blanc text-left font-['Inter-Medium',_sans-serif] text-xl leading-7 font-medium" style={{ letterSpacing: '-0.45px' }}>
-                  Gain IA & Score IA
+                  AI Gain & AI Score
                 </div>
               </div>
               <div className="pt-[5px] pb-[5px] flex flex-col gap-2.5 items-start justify-start self-stretch shrink-0 relative">
                 <div className="self-stretch shrink-0 h-[271.26px] relative w-full">
                   {isKpiLoading ? (
                     <div className="flex items-center justify-center h-full w-full">
-                      <p className="text-global-inactive">Chargement...</p>
+                      <p className="text-global-inactive">Loading...</p>
                     </div>
                   ) : (
                     <div className="w-full h-full relative">
@@ -2225,13 +2276,13 @@ function ReportPage({ token, userProfile }) {
                   <div className="shrink-0 h-6 relative flex items-center gap-2">
                     <div className="w-3.5 h-3.5 rounded-full bg-global-mid-impact shrink-0"></div>
                     <div className="text-global-mid-impact text-center font-['Inter-Regular',_sans-serif] text-base leading-6 font-normal" style={{ letterSpacing: '-0.31px' }}>
-                      Gain IA (€)
+                      AI Gain (€)
                     </div>
                   </div>
                   <div className="shrink-0 h-6 relative flex items-center gap-2">
                     <div className="w-3.5 h-3.5 rounded-full bg-global-content-highlight-2nd shrink-0"></div>
                     <div className="text-global-content-highlight-2nd text-center font-['Inter-Regular',_sans-serif] text-base leading-6 font-normal" style={{ letterSpacing: '-0.31px' }}>
-                      Score IA (/100)
+                      AI Score (/100)
                     </div>
                   </div>
                 </div>
@@ -2248,7 +2299,7 @@ function ReportPage({ token, userProfile }) {
             <div className="bg-[rgba(15,23,43,0.40)] rounded-[14px] border-solid border-[rgba(49,65,88,0.50)] border pt-[25px] pr-[25px] pb-px pl-[25px] flex flex-col gap-6 items-start justify-start h-[452px] relative">
               <div className="self-stretch shrink-0 h-7 relative">
                 <div className="text-[#ffffff] text-left font-['Inter-Medium',_sans-serif] text-xl leading-7 font-medium" style={{ letterSpacing: "-0.45px" }}>
-                  Tendance marché - Offre vs Demande
+                  Market Trend - Supply vs Demand
                 </div>
               </div>
               <div className="self-stretch shrink-0 h-[350px] relative">
@@ -2267,13 +2318,13 @@ function ReportPage({ token, userProfile }) {
                 <div className="shrink-0 h-6 relative flex items-center gap-2">
                   <div className="w-3.5 h-3.5 rounded-full bg-global-content-highlight-2nd shrink-0"></div>
                   <div className="text-global-content-highlight-2nd text-center font-['Inter-Regular',_sans-serif] text-base leading-6 font-normal" style={{ letterSpacing: "-0.31px" }}>
-                    Demande
+                    Demand
                   </div>
                 </div>
                 <div className="shrink-0 h-6 relative flex items-center gap-2">
                   <div className="w-3.5 h-3.5 rounded-full bg-global-mid-impact shrink-0"></div>
                   <div className="text-global-mid-impact text-center font-['Inter-Regular',_sans-serif] text-base leading-6 font-normal" style={{ letterSpacing: "-0.31px" }}>
-                    Offre
+                    Supply
                   </div>
                 </div>
               </div>
@@ -2283,14 +2334,14 @@ function ReportPage({ token, userProfile }) {
             <div className="bg-[rgba(15,23,43,0.40)] rounded-[14px] border-solid border-[rgba(49,65,88,0.50)] border pt-[25px] pr-[25px] pb-px pl-[25px] flex flex-col gap-6 items-start justify-start h-[352px] relative">
               <div className="self-stretch shrink-0 h-7 relative">
                 <div className="text-[#ffffff] text-left font-['Inter-Regular',_sans-serif] text-xl leading-7 font-normal" style={{ letterSpacing: "-0.45px" }}>
-                  Analyse demande 24h
+                  24h Demand Analysis
                 </div>
               </div>
               <div className="flex flex-col gap-4 items-start justify-start self-stretch shrink-0 h-56 relative">
                 <div className="bg-[rgba(29,41,61,0.50)] rounded-[10px] pr-4 pl-4 flex flex-row items-center justify-between self-stretch shrink-0 h-16 relative">
                   <div className="shrink-0 w-[141.06px] h-6 relative">
                     <div className="text-[#90a1b9] text-left font-['Inter-Regular',_sans-serif] text-base leading-6 font-normal absolute left-0 top-[-0.5px]" style={{ letterSpacing: "-0.31px" }}>
-                      Recherches actives
+                      Active searches
                     </div>
                   </div>
                   <div className="shrink-0 w-[52.02px] h-8 relative">
@@ -2302,7 +2353,7 @@ function ReportPage({ token, userProfile }) {
                 <div className="bg-[rgba(29,41,61,0.50)] rounded-[10px] pr-4 pl-4 flex flex-row items-center justify-between self-stretch shrink-0 h-16 relative">
                   <div className="shrink-0 w-[122.53px] h-6 relative">
                     <div className="text-[#90a1b9] text-left font-['Inter-Regular',_sans-serif] text-base leading-6 font-normal absolute left-0 top-[-0.5px]" style={{ letterSpacing: "-0.31px" }}>
-                      Visites annonces
+                      Listing views
                     </div>
                   </div>
                   <div className="shrink-0 w-[44.08px] h-8 relative">
@@ -2314,7 +2365,7 @@ function ReportPage({ token, userProfile }) {
                 <div className="bg-[rgba(29,41,61,0.50)] rounded-[10px] pr-4 pl-4 flex flex-row items-center justify-between self-stretch shrink-0 h-16 relative">
                   <div className="shrink-0 w-[139.38px] h-6 relative">
                     <div className="text-[#90a1b9] text-left font-['Inter-Regular',_sans-serif] text-base leading-6 font-normal absolute left-0 top-[-0.5px]" style={{ letterSpacing: "-0.31px" }}>
-                      Taux de conversion
+                      Conversion rate
                     </div>
                   </div>
                   <div className="shrink-0 w-[64.31px] h-8 relative">
@@ -2335,7 +2386,7 @@ function ReportPage({ token, userProfile }) {
             <div className="bg-[rgba(15,23,43,0.40)] rounded-[14px] border-solid border-[rgba(49,65,88,0.50)] border pt-[25px] pr-[25px] pb-px pl-[25px] flex flex-col gap-6 items-start justify-start h-[402px] relative">
               <div className="self-stretch shrink-0 h-7 relative">
                 <div className="text-[#ffffff] text-left font-['Inter-Medium',_sans-serif] text-xl leading-7 font-medium" style={{ letterSpacing: "-0.45px" }}>
-                  ADR vs Marché
+                  ADR vs Market
                 </div>
               </div>
               <div className="self-stretch shrink-0 h-[300px] relative">
@@ -2354,13 +2405,13 @@ function ReportPage({ token, userProfile }) {
                 <div className="shrink-0 h-6 relative flex items-center gap-2">
                   <div className="w-3.5 h-3.5 rounded-full bg-[#94a3b8] shrink-0"></div>
                   <div className="text-global-inactive text-center font-['Inter-Regular',_sans-serif] text-base leading-6 font-normal" style={{ letterSpacing: "-0.31px" }}>
-                    ADR Marché
+                    Market ADR
                   </div>
                 </div>
                 <div className="shrink-0 h-6 relative flex items-center gap-2">
                   <div className="w-3.5 h-3.5 rounded-full bg-global-content-highlight-2nd shrink-0"></div>
                   <div className="text-global-content-highlight-2nd text-center font-['Inter-Regular',_sans-serif] text-base leading-6 font-normal" style={{ letterSpacing: "-0.31px" }}>
-                    Votre ADR
+                    Your ADR
                   </div>
                 </div>
               </div>
@@ -2370,7 +2421,7 @@ function ReportPage({ token, userProfile }) {
             <div className="bg-[rgba(15,23,43,0.40)] rounded-[14px] border-solid border-[rgba(49,65,88,0.50)] border pt-[25px] pr-[25px] pb-px pl-[25px] flex flex-col gap-6 items-start justify-start h-[402px] relative">
               <div className="self-stretch shrink-0 h-7 relative">
                 <div className="text-[#ffffff] text-left font-['Inter-Regular',_sans-serif] text-xl leading-7 font-normal" style={{ letterSpacing: "-0.45px" }}>
-                  Distribution prix concurrents
+                  Competitor Price Distribution
                 </div>
               </div>
               <div className="self-stretch shrink-0 h-[300px] relative">
@@ -2396,13 +2447,13 @@ function ReportPage({ token, userProfile }) {
               <div className="bg-[rgba(15,23,43,0.40)] rounded-[14px] border-solid border-[rgba(49,65,88,0.50)] border pt-[25px] pr-[25px] pb-px pl-[25px] flex flex-col gap-6 items-start justify-start h-[402px] relative">
                 <div className="self-stretch shrink-0 h-7 relative">
                   <div className="text-[#ffffff] text-left font-['Inter-Medium',_sans-serif] text-xl leading-7 font-medium" style={{ letterSpacing: "-0.45px" }}>
-                    Revenus futurs & Occupation prévue
+                    Future Revenue & Forecasted Occupancy
                   </div>
                 </div>
                 <div className="self-stretch shrink-0 h-[300px] relative">
                   {isKpiLoading ? (
                     <div className="flex items-center justify-center h-full w-full">
-                      <p className="text-global-inactive">Chargement...</p>
+                      <p className="text-global-inactive">Loading...</p>
                     </div>
                   ) : (
                     <div className="w-full h-full relative">
@@ -2415,13 +2466,13 @@ function ReportPage({ token, userProfile }) {
                   <div className="shrink-0 h-6 relative flex items-center gap-2">
                     <div className="w-3.5 h-3.5 rounded-full bg-[#06b6d4] shrink-0"></div>
                     <div className="text-[#06b6d4] text-center font-['Inter-Regular',_sans-serif] text-base leading-6 font-normal" style={{ letterSpacing: "-0.31px" }}>
-                      Occupation (%)
+                      Occupancy (%)
                     </div>
                   </div>
                   <div className="shrink-0 h-6 relative flex items-center gap-2">
                     <div className="w-3.5 h-3.5 rounded-full bg-[#1e40af] shrink-0"></div>
                     <div className="text-[#1e40af] text-center font-['Inter-Regular',_sans-serif] text-base leading-6 font-normal" style={{ letterSpacing: "-0.31px" }}>
-                      Revenu prévu (€)
+                      Forecasted Revenue (€)
                     </div>
                   </div>
                 </div>
@@ -2431,13 +2482,13 @@ function ReportPage({ token, userProfile }) {
               <div className="bg-[rgba(15,23,43,0.40)] rounded-[14px] border-solid border-[rgba(49,65,88,0.50)] border pt-[25px] pr-[25px] pb-px pl-[25px] flex flex-col gap-6 items-start justify-start h-[402px] relative">
                 <div className="self-stretch shrink-0 h-7 relative">
                   <div className="text-[#ffffff] text-left font-['Inter-Medium',_sans-serif] text-xl leading-7 font-medium" style={{ letterSpacing: "-0.45px" }}>
-                    ADR, RevPAR & Occupation prévus
+                    Forecasted ADR, RevPAR & Occupancy
                   </div>
                 </div>
                 <div className="self-stretch shrink-0 h-[300px] relative">
                   {isKpiLoading ? (
                     <div className="flex items-center justify-center h-full w-full">
-                      <p className="text-global-inactive">Chargement...</p>
+                      <p className="text-global-inactive">Loading...</p>
                     </div>
                   ) : (
                     <div className="w-full h-full relative">
@@ -2456,7 +2507,7 @@ function ReportPage({ token, userProfile }) {
                   <div className="shrink-0 h-6 relative flex items-center gap-2">
                     <div className="w-3.5 h-3.5 rounded-full bg-[#10b981] shrink-0"></div>
                     <div className="text-[#10b981] text-center font-['Inter-Regular',_sans-serif] text-base leading-6 font-normal" style={{ letterSpacing: "-0.31px" }}>
-                      Occupation (%)
+                      Occupancy (%)
                     </div>
                   </div>
                   <div className="shrink-0 h-6 relative flex items-center gap-2">
@@ -2473,7 +2524,7 @@ function ReportPage({ token, userProfile }) {
             <div className="bg-[rgba(15,23,43,0.40)] rounded-[14px] border-solid border-[rgba(49,65,88,0.50)] border pt-[25px] pr-[25px] pb-px pl-[25px] flex flex-col gap-6 items-start justify-start self-stretch shrink-0 h-[452px] relative">
               <div className="self-stretch shrink-0 h-7 relative">
                 <div className="text-[#ffffff] text-left font-['Inter-Medium',_sans-serif] text-xl leading-7 font-medium" style={{ letterSpacing: "-0.45px" }}>
-                  Scénarios de prévision
+                  Forecast Scenarios
                 </div>
               </div>
               <div className="self-stretch shrink-0 h-[350px] relative">
@@ -2492,19 +2543,19 @@ function ReportPage({ token, userProfile }) {
                 <div className="shrink-0 h-6 relative flex items-center gap-2">
                   <div className="w-3.5 h-3.5 rounded-full bg-[#06b6d4] shrink-0"></div>
                   <div className="text-[#06b6d4] text-center font-['Inter-Regular',_sans-serif] text-base leading-6 font-normal" style={{ letterSpacing: "-0.31px" }}>
-                    Scénario baseline
+                    Baseline scenario
                   </div>
                 </div>
                 <div className="shrink-0 h-6 relative flex items-center gap-2">
                   <div className="w-3.5 h-3.5 rounded-full bg-[#10b981] shrink-0"></div>
                   <div className="text-[#10b981] text-center font-['Inter-Regular',_sans-serif] text-base leading-6 font-normal" style={{ letterSpacing: "-0.31px" }}>
-                    Scénario optimiste (+10%)
+                    Optimistic scenario (+10%)
                   </div>
                 </div>
                 <div className="shrink-0 h-6 relative flex items-center gap-2">
                   <div className="w-3.5 h-3.5 rounded-full bg-[#ef4444] shrink-0"></div>
                   <div className="text-[#ef4444] text-center font-['Inter-Regular',_sans-serif] text-base leading-6 font-normal" style={{ letterSpacing: "-0.31px" }}>
-                    Scénario pessimiste (-10%)
+                    Pessimistic scenario (-10%)
                   </div>
                 </div>
               </div>
@@ -2514,7 +2565,7 @@ function ReportPage({ token, userProfile }) {
             <div className="bg-[rgba(15,23,43,0.40)] rounded-[14px] border-solid border-[rgba(49,65,88,0.50)] border pt-[25px] pr-[25px] pb-px pl-[25px] flex flex-col gap-6 items-start justify-start self-stretch shrink-0 h-[452px] relative">
               <div className="self-stretch shrink-0 h-7 relative">
                 <div className="text-[#ffffff] text-left font-['Inter-Medium',_sans-serif] text-xl leading-7 font-medium" style={{ letterSpacing: "-0.45px" }}>
-                  Prévisions synthétiques par propriété
+                  Synthetic Forecasts by Property
                 </div>
               </div>
               <div className="self-stretch shrink-0 h-[350px] relative">
@@ -2538,7 +2589,7 @@ function ReportPage({ token, userProfile }) {
             <div className="bg-[rgba(15,23,43,0.40)] rounded-[14px] border-solid border-[rgba(49,65,88,0.50)] border pt-[25px] pr-[25px] pb-px pl-[25px] flex flex-col gap-6 items-start justify-start self-stretch shrink-0 h-[452px] relative">
               <div className="self-stretch shrink-0 h-7 relative">
                 <div className="text-[#ffffff] text-left font-['Inter-Medium',_sans-serif] text-xl leading-7 font-medium" style={{ letterSpacing: "-0.45px" }}>
-                  Revenu total vs Objectif
+                  Total Revenue vs Target
                 </div>
               </div>
               <div className="self-stretch shrink-0 h-[350px] relative">
@@ -2557,13 +2608,13 @@ function ReportPage({ token, userProfile }) {
                 <div className="shrink-0 h-6 relative flex items-center gap-2">
                   <div className="w-3.5 h-3.5 rounded-full bg-[#64748b] shrink-0"></div>
                   <div className="text-[#64748b] text-center font-['Inter-Regular',_sans-serif] text-base leading-6 font-normal" style={{ letterSpacing: "-0.31px" }}>
-                    Objectif
+                    Target
                   </div>
                 </div>
                 <div className="shrink-0 h-6 relative flex items-center gap-2">
                   <div className="w-3.5 h-3.5 rounded-full bg-[#06b6d4] shrink-0"></div>
                   <div className="text-[#06b6d4] text-center font-['Inter-Regular',_sans-serif] text-base leading-6 font-normal" style={{ letterSpacing: "-0.31px" }}>
-                    Revenu réel
+                    Real revenue
                   </div>
                 </div>
               </div>
@@ -2575,13 +2626,13 @@ function ReportPage({ token, userProfile }) {
               <div className="bg-[rgba(15,23,43,0.40)] rounded-[14px] border-solid border-[rgba(49,65,88,0.50)] border pt-[25px] pr-[25px] pb-px pl-[25px] flex flex-col gap-6 items-start justify-start h-[530px] relative">
                 <div className="self-stretch shrink-0 h-7 relative">
                   <div className="text-[#ffffff] text-left font-['Inter-Regular',_sans-serif] text-xl leading-7 font-normal" style={{ letterSpacing: "-0.45px" }}>
-                    ADR par canal
+                    ADR by Channel
                   </div>
                 </div>
                 <div className="self-stretch shrink-0 h-[300px] relative">
                   {isKpiLoading ? (
                     <div className="flex items-center justify-center h-full w-full">
-                      <p className="text-global-inactive">Chargement...</p>
+                      <p className="text-global-inactive">Loading...</p>
                     </div>
                   ) : (
                     <div className="w-full h-full relative">
@@ -2589,7 +2640,7 @@ function ReportPage({ token, userProfile }) {
                     </div>
                   )}
                 </div>
-                {/* Statistiques par canal */}
+                {/* Statistics by channel */}
                 <div className="flex flex-col gap-2 items-start justify-start self-stretch shrink-0 h-28 relative">
                   {adrByChannelData && adrByChannelData.labels.map((channel, index) => (
                     <div key={channel} className="flex flex-row items-center justify-between self-stretch shrink-0 h-[22px] relative">
@@ -2612,7 +2663,7 @@ function ReportPage({ token, userProfile }) {
               <div className="bg-[rgba(15,23,43,0.40)] rounded-[14px] border-solid border-[rgba(49,65,88,0.50)] border pt-[25px] pr-[25px] pb-px pl-[25px] flex flex-col gap-6 items-center justify-center h-[530px] relative">
                 <div className="self-stretch shrink-0 h-7 relative">
                   <div className="text-[#ffffff] text-left font-['Inter-Regular',_sans-serif] text-xl leading-7 font-normal" style={{ letterSpacing: "-0.45px" }}>
-                    ROI PricEye
+                    PricEye ROI
                   </div>
                 </div>
                 <div className="flex flex-col gap-6 items-center justify-center self-stretch shrink-0 h-[250px] relative">
@@ -2624,7 +2675,7 @@ function ReportPage({ token, userProfile }) {
                     </div>
                     <div className="self-stretch shrink-0 h-6 relative">
                       <div className="text-[#90a1b9] text-center font-['Inter-Regular',_sans-serif] text-base leading-6 font-normal absolute left-0 top-[-0.5px]" style={{ letterSpacing: "-0.31px" }}>
-                        Retour sur investissement
+                        Return on investment
                       </div>
                     </div>
                   </div>
@@ -2632,7 +2683,7 @@ function ReportPage({ token, userProfile }) {
                     <div className="bg-[rgba(29,41,61,0.50)] rounded-[10px] pr-3 pl-3 flex flex-row items-center justify-between self-stretch shrink-0 h-12 relative">
                       <div className="shrink-0 w-[82.87px] h-5 relative">
                         <div className="text-[#90a1b9] text-left font-['Inter-Regular',_sans-serif] text-sm leading-5 font-normal absolute left-0 top-[0.5px]" style={{ letterSpacing: "-0.15px" }}>
-                          Coût PricEye
+                          PricEye Cost
                         </div>
                       </div>
                       <div className="shrink-0 w-[49.59px] h-6 relative">
@@ -2644,7 +2695,7 @@ function ReportPage({ token, userProfile }) {
                     <div className="bg-[rgba(29,41,61,0.50)] rounded-[10px] pr-3 pl-3 flex flex-row items-center justify-between self-stretch shrink-0 h-12 relative">
                       <div className="shrink-0 w-[92.27px] h-5 relative">
                         <div className="text-[#90a1b9] text-left font-['Inter-Regular',_sans-serif] text-sm leading-5 font-normal absolute left-0 top-[0.5px]" style={{ letterSpacing: "-0.15px" }}>
-                          Gains générés
+                          Generated gains
                         </div>
                       </div>
                       <div className="shrink-0 w-[51.91px] h-6 relative">
@@ -2662,7 +2713,7 @@ function ReportPage({ token, userProfile }) {
             <div className="bg-[rgba(15,23,43,0.40)] rounded-[14px] border-solid border-[rgba(49,65,88,0.50)] border pt-[25px] pr-[25px] pb-px pl-[25px] flex flex-col gap-6 items-start justify-start self-stretch shrink-0 h-[402px] relative">
               <div className="self-stretch shrink-0 h-7 relative">
                 <div className="text-[#ffffff] text-left font-['Inter-Medium',_sans-serif] text-xl leading-7 font-medium" style={{ letterSpacing: "-0.45px" }}>
-                  Marge brute (%)
+                  Gross Margin (%)
                 </div>
               </div>
               <div className="self-stretch shrink-0 h-[300px] relative">
@@ -2682,7 +2733,7 @@ function ReportPage({ token, userProfile }) {
       </div>
       
       {!isLoading && !error && filteredProperties.length === 0 && (
-          <p className="text-center text-text-muted mt-8">Aucune propriété à afficher.</p>
+          <p className="text-center text-text-muted mt-8">No properties to display.</p>
       )}
       </div>
     </div>

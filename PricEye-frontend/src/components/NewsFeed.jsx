@@ -14,14 +14,14 @@ function NewsFeed({ token }) {
     setIsLoading(true);
     setError('');
     try {
-      const data = await getMarketNews(token);
+      const data = await getMarketNews(token, language);
       setNews(data || []);
     } catch (err) {
       setError(t('newsFeed.loadError', { message: err.message }));
     } finally {
       setIsLoading(false);
     }
-  }, [token]);
+  }, [token, language, t]);
 
   useEffect(() => {
     fetchNews();
