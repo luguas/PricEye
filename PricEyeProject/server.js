@@ -4609,13 +4609,13 @@ async function callGeminiWithSearch(prompt, maxRetries = 10, language = 'fr') {
     
     // Instruction JSON pour Perplexity (qui ne supporte pas response_format comme OpenAI)
     const jsonInstruction = isFrench
-        ? "IMPORTANT: Réponds UNIQUEMENT avec un JSON valide, sans texte avant ou après, sans markdown ```json. Le format doit être un objet JSON ou un tableau JSON valide."
-        : "IMPORTANT: Respond ONLY with valid JSON, no text before or after, no markdown ```json. The format must be a valid JSON object or JSON array.";
+        ? "IMPORTANT: Réponds UNIQUEMENT avec un JSON valide, sans texte avant ou après, sans markdown ```json, et SANS citations numérotées comme [1] ou [2]. Le format doit être un objet JSON ou un tableau JSON valide, sans références de sources dans le contenu."
+        : "IMPORTANT: Respond ONLY with valid JSON, no text before or after, no markdown ```json, and NO numbered citations like [1] or [2]. The format must be a valid JSON object or JSON array, without source references in the content.";
     
     // Instruction spécifique pour Perplexity avec recherche web
     const perplexitySearchInstruction = isFrench
-        ? "Note: Tu fais des recherches web en temps réel. Peu importe la langue des sources trouvées, tu DOIS répondre en français. Traduis tous les contenus (titres, résumés, etc.) en français."
-        : `Note: You are doing real-time web searches. Regardless of the language of the sources found, you MUST respond in ${language === 'en' || language === 'en-US' ? 'English' : language}. Translate all content (titles, summaries, etc.) to ${language === 'en' || language === 'en-US' ? 'English' : language}.`;
+        ? "Note: Tu fais des recherches web en temps réel. Peu importe la langue des sources trouvées, tu DOIS répondre en français. Traduis tous les contenus (titres, résumés, etc.) en français. NE PAS inclure de citations numérotées [1], [2], etc. dans le JSON - supprime-les complètement du contenu."
+        : `Note: You are doing real-time web searches. Regardless of the language of the sources found, you MUST respond in ${language === 'en' || language === 'en-US' ? 'English' : language}. Translate all content (titles, summaries, etc.) to ${language === 'en' || language === 'en-US' ? 'English' : language}. DO NOT include numbered citations [1], [2], etc. in the JSON - remove them completely from the content.`;
     
     // Ajouter les instructions selon l'API utilisée
     const enhancedPrompt = usePerplexity
@@ -4665,10 +4665,43 @@ async function callGeminiWithSearch(prompt, maxRetries = 10, language = 'fr') {
             
             if (textPart) {
                 try {
-                    const cleanText = textPart.replace(/^```json\n?/, '').replace(/\n?```$/, '');
+                    let cleanText = textPart.replace(/^```json\n?/, '').replace(/\n?```$/, '');
+                    
+                    // Nettoyer les citations de Perplexity (ex: [1], [2], etc.) qui peuvent apparaître
+                    if (usePerplexity) {
+                        // Supprimer les références numérotées à la fin (ex: [1][2] ou [1] [2])
+                        cleanText = cleanText.replace(/\s*\[\d+\](\s*\[\d+\])*\s*$/g, '');
+                        // Supprimer les références dans les chaînes JSON (dans les valeurs)
+                        // On fait cela après le parsing pour éviter de casser le JSON
+                    }
+                    
                     const apiName = usePerplexity ? "Perplexity" : "ChatGPT";
                     console.log(`Texte JSON nettoyé reçu de ${apiName} (Search):`, cleanText); // Log pour débogage
-                    return JSON.parse(cleanText); 
+                    const parsedData = JSON.parse(cleanText);
+                    
+                    // Nettoyer les citations dans les données parsées pour Perplexity
+                    if (usePerplexity && parsedData) {
+                        const cleanCitations = (obj) => {
+                            if (Array.isArray(obj)) {
+                                return obj.map(cleanCitations);
+                            } else if (obj && typeof obj === 'object') {
+                                const cleaned = {};
+                                for (const [key, value] of Object.entries(obj)) {
+                                    if (typeof value === 'string') {
+                                        // Supprimer les citations [1], [2], etc. dans les chaînes
+                                        cleaned[key] = value.replace(/\s*\[\d+\](\s*\[\d+\])*\s*/g, ' ').trim();
+                                    } else {
+                                        cleaned[key] = cleanCitations(value);
+                                    }
+                                }
+                                return cleaned;
+                            }
+                            return obj;
+                        };
+                        return cleanCitations(parsedData);
+                    }
+                    
+                    return parsedData; 
                 } catch (parseError) {
                     const apiName = usePerplexity ? "Perplexity" : "ChatGPT";
                     console.error(`Erreur de parsing JSON de la réponse ${apiName} (Search):`, textPart);
