@@ -3130,7 +3130,7 @@ app.get('/api/properties/:id/news', authenticateToken, async (req, res) => {
             ]
         `;
 
-        const newsData = await callGeminiWithSearch(prompt);
+        const newsData = await callGeminiWithSearch(prompt, 10, language);
         const newsDataArray = Array.isArray(newsData) ? newsData : (newsData ? [newsData] : []);
 
         if (newsDataArray.length === 0) {
@@ -4148,11 +4148,16 @@ Contraintes:
 
 RAPPEL CRITIQUE: Réponds UNIQUEMENT avec ce JSON, sans commentaire, sans texte autour, sans markdown.`;
 
+        // Récupérer la langue de l'utilisateur
+        const userProfileRef = db.collection('users').doc(userId);
+        const userProfileDoc = await userProfileRef.get();
+        const language = req.query.language || userProfileDoc.data()?.language || 'fr';
+        
         let iaResult = null;
         try {
-            iaResult = await callGeminiAPI(positioningPrompt);
+            iaResult = await callGeminiAPI(positioningPrompt, 10, language);
         } catch (e) {
-            console.error('Erreur lors de l’appel IA pour le positionnement:', e);
+            console.error('Erreur lors de l'appel IA pour le positionnement:', e);
         }
 
         // 4. Fallback local si l’IA ne renvoie rien d’exploitable
@@ -4328,6 +4333,9 @@ app.post('/api/reports/analyze-date', authenticateToken, async (req, res) => {
         const location = property.location || 'France';
         const city = location.split(',')[0].trim();
         const capacity = property.capacity || 2;
+        
+        // Récupérer la langue de l'utilisateur
+        const language = req.query.language || userProfileDoc.data()?.language || 'fr';
 
         // 2. Construire le prompt pour ChatGPT
         const prompt = `
@@ -4355,7 +4363,7 @@ app.post('/api/reports/analyze-date', authenticateToken, async (req, res) => {
         `;
 
         // 3. Appeler ChatGPT avec recherche
-        const analysisResult = await callGeminiWithSearch(prompt);
+        const analysisResult = await callGeminiWithSearch(prompt, 10, language);
 
         if (!analysisResult || !analysisResult.marketDemand) {
             // Renvoyer un objet JSON d'erreur contrôlée au lieu de planter
@@ -4459,8 +4467,11 @@ const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 /**
  * Fonction helper pour appeler l'API ChatGPT avec retry et backoff exponentiel
+ * @param {string} prompt - Le prompt à envoyer à l'IA
+ * @param {number} maxRetries - Nombre maximum de tentatives
+ * @param {string} language - Langue de sortie souhaitée (ex: 'fr', 'en', 'es'). Par défaut 'fr'
  */
-async function callGeminiAPI(prompt, maxRetries = 10) {
+async function callGeminiAPI(prompt, maxRetries = 10, language = 'fr') {
     const apiKey = process.env.OPENAI_API_KEY;
     if (!apiKey) {
         console.error("OPENAI_API_KEY non trouvée dans .env");
@@ -4468,6 +4479,15 @@ async function callGeminiAPI(prompt, maxRetries = 10) {
     }
     
     const openai = new OpenAI({ apiKey });
+    
+    // Déterminer la langue de sortie
+    const isFrench = language === 'fr' || language === 'fr-FR';
+    const languageInstruction = isFrench 
+        ? "IMPORTANT: Réponds UNIQUEMENT en français. Tous les textes, labels, et descriptions doivent être en français."
+        : `IMPORTANT: Respond ONLY in ${language === 'en' || language === 'en-US' ? 'English' : language}. All texts, labels, and descriptions must be in ${language === 'en' || language === 'en-US' ? 'English' : language}.`;
+    
+    // Ajouter l'instruction de langue au prompt
+    const enhancedPrompt = `${prompt}\n\n${languageInstruction}`;
 
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
         try {
@@ -4476,7 +4496,7 @@ async function callGeminiAPI(prompt, maxRetries = 10) {
                 messages: [
                     {
                         role: "user",
-                        content: prompt
+                        content: enhancedPrompt
                     }
                 ],
                 response_format: { type: "json_object" },
@@ -4533,8 +4553,11 @@ async function callGeminiAPI(prompt, maxRetries = 10) {
 /**
  * Fonction helper pour appeler l'API ChatGPT avec recherche (basée sur les connaissances du modèle)
  * Note: ChatGPT n'a pas d'outil de recherche intégré comme Gemini, mais utilise ses connaissances
+ * @param {string} prompt - Le prompt à envoyer à l'IA
+ * @param {number} maxRetries - Nombre maximum de tentatives
+ * @param {string} language - Langue de sortie souhaitée (ex: 'fr', 'en', 'es'). Par défaut 'fr'
  */
-async function callGeminiWithSearch(prompt, maxRetries = 10) {
+async function callGeminiWithSearch(prompt, maxRetries = 10, language = 'fr') {
     const apiKey = process.env.OPENAI_API_KEY;
     if (!apiKey) {
         throw new Error("Clé API OpenAI non configurée sur le serveur.");
@@ -4542,8 +4565,14 @@ async function callGeminiWithSearch(prompt, maxRetries = 10) {
     
     const openai = new OpenAI({ apiKey });
     
-    // Ajouter une instruction pour utiliser les connaissances les plus récentes
-    const enhancedPrompt = `${prompt}\n\nNote: Utilise tes connaissances les plus récentes et les informations disponibles pour répondre.`;
+    // Déterminer la langue de sortie
+    const isFrench = language === 'fr' || language === 'fr-FR';
+    const languageInstruction = isFrench 
+        ? "IMPORTANT: Réponds UNIQUEMENT en français. Tous les textes, labels, et descriptions doivent être en français."
+        : `IMPORTANT: Respond ONLY in ${language === 'en' || language === 'en-US' ? 'English' : language}. All texts, labels, and descriptions must be in ${language === 'en' || language === 'en-US' ? 'English' : language}.`;
+    
+    // Ajouter une instruction pour utiliser les connaissances les plus récentes et la langue
+    const enhancedPrompt = `${prompt}\n\nNote: Utilise tes connaissances les plus récentes et les informations disponibles pour répondre.\n\n${languageInstruction}`;
     
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
         try {
@@ -4630,6 +4659,9 @@ app.post('/api/properties/:id/pricing-strategy', authenticateToken, async (req, 
         
         const property = propertyDoc.data();
         const today = new Date().toISOString().split('T')[0];
+        
+        // Récupérer la langue de l'utilisateur
+        const language = req.query.language || userProfileDoc.data()?.language || 'fr';
 
         // Nouveau prompt : moteur de tarification intelligente (Revenue Management complet)
         const prompt = `
@@ -4780,7 +4812,7 @@ Structure attendue :
 RAPPEL CRITIQUE : La réponse finale doit être UNIQUEMENT ce JSON, sans texte additionnel, sans commentaires, sans markdown.
         `;
 
-        const iaResult = await callGeminiAPI(prompt);
+        const iaResult = await callGeminiAPI(prompt, 10, language);
 
         if (!iaResult || !Array.isArray(iaResult.calendar) || iaResult.calendar.length === 0) {
             throw new Error("La réponse de l'IA est invalide ou ne contient pas de calendrier de prix.");
@@ -5098,7 +5130,7 @@ app.get('/api/properties/:id/news', authenticateToken, async (req, res) => {
             ]
         `;
 
-        const newsData = await callGeminiWithSearch(prompt);
+        const newsData = await callGeminiWithSearch(prompt, 10, language);
         const newsDataArray = Array.isArray(newsData) ? newsData : (newsData ? [newsData] : []);
 
         if (newsDataArray.length === 0) {
@@ -5193,7 +5225,7 @@ async function updateMarketNewsCache(language = 'fr') {
             ]
         `;
         
-        const newsData = await callGeminiWithSearch(prompt); // Appelle la fonction avec retry
+        const newsData = await callGeminiWithSearch(prompt, 10, language); // Appelle la fonction avec retry
 
         if (!newsData || !Array.isArray(newsData)) {
              throw new Error("Données d'actualités invalides reçues de ChatGPT.");
@@ -5285,6 +5317,11 @@ async function generateAndApplyPricingForProperty(propertyId, property, userId, 
     
     try {
         const today = new Date().toISOString().split('T')[0];
+        
+        // Récupérer la langue de l'utilisateur
+        const userProfileRef = db.collection('users').doc(userId);
+        const userProfileDoc = await userProfileRef.get();
+        const language = userProfileDoc.exists ? (userProfileDoc.data()?.language || 'fr') : 'fr';
 
         // Construire le nouveau prompt pour l'IA (identique à l'endpoint de pricing-strategy)
         const prompt = `
@@ -5436,7 +5473,7 @@ RAPPEL CRITIQUE : La réponse finale doit être UNIQUEMENT ce JSON, sans texte a
         `;
 
         // Appeler l'API ChatGPT
-        const iaResult = await callGeminiAPI(prompt);
+        const iaResult = await callGeminiAPI(prompt, 10, language);
 
         if (!iaResult || !Array.isArray(iaResult.calendar) || iaResult.calendar.length === 0) {
             throw new Error("La réponse de l'IA est invalide ou ne contient pas de calendrier de prix.");
