@@ -3074,7 +3074,7 @@ app.get('/api/properties/:id/news', authenticateToken, async (req, res) => {
 
         // 3. Si cache vide ou expiré, appeler l'IA
         const isFrench = language === 'fr' || language === 'fr-FR';
-        console.log(`Cache expiré ou absent pour ${propertyId} (ville: ${city}, langue: ${language}), appel de ChatGPT...`);
+        console.log(`Cache expiré ou absent pour ${propertyId} (ville: ${city}, langue: ${language}), appel de recherche web...`);
         
         const prompt = isFrench ? `
             Tu es un analyste de marché expert pour la location saisonnière.
@@ -3134,7 +3134,7 @@ app.get('/api/properties/:id/news', authenticateToken, async (req, res) => {
         const newsDataArray = Array.isArray(newsData) ? newsData : (newsData ? [newsData] : []);
 
         if (newsDataArray.length === 0) {
-             console.warn("Aucune actualité pertinente trouvée par ChatGPT pour", city);
+             console.warn("Aucune actualité pertinente trouvée pour", city);
         }
 
         // 4. Mettre à jour le cache (avec langue)
@@ -3152,7 +3152,7 @@ app.get('/api/properties/:id/news', authenticateToken, async (req, res) => {
     } catch (error) {
         console.error(`Erreur lors de la récupération des actualités pour ${req.params.id}:`, error);
          if (error.message.includes('403') || error.message.includes('API key not valid')) {
-             res.status(500).send({ error: "L'API ChatGPT (Search) n'est pas correctement configurée." });
+             res.status(500).send({ error: "L'API de recherche (Perplexity/ChatGPT) n'est pas correctement configurée." });
          } else if (error.message.includes('429') || error.message.includes('overloaded')) {
              res.status(503).send({ error: "L'API d'actualités est temporairement surchargée." });
         } else {
@@ -4383,7 +4383,7 @@ app.post('/api/reports/analyze-date', authenticateToken, async (req, res) => {
             }
         `;
 
-        // 3. Appeler ChatGPT avec recherche
+        // 3. Appeler Perplexity/ChatGPT avec recherche web
         const analysisResult = await callGeminiWithSearch(prompt, 10, language);
 
         if (!analysisResult || !analysisResult.marketDemand) {
@@ -4397,7 +4397,7 @@ app.post('/api/reports/analyze-date', authenticateToken, async (req, res) => {
     } catch (error) {
         console.error(`Erreur lors de l'analyse de la date ${req.body.date}:`, error);
          if (error.message.includes('403') || error.message.includes('API key not valid')) {
-             res.status(500).send({ error: "L'API ChatGPT (Search) n'est pas correctement configurée." });
+             res.status(500).send({ error: "L'API de recherche (Perplexity/ChatGPT) n'est pas correctement configurée." });
          } else if (error.message.includes('429') || error.message.includes('overloaded')) {
              res.status(503).send({ error: "L'API d'analyse est temporairement surchargée." });
         } else {
@@ -4572,19 +4572,31 @@ async function callGeminiAPI(prompt, maxRetries = 10, language = 'fr') {
 }
 
 /**
- * Fonction helper pour appeler l'API ChatGPT avec recherche (basée sur les connaissances du modèle)
- * Note: ChatGPT n'a pas d'outil de recherche intégré comme Gemini, mais utilise ses connaissances
+ * Fonction helper pour appeler l'API Perplexity avec recherche web en temps réel
+ * Utilise Perplexity Sonar API qui est compatible avec OpenAI et permet les recherches web
  * @param {string} prompt - Le prompt à envoyer à l'IA
  * @param {number} maxRetries - Nombre maximum de tentatives
  * @param {string} language - Langue de sortie souhaitée (ex: 'fr', 'en', 'es'). Par défaut 'fr'
  */
 async function callGeminiWithSearch(prompt, maxRetries = 10, language = 'fr') {
-    const apiKey = process.env.OPENAI_API_KEY;
-    if (!apiKey) {
-        throw new Error("Clé API OpenAI non configurée sur le serveur.");
+    // Utiliser Perplexity si la clé est configurée, sinon fallback sur OpenAI
+    const perplexityApiKey = process.env.PERPLEXITY_API_KEY;
+    const openaiApiKey = process.env.OPENAI_API_KEY;
+    
+    if (!perplexityApiKey && !openaiApiKey) {
+        throw new Error("Aucune clé API configurée. Veuillez configurer PERPLEXITY_API_KEY ou OPENAI_API_KEY.");
     }
     
-    const openai = new OpenAI({ apiKey });
+    // Préférer Perplexity pour les recherches en temps réel
+    const usePerplexity = !!perplexityApiKey;
+    const apiKey = usePerplexity ? perplexityApiKey : openaiApiKey;
+    
+    const openai = usePerplexity 
+        ? new OpenAI({ 
+            apiKey, 
+            baseURL: "https://api.perplexity.ai" 
+          })
+        : new OpenAI({ apiKey });
     
     // Déterminer la langue de sortie
     const isFrench = language === 'fr' || language === 'fr-FR';
@@ -4592,13 +4604,13 @@ async function callGeminiWithSearch(prompt, maxRetries = 10, language = 'fr') {
         ? "IMPORTANT: Réponds UNIQUEMENT en français. Tous les textes, labels, et descriptions doivent être en français."
         : `IMPORTANT: Respond ONLY in ${language === 'en' || language === 'en-US' ? 'English' : language}. All texts, labels, and descriptions must be in ${language === 'en' || language === 'en-US' ? 'English' : language}.`;
     
-    // Ajouter une instruction pour utiliser les connaissances les plus récentes et la langue
-    const enhancedPrompt = `${prompt}\n\nNote: Utilise tes connaissances les plus récentes et les informations disponibles pour répondre.\n\n${languageInstruction}`;
+    // Ajouter une instruction pour utiliser les recherches web récentes et la langue
+    const enhancedPrompt = `${prompt}\n\n${languageInstruction}`;
     
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
         try {
-            const response = await openai.chat.completions.create({
-                model: "gpt-4o",
+            const requestParams = {
+                model: usePerplexity ? "sonar-pro" : "gpt-4o",
                 messages: [
                     {
                         role: "user",
@@ -4607,7 +4619,15 @@ async function callGeminiWithSearch(prompt, maxRetries = 10, language = 'fr') {
                 ],
                 response_format: { type: "json_object" },
                 temperature: 0.7
-            });
+            };
+            
+            // Paramètres spécifiques à Perplexity pour les recherches récentes
+            if (usePerplexity) {
+                requestParams.search_recency_filter = "week"; // Rechercher dans les 7 derniers jours
+                requestParams.search_mode = "web"; // Mode recherche web
+            }
+            
+            const response = await openai.chat.completions.create(requestParams);
 
             const textPart = response.choices[0]?.message?.content;
             
@@ -4616,27 +4636,37 @@ async function callGeminiWithSearch(prompt, maxRetries = 10, language = 'fr') {
                 const inputTokens = response.usage.prompt_tokens || 0;
                 const outputTokens = response.usage.completion_tokens || 0;
                 const totalTokens = response.usage.total_tokens || (inputTokens + outputTokens);
-                console.log(`[ChatGPT Tokens (Search)] Entrée: ${inputTokens}, Sortie: ${outputTokens}, Total: ${totalTokens}`);
+                const apiName = usePerplexity ? "Perplexity" : "ChatGPT";
+                console.log(`[${apiName} Tokens (Search)] Entrée: ${inputTokens}, Sortie: ${outputTokens}, Total: ${totalTokens}`);
+                
+                // Afficher les sources si disponibles (Perplexity)
+                if (usePerplexity && response.search_results) {
+                    console.log(`[Perplexity] ${response.search_results.length} sources trouvées`);
+                }
             }
             
             if (textPart) {
                 try {
                     const cleanText = textPart.replace(/^```json\n?/, '').replace(/\n?```$/, '');
-                    console.log("Texte JSON nettoyé reçu de ChatGPT (Search):", cleanText); // Log pour débogage
+                    const apiName = usePerplexity ? "Perplexity" : "ChatGPT";
+                    console.log(`Texte JSON nettoyé reçu de ${apiName} (Search):`, cleanText); // Log pour débogage
                     return JSON.parse(cleanText); 
                 } catch (parseError) {
-                    console.error("Erreur de parsing JSON de la réponse ChatGPT (Search):", textPart);
-                    throw new Error("Réponse de l'API ChatGPT (Search) reçue mais n'est pas un JSON valide.");
+                    const apiName = usePerplexity ? "Perplexity" : "ChatGPT";
+                    console.error(`Erreur de parsing JSON de la réponse ${apiName} (Search):`, textPart);
+                    throw new Error(`Réponse de l'API ${apiName} (Search) reçue mais n'est pas un JSON valide.`);
                 }
             } else {
-                console.error("Réponse ChatGPT (Search) inattendue:", response);
-                throw new Error("Réponse de l'API ChatGPT (Search) malformée ou vide.");
+                const apiName = usePerplexity ? "Perplexity" : "ChatGPT";
+                console.error(`Réponse ${apiName} (Search) inattendue:`, response);
+                throw new Error(`Réponse de l'API ${apiName} (Search) malformée ou vide.`);
             }
         } catch (error) {
             // Gérer les erreurs de rate limit (429)
             if (error.status === 429 || (error.response && error.response.status === 429)) {
                 const waitTime = Math.min(Math.pow(2, attempt - 1) * 1000, 60000);
-                console.warn(`Tentative ${attempt}/${maxRetries}: API ChatGPT (Search) surchargée (429). Nouvel essai dans ${waitTime / 1000} seconde(s)...`);
+                const apiName = usePerplexity ? "Perplexity" : "ChatGPT";
+                console.warn(`Tentative ${attempt}/${maxRetries}: API ${apiName} (Search) surchargée (429). Nouvel essai dans ${waitTime / 1000} seconde(s)...`);
                 if (attempt < maxRetries) {
                     await delay(waitTime);
                     continue;
@@ -4644,8 +4674,9 @@ async function callGeminiWithSearch(prompt, maxRetries = 10, language = 'fr') {
             }
             
             if (attempt === maxRetries) {
-                console.error(`Erreur API ChatGPT (Search) (Tentative ${attempt}):`, error.message);
-                throw new Error(`Échec de l'appel à l'API ChatGPT (Search) après ${maxRetries} tentatives. ${error.message}`);
+                const apiName = usePerplexity ? "Perplexity" : "ChatGPT";
+                console.error(`Erreur API ${apiName} (Search) (Tentative ${attempt}):`, error.message);
+                throw new Error(`Échec de l'appel à l'API ${apiName} (Search) après ${maxRetries} tentatives. ${error.message}`);
             }
             
             console.error(`Erreur (Search) Tentative ${attempt}:`, error.message);
@@ -5146,7 +5177,7 @@ app.get('/api/properties/:id/news', authenticateToken, async (req, res) => {
 
         // 3. Si cache vide ou expiré, appeler l'IA
         const isFrench = language === 'fr' || language === 'fr-FR';
-        console.log(`Cache expiré ou absent pour ${propertyId} (ville: ${city}, langue: ${language}), appel de ChatGPT...`);
+        console.log(`Cache expiré ou absent pour ${propertyId} (ville: ${city}, langue: ${language}), appel de recherche web...`);
         
         const prompt = isFrench ? `
             Tu es un analyste de marché expert pour la location saisonnière.
@@ -5206,7 +5237,7 @@ app.get('/api/properties/:id/news', authenticateToken, async (req, res) => {
         const newsDataArray = Array.isArray(newsData) ? newsData : (newsData ? [newsData] : []);
 
         if (newsDataArray.length === 0) {
-             console.warn("Aucune actualité pertinente trouvée par ChatGPT pour", city);
+             console.warn("Aucune actualité pertinente trouvée pour", city);
         }
 
         // 4. Mettre à jour le cache (avec langue)
@@ -5224,7 +5255,7 @@ app.get('/api/properties/:id/news', authenticateToken, async (req, res) => {
     } catch (error) {
         console.error(`Erreur lors de la récupération des actualités pour ${req.params.id}:`, error);
          if (error.message.includes('403') || error.message.includes('API key not valid')) {
-             res.status(500).send({ error: "L'API ChatGPT (Search) n'est pas correctement configurée." });
+             res.status(500).send({ error: "L'API de recherche (Perplexity/ChatGPT) n'est pas correctement configurée." });
          } else if (error.message.includes('429') || error.message.includes('overloaded')) {
              res.status(503).send({ error: "L'API d'actualités est temporairement surchargée." });
         } else {
@@ -5300,7 +5331,7 @@ async function updateMarketNewsCache(language = 'fr') {
         const newsData = await callGeminiWithSearch(prompt, 10, language); // Appelle la fonction avec retry
 
         if (!newsData || !Array.isArray(newsData)) {
-             throw new Error("Données d'actualités invalides reçues de ChatGPT.");
+             throw new Error("Données d'actualités invalides reçues de l'API de recherche.");
         }
 
         const db = admin.firestore();
