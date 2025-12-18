@@ -3,8 +3,10 @@ import { getMarketNews } from '../services/api.js';
 import CustomScrollbar from './CustomScrollbar.jsx';
 import { useLanguage } from '../contexts/LanguageContext.jsx';
 
-function NewsFeed({ token }) {
-  const { t, language } = useLanguage();
+function NewsFeed({ token, userProfile }) {
+  const { t, language: contextLanguage } = useLanguage();
+  // Utiliser la langue du profil utilisateur en priorité, sinon celle du contexte
+  const language = userProfile?.language || contextLanguage || 'fr';
   const [news, setNews] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState('');
@@ -14,6 +16,7 @@ function NewsFeed({ token }) {
     setIsLoading(true);
     setError('');
     try {
+      // Toujours passer la langue explicitement pour s'assurer que le backend l'utilise
       const data = await getMarketNews(token, language);
       setNews(data || []);
     } catch (err) {

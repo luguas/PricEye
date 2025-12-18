@@ -5042,6 +5042,35 @@ app.get('/api/news', authenticateToken, async (req, res) => {
             return res.status(404).send({ error: 'Cache d\'actualités non encore généré. Veuillez patienter.' });
         }
 
+        // Vérifier que le cache correspond à la langue demandée
+        const cacheLanguage = docData.language;
+        if (cacheLanguage && cacheLanguage !== language) {
+            console.log(`Cache trouvé pour une autre langue (${cacheLanguage} au lieu de ${language}), régénération...`);
+            try {
+                await updateMarketNewsCache(language);
+                const newNewsDoc = await newsRef.get();
+                if (newNewsDoc.exists && newNewsDoc.data() && newNewsDoc.data().data) {
+                    return res.status(200).json(newNewsDoc.data().data);
+                }
+            } catch (genError) {
+                console.error(`Erreur lors de la régénération pour ${language}:`, genError);
+                // Continuer avec le cache existant si la génération échoue
+            }
+        }
+        
+        // Vérifier l'âge du cache (régénérer si > 24h)
+        const oneDay = 24 * 60 * 60 * 1000;
+        if (docData.updatedAt) {
+            const cacheAge = Date.now() - docData.updatedAt.toDate().getTime();
+            if (cacheAge > oneDay) {
+                console.log(`Cache expiré pour ${language} (${Math.round(cacheAge / (60 * 60 * 1000))}h), régénération en arrière-plan...`);
+                // Régénérer en arrière-plan sans bloquer la réponse
+                updateMarketNewsCache(language).catch(err => 
+                    console.error(`Erreur lors de la régénération en arrière-plan:`, err)
+                );
+            }
+        }
+
         // Récupérer les actualités (gérer les deux formats : avec .data ou directement)
         const newsData = docData.data || docData;
         if (!Array.isArray(newsData)) {

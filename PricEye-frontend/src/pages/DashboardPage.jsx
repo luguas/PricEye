@@ -801,7 +801,7 @@ function DashboardPage({ token, userProfile }) {
 
           {/* Right Column: News Feed */}
           <div className="xl:col-span-1 flex flex-col h-full">
-             <NewsFeed token={token} />
+             <NewsFeed token={token} userProfile={userProfile} />
           </div>
 
         </div>
