@@ -4115,7 +4115,8 @@ app.get('/api/reports/positioning', authenticateToken, async (req, res) => {
 
         // 3. Construire le prompt IA pour obtenir ADR marché + distribution prix concurrents
         const today = new Date().toISOString().split('T')[0];
-        const positioningPrompt = `
+        const isFrench = (req.query.language || userProfileDoc.data()?.language || 'fr') === 'fr' || (req.query.language || userProfileDoc.data()?.language || 'fr') === 'fr-FR';
+        const positioningPrompt = isFrench ? `
 Tu es un moteur de benchmarking tarifaire pour la location courte durée.
 
 Contexte:
@@ -4127,8 +4128,9 @@ Voici les propriétés de mon portefeuille et leur ADR observé sur la période:
 ${JSON.stringify(propertyStats, null, 2)}
 
 Ta mission:
-1) Pour chaque propriété ci-dessus, estime l'ADR moyen du marché pour des concurrents directs comparables (marketAdr).
-2) Construis également une distribution agrégée des prix concurrents sur ce marché (histogramme) en euros.
+1) Utilise des recherches web pour trouver les prix moyens réels du marché pour des propriétés comparables dans ${propertyStats[0]?.location || 'cette zone'}.
+2) Pour chaque propriété ci-dessus, estime l'ADR moyen du marché pour des concurrents directs comparables (marketAdr) basé sur les données réelles trouvées.
+3) Construis également une distribution agrégée des prix concurrents sur ce marché (histogramme) en euros basée sur les données réelles.
 
 Contraintes:
 - Utilise uniquement des valeurs entières en euros.
@@ -4146,14 +4148,46 @@ Contraintes:
   }
 }
 
-RAPPEL CRITIQUE: Réponds UNIQUEMENT avec ce JSON, sans commentaire, sans texte autour, sans markdown.`;
+RAPPEL CRITIQUE: Réponds UNIQUEMENT avec ce JSON, sans commentaire, sans texte autour, sans markdown.` : `
+You are a pricing benchmarking engine for short-term rentals.
+
+Context:
+- Execution date: ${today}
+- Analysis period: from ${startDate} to ${endDate}
+- Main market: ${propertyStats[0]?.location || 'Not specified'}
+
+Here are my portfolio properties and their observed ADR over the period:
+${JSON.stringify(propertyStats, null, 2)}
+
+Your mission:
+1) Use web searches to find real average market prices for comparable properties in ${propertyStats[0]?.location || 'this area'}.
+2) For each property above, estimate the average market ADR for comparable direct competitors (marketAdr) based on real data found.
+3) Also build an aggregated distribution of competitor prices in this market (histogram) in euros based on real data.
+
+Constraints:
+- Use only integer values in euros.
+- Return NO text outside the JSON.
+- The response MUST be a STRICTLY VALID JSON object in the format:
+{
+  "adrVsMarket": {
+    "labels": ["Property name 1", "Property name 2", "..."],
+    "yourAdrData": [120, 95, 140],
+    "marketAdrData": [110, 100, 130]
+  },
+  "priceDistribution": {
+    "labels": ["0-100", "100-150", "150-200", "200-250", "250-300", "300+"],
+    "data": [8, 12, 18, 15, 10, 5]
+  }
+}
+
+CRITICAL REMINDER: Respond ONLY with this JSON, no comments, no text around, no markdown.`;
 
         // Récupérer la langue de l'utilisateur (userProfileDoc déjà récupéré plus haut)
         const language = req.query.language || userProfileDoc.data()?.language || 'fr';
         
         let iaResult = null;
         try {
-            iaResult = await callGeminiAPI(positioningPrompt, 10, language);
+            iaResult = await callGeminiWithSearch(positioningPrompt, 10, language);
         } catch (e) {
             console.error('Erreur lors de l\'appel IA pour le positionnement:', e);
         }
@@ -4915,7 +4949,7 @@ Structure attendue :
 RAPPEL CRITIQUE : La réponse finale doit être UNIQUEMENT ce JSON, sans texte additionnel, sans commentaires, sans markdown.
         `;
 
-        const iaResult = await callGeminiAPI(prompt, 10, language);
+        const iaResult = await callGeminiWithSearch(prompt, 10, language);
 
         if (!iaResult || !Array.isArray(iaResult.calendar) || iaResult.calendar.length === 0) {
             throw new Error("La réponse de l'IA est invalide ou ne contient pas de calendrier de prix.");
@@ -5627,7 +5661,7 @@ RAPPEL CRITIQUE : La réponse finale doit être UNIQUEMENT ce JSON, sans texte a
         `;
 
         // Appeler l'API ChatGPT
-        const iaResult = await callGeminiAPI(prompt, 10, language);
+        const iaResult = await callGeminiWithSearch(prompt, 10, language);
 
         if (!iaResult || !Array.isArray(iaResult.calendar) || iaResult.calendar.length === 0) {
             throw new Error("La réponse de l'IA est invalide ou ne contient pas de calendrier de prix.");
