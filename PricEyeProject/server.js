@@ -3,7 +3,8 @@ const express = require('express');
 const admin = require('firebase-admin');
 const cors = require('cors');
 require('dotenv').config();
-const cron = require('node-cron'); 
+const cron = require('node-cron');
+const OpenAI = require('openai'); 
 
 // Configuration Firebase (nécessaire pour la clé API web)
 const firebaseConfig = {
@@ -3073,7 +3074,7 @@ app.get('/api/properties/:id/news', authenticateToken, async (req, res) => {
 
         // 3. Si cache vide ou expiré, appeler l'IA
         const isFrench = language === 'fr' || language === 'fr-FR';
-        console.log(`Cache expiré ou absent pour ${propertyId} (ville: ${city}, langue: ${language}), appel de Gemini...`);
+        console.log(`Cache expiré ou absent pour ${propertyId} (ville: ${city}, langue: ${language}), appel de ChatGPT...`);
         
         const prompt = isFrench ? `
             Tu es un analyste de marché expert pour la location saisonnière.
@@ -3133,7 +3134,7 @@ app.get('/api/properties/:id/news', authenticateToken, async (req, res) => {
         const newsDataArray = Array.isArray(newsData) ? newsData : (newsData ? [newsData] : []);
 
         if (newsDataArray.length === 0) {
-             console.warn("Aucune actualité pertinente trouvée par Gemini pour", city);
+             console.warn("Aucune actualité pertinente trouvée par ChatGPT pour", city);
         }
 
         // 4. Mettre à jour le cache (avec langue)
@@ -3151,7 +3152,7 @@ app.get('/api/properties/:id/news', authenticateToken, async (req, res) => {
     } catch (error) {
         console.error(`Erreur lors de la récupération des actualités pour ${req.params.id}:`, error);
          if (error.message.includes('403') || error.message.includes('API key not valid')) {
-             res.status(500).send({ error: "L'API Gemini (Search) n'est pas correctement configurée." });
+             res.status(500).send({ error: "L'API ChatGPT (Search) n'est pas correctement configurée." });
          } else if (error.message.includes('429') || error.message.includes('overloaded')) {
              res.status(503).send({ error: "L'API d'actualités est temporairement surchargée." });
         } else {
@@ -4328,7 +4329,7 @@ app.post('/api/reports/analyze-date', authenticateToken, async (req, res) => {
         const city = location.split(',')[0].trim();
         const capacity = property.capacity || 2;
 
-        // 2. Construire le prompt pour Gemini
+        // 2. Construire le prompt pour ChatGPT
         const prompt = `
             Tu es un analyste de marché expert pour la location saisonnière.
             Analyse la demande du marché pour la date spécifique: **${date}**
@@ -4353,7 +4354,7 @@ app.post('/api/reports/analyze-date', authenticateToken, async (req, res) => {
             }
         `;
 
-        // 3. Appeler Gemini avec l'outil de recherche
+        // 3. Appeler ChatGPT avec recherche
         const analysisResult = await callGeminiWithSearch(prompt);
 
         if (!analysisResult || !analysisResult.marketDemand) {
@@ -4367,7 +4368,7 @@ app.post('/api/reports/analyze-date', authenticateToken, async (req, res) => {
     } catch (error) {
         console.error(`Erreur lors de l'analyse de la date ${req.body.date}:`, error);
          if (error.message.includes('403') || error.message.includes('API key not valid')) {
-             res.status(500).send({ error: "L'API Gemini (Search) n'est pas correctement configurée." });
+             res.status(500).send({ error: "L'API ChatGPT (Search) n'est pas correctement configurée." });
          } else if (error.message.includes('429') || error.message.includes('overloaded')) {
              res.status(503).send({ error: "L'API d'analyse est temporairement surchargée." });
         } else {
@@ -4457,157 +4458,153 @@ app.get('/api/recommendations/group-candidates', authenticateToken, async (req, 
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 /**
- * Fonction helper pour appeler l'API Gemini avec retry et backoff exponentiel
+ * Fonction helper pour appeler l'API ChatGPT avec retry et backoff exponentiel
  */
 async function callGeminiAPI(prompt, maxRetries = 10) {
-    const apiKey = process.env.GEMINI_API_KEY;
+    const apiKey = process.env.OPENAI_API_KEY;
     if (!apiKey) {
-        console.error("GEMINI_API_KEY non trouvée dans .env");
-        throw new Error("Clé API Gemini non configurée sur le serveur.");
+        console.error("OPENAI_API_KEY non trouvée dans .env");
+        throw new Error("Clé API OpenAI non configurée sur le serveur.");
     }
-    const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent?key=${apiKey}`; 
     
-    const payload = {
-        contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: { responseMimeType: "application/json" }
-    };
+    const openai = new OpenAI({ apiKey });
 
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
         try {
-            const response = await fetch(API_URL, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload)
+            const response = await openai.chat.completions.create({
+                model: "gpt-4o",
+                messages: [
+                    {
+                        role: "user",
+                        content: prompt
+                    }
+                ],
+                response_format: { type: "json_object" },
+                temperature: 0.7
             });
 
-            if (response.status === 429) {
-                // Backoff exponentiel: 2^(attempt-1) secondes, avec un maximum de 60 secondes
-                const waitTime = Math.min(Math.pow(2, attempt - 1) * 1000, 60000);
-                console.warn(`Tentative ${attempt}/${maxRetries}: API Gemini surchargée (429). Nouvel essai dans ${waitTime / 1000} seconde(s)...`);
-                await delay(waitTime);
-                continue;
-            }
+            const textPart = response.choices[0]?.message?.content;
 
-            if (!response.ok) {
-                const errorBody = await response.json();
-                console.error(`Erreur API Gemini (Tentative ${attempt}):`, errorBody);
-                throw new Error(`Erreur de l'API Gemini: ${errorBody.error?.message || response.statusText}`);
-            }
-
-            const result = await response.json();
-            const candidate = result.candidates?.[0];
-            const textPart = candidate?.content?.parts?.[0]?.text;
-
-            // Extraire les informations de tokens depuis usageMetadata
-            if (result.usageMetadata) {
-                const inputTokens = result.usageMetadata.promptTokenCount || 0;
-                const outputTokens = result.usageMetadata.candidatesTokenCount || 0;
-                const totalTokens = result.usageMetadata.totalTokenCount || (inputTokens + outputTokens);
-                console.log(`[Gemini Tokens] Entrée: ${inputTokens}, Sortie: ${outputTokens}, Total: ${totalTokens}`);
+            // Extraire les informations de tokens
+            if (response.usage) {
+                const inputTokens = response.usage.prompt_tokens || 0;
+                const outputTokens = response.usage.completion_tokens || 0;
+                const totalTokens = response.usage.total_tokens || (inputTokens + outputTokens);
+                console.log(`[ChatGPT Tokens] Entrée: ${inputTokens}, Sortie: ${outputTokens}, Total: ${totalTokens}`);
             }
 
             if (textPart) {
                 try {
                     return JSON.parse(textPart);
                 } catch (parseError) {
-                    console.error("Erreur de parsing JSON de la réponse Gemini:", textPart);
-                    throw new Error("Réponse de l'API Gemini reçue mais n'est pas un JSON valide.");
+                    console.error("Erreur de parsing JSON de la réponse ChatGPT:", textPart);
+                    throw new Error("Réponse de l'API ChatGPT reçue mais n'est pas un JSON valide.");
                 }
             } else {
-                console.error("Réponse Gemini inattendue:", result);
-                throw new Error("Réponse de l'API Gemini malformée ou vide.");
+                console.error("Réponse ChatGPT inattendue:", response);
+                throw new Error("Réponse de l'API ChatGPT malformée ou vide.");
             }
         } catch (error) {
-             if (attempt === maxRetries) {
-                 throw error;
-             }
-             console.error(`Erreur lors de la tentative ${attempt} d'appel à Gemini:`, error.message);
-             // Backoff exponentiel: 2^(attempt-1) secondes, avec un maximum de 60 secondes
-             const waitTime = Math.min(Math.pow(2, attempt - 1) * 1000, 60000);
-             console.log(`Nouvelle tentative dans ${waitTime / 1000} seconde(s)...`);
-             await delay(waitTime);
+            // Gérer les erreurs de rate limit (429)
+            if (error.status === 429 || (error.response && error.response.status === 429)) {
+                const waitTime = Math.min(Math.pow(2, attempt - 1) * 1000, 60000);
+                console.warn(`Tentative ${attempt}/${maxRetries}: API ChatGPT surchargée (429). Nouvel essai dans ${waitTime / 1000} seconde(s)...`);
+                if (attempt < maxRetries) {
+                    await delay(waitTime);
+                    continue;
+                }
+            }
+            
+            if (attempt === maxRetries) {
+                console.error(`Erreur API ChatGPT (Tentative ${attempt}):`, error.message);
+                throw new Error(`Erreur de l'API ChatGPT: ${error.message || 'Erreur inconnue'}`);
+            }
+            
+            console.error(`Erreur lors de la tentative ${attempt} d'appel à ChatGPT:`, error.message);
+            // Backoff exponentiel: 2^(attempt-1) secondes, avec un maximum de 60 secondes
+            const waitTime = Math.min(Math.pow(2, attempt - 1) * 1000, 60000);
+            console.log(`Nouvelle tentative dans ${waitTime / 1000} seconde(s)...`);
+            await delay(waitTime);
         }
     }
-     throw new Error(`Échec de l'appel à l'API Gemini après ${maxRetries} tentatives.`);
+    throw new Error(`Échec de l'appel à l'API ChatGPT après ${maxRetries} tentatives.`);
 }
 
 /**
- * Fonction helper pour appeler l'API Gemini avec l'outil de recherche et backoff exponentiel
+ * Fonction helper pour appeler l'API ChatGPT avec recherche (basée sur les connaissances du modèle)
+ * Note: ChatGPT n'a pas d'outil de recherche intégré comme Gemini, mais utilise ses connaissances
  */
 async function callGeminiWithSearch(prompt, maxRetries = 10) {
-    const apiKey = process.env.GEMINI_API_KEY;
+    const apiKey = process.env.OPENAI_API_KEY;
     if (!apiKey) {
-        throw new Error("Clé API Gemini non configurée sur le serveur.");
+        throw new Error("Clé API OpenAI non configurée sur le serveur.");
     }
-    const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent?key=${apiKey}`; 
-
-    const payload = {
-        contents: [{ parts: [{ text: prompt }] }],
-        tools: [{ "google_search": {} }], 
-    };
     
-     for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    const openai = new OpenAI({ apiKey });
+    
+    // Ajouter une instruction pour utiliser les connaissances les plus récentes
+    const enhancedPrompt = `${prompt}\n\nNote: Utilise tes connaissances les plus récentes et les informations disponibles pour répondre.`;
+    
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
         try {
-            const response = await fetch(API_URL, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload)
+            const response = await openai.chat.completions.create({
+                model: "gpt-4o",
+                messages: [
+                    {
+                        role: "user",
+                        content: enhancedPrompt
+                    }
+                ],
+                response_format: { type: "json_object" },
+                temperature: 0.7
             });
 
-             if (response.status === 429) {
-                // Backoff exponentiel: 2^(attempt-1) secondes, avec un maximum de 60 secondes
-                const waitTime = Math.min(Math.pow(2, attempt - 1) * 1000, 60000);
-                console.warn(`Tentative ${attempt}/${maxRetries}: API Gemini (Search) surchargée (429). Nouvel essai dans ${waitTime / 1000} seconde(s)...`);
-                await delay(waitTime);
-                continue;
-            }
-            if (!response.ok) {
-                const errorBody = await response.json();
-                console.error(`Erreur API Gemini (Search) (Tentative ${attempt}):`, errorBody);
-                throw new Error(`Erreur de l'API Gemini (Search): ${errorBody.error?.message || response.statusText}`);
-            }
-
-            const result = await response.json();
-            const candidate = result.candidates?.[0];
-            const textPart = candidate?.content?.parts?.[0]?.text;
+            const textPart = response.choices[0]?.message?.content;
             
-            // Extraire les informations de tokens depuis usageMetadata
-            if (result.usageMetadata) {
-                const inputTokens = result.usageMetadata.promptTokenCount || 0;
-                const outputTokens = result.usageMetadata.candidatesTokenCount || 0;
-                const totalTokens = result.usageMetadata.totalTokenCount || (inputTokens + outputTokens);
-                console.log(`[Gemini Tokens (Search)] Entrée: ${inputTokens}, Sortie: ${outputTokens}, Total: ${totalTokens}`);
+            // Extraire les informations de tokens
+            if (response.usage) {
+                const inputTokens = response.usage.prompt_tokens || 0;
+                const outputTokens = response.usage.completion_tokens || 0;
+                const totalTokens = response.usage.total_tokens || (inputTokens + outputTokens);
+                console.log(`[ChatGPT Tokens (Search)] Entrée: ${inputTokens}, Sortie: ${outputTokens}, Total: ${totalTokens}`);
             }
             
             if (textPart) {
-                 try {
+                try {
                     const cleanText = textPart.replace(/^```json\n?/, '').replace(/\n?```$/, '');
-                    console.log("Texte JSON nettoyé reçu de Gemini (Search):", cleanText); // Log pour débogage
+                    console.log("Texte JSON nettoyé reçu de ChatGPT (Search):", cleanText); // Log pour débogage
                     return JSON.parse(cleanText); 
                 } catch (parseError) {
-                    console.error("Erreur de parsing JSON de la réponse Gemini (Search):", textPart);
-                    throw new Error("Réponse de l'API Gemini (Search) reçue mais n'est pas un JSON valide.");
+                    console.error("Erreur de parsing JSON de la réponse ChatGPT (Search):", textPart);
+                    throw new Error("Réponse de l'API ChatGPT (Search) reçue mais n'est pas un JSON valide.");
                 }
             } else {
-                 console.error("Réponse Gemini (Search) inattendue:", result);
-                 if (candidate?.finishReason === 'SAFETY') {
-                      throw new Error("La réponse de l'IA a été bloquée pour des raisons de sécurité.");
-                 } else if (candidate?.finishReason === 'OTHER') {
-                     throw new Error("L'API Gemini n'a pas pu terminer la recherche.");
-                 }
-                throw new Error("Réponse de l'API Gemini (Search) malformée ou vide.");
+                console.error("Réponse ChatGPT (Search) inattendue:", response);
+                throw new Error("Réponse de l'API ChatGPT (Search) malformée ou vide.");
             }
         } catch (error) {
-             if (attempt === maxRetries) {
-                 throw new Error(`Échec de l'appel à l'API Gemini (Search) après ${maxRetries} tentatives. ${error.message}`);
-             }
-             console.error(`Erreur (Search) Tentative ${attempt}:`, error.message);
-             // Backoff exponentiel: 2^(attempt-1) secondes, avec un maximum de 60 secondes
-             const waitTime = Math.min(Math.pow(2, attempt - 1) * 1000, 60000);
-             console.log(`Nouvelle tentative dans ${waitTime / 1000} seconde(s)...`);
-             await delay(waitTime);
+            // Gérer les erreurs de rate limit (429)
+            if (error.status === 429 || (error.response && error.response.status === 429)) {
+                const waitTime = Math.min(Math.pow(2, attempt - 1) * 1000, 60000);
+                console.warn(`Tentative ${attempt}/${maxRetries}: API ChatGPT (Search) surchargée (429). Nouvel essai dans ${waitTime / 1000} seconde(s)...`);
+                if (attempt < maxRetries) {
+                    await delay(waitTime);
+                    continue;
+                }
+            }
+            
+            if (attempt === maxRetries) {
+                console.error(`Erreur API ChatGPT (Search) (Tentative ${attempt}):`, error.message);
+                throw new Error(`Échec de l'appel à l'API ChatGPT (Search) après ${maxRetries} tentatives. ${error.message}`);
+            }
+            
+            console.error(`Erreur (Search) Tentative ${attempt}:`, error.message);
+            // Backoff exponentiel: 2^(attempt-1) secondes, avec un maximum de 60 secondes
+            const waitTime = Math.min(Math.pow(2, attempt - 1) * 1000, 60000);
+            console.log(`Nouvelle tentative dans ${waitTime / 1000} seconde(s)...`);
+            await delay(waitTime);
         }
-     }
+    }
 }
 
 // POST /api/properties/:id/pricing-strategy - Générer une stratégie de prix
@@ -5045,7 +5042,7 @@ app.get('/api/properties/:id/news', authenticateToken, async (req, res) => {
 
         // 3. Si cache vide ou expiré, appeler l'IA
         const isFrench = language === 'fr' || language === 'fr-FR';
-        console.log(`Cache expiré ou absent pour ${propertyId} (ville: ${city}, langue: ${language}), appel de Gemini...`);
+        console.log(`Cache expiré ou absent pour ${propertyId} (ville: ${city}, langue: ${language}), appel de ChatGPT...`);
         
         const prompt = isFrench ? `
             Tu es un analyste de marché expert pour la location saisonnière.
@@ -5105,7 +5102,7 @@ app.get('/api/properties/:id/news', authenticateToken, async (req, res) => {
         const newsDataArray = Array.isArray(newsData) ? newsData : (newsData ? [newsData] : []);
 
         if (newsDataArray.length === 0) {
-             console.warn("Aucune actualité pertinente trouvée par Gemini pour", city);
+             console.warn("Aucune actualité pertinente trouvée par ChatGPT pour", city);
         }
 
         // 4. Mettre à jour le cache (avec langue)
@@ -5123,7 +5120,7 @@ app.get('/api/properties/:id/news', authenticateToken, async (req, res) => {
     } catch (error) {
         console.error(`Erreur lors de la récupération des actualités pour ${req.params.id}:`, error);
          if (error.message.includes('403') || error.message.includes('API key not valid')) {
-             res.status(500).send({ error: "L'API Gemini (Search) n'est pas correctement configurée." });
+             res.status(500).send({ error: "L'API ChatGPT (Search) n'est pas correctement configurée." });
          } else if (error.message.includes('429') || error.message.includes('overloaded')) {
              res.status(503).send({ error: "L'API d'actualités est temporairement surchargée." });
         } else {
@@ -5199,7 +5196,7 @@ async function updateMarketNewsCache(language = 'fr') {
         const newsData = await callGeminiWithSearch(prompt); // Appelle la fonction avec retry
 
         if (!newsData || !Array.isArray(newsData)) {
-             throw new Error("Données d'actualités invalides reçues de Gemini.");
+             throw new Error("Données d'actualités invalides reçues de ChatGPT.");
         }
 
         const db = admin.firestore();
@@ -5438,7 +5435,7 @@ Structure attendue :
 RAPPEL CRITIQUE : La réponse finale doit être UNIQUEMENT ce JSON, sans texte additionnel, sans commentaires, sans markdown.
         `;
 
-        // Appeler l'API Gemini
+        // Appeler l'API ChatGPT
         const iaResult = await callGeminiAPI(prompt);
 
         if (!iaResult || !Array.isArray(iaResult.calendar) || iaResult.calendar.length === 0) {
