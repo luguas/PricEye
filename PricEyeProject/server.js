@@ -4600,18 +4600,26 @@ async function callGeminiWithSearch(prompt, maxRetries = 10, language = 'fr') {
     
     // Déterminer la langue de sortie
     const isFrench = language === 'fr' || language === 'fr-FR';
+    const targetLanguage = isFrench ? 'français' : (language === 'en' || language === 'en-US' ? 'anglais' : language);
+    
+    // Instruction de langue renforcée pour Perplexity (qui fait des recherches web)
     const languageInstruction = isFrench 
-        ? "IMPORTANT: Réponds UNIQUEMENT en français. Tous les textes, labels, et descriptions doivent être en français."
-        : `IMPORTANT: Respond ONLY in ${language === 'en' || language === 'en-US' ? 'English' : language}. All texts, labels, and descriptions must be in ${language === 'en' || language === 'en-US' ? 'English' : language}.`;
+        ? "CRITIQUE: Réponds UNIQUEMENT en français, même si les sources trouvées sont dans d'autres langues. Tous les textes, titres, résumés, labels, catégories, et descriptions DOIVENT être en français. Traduis toutes les informations trouvées en français."
+        : `CRITICAL: Respond ONLY in ${language === 'en' || language === 'en-US' ? 'English' : language}, even if the sources found are in other languages. All texts, titles, summaries, labels, categories, and descriptions MUST be in ${language === 'en' || language === 'en-US' ? 'English' : language}. Translate all found information to ${language === 'en' || language === 'en-US' ? 'English' : language}.`;
     
     // Instruction JSON pour Perplexity (qui ne supporte pas response_format comme OpenAI)
     const jsonInstruction = isFrench
         ? "IMPORTANT: Réponds UNIQUEMENT avec un JSON valide, sans texte avant ou après, sans markdown ```json. Le format doit être un objet JSON ou un tableau JSON valide."
         : "IMPORTANT: Respond ONLY with valid JSON, no text before or after, no markdown ```json. The format must be a valid JSON object or JSON array.";
     
+    // Instruction spécifique pour Perplexity avec recherche web
+    const perplexitySearchInstruction = isFrench
+        ? "Note: Tu fais des recherches web en temps réel. Peu importe la langue des sources trouvées, tu DOIS répondre en français. Traduis tous les contenus (titres, résumés, etc.) en français."
+        : `Note: You are doing real-time web searches. Regardless of the language of the sources found, you MUST respond in ${language === 'en' || language === 'en-US' ? 'English' : language}. Translate all content (titles, summaries, etc.) to ${language === 'en' || language === 'en-US' ? 'English' : language}.`;
+    
     // Ajouter les instructions selon l'API utilisée
     const enhancedPrompt = usePerplexity
-        ? `${prompt}\n\n${languageInstruction}\n\n${jsonInstruction}`
+        ? `${prompt}\n\n${languageInstruction}\n\n${perplexitySearchInstruction}\n\n${jsonInstruction}`
         : `${prompt}\n\n${languageInstruction}`;
     
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
