@@ -4334,9 +4334,10 @@ app.post('/api/reports/analyze-date', authenticateToken, async (req, res) => {
         
         // Récupérer la langue de l'utilisateur
         const language = req.query.language || userProfileDoc.data()?.language || 'fr';
+        const isFrench = language === 'fr' || language === 'fr-FR';
 
         // 2. Construire le prompt pour ChatGPT
-        const prompt = `
+        const prompt = isFrench ? `
             Tu es un analyste de marché expert pour la location saisonnière.
             Analyse la demande du marché pour la date spécifique: **${date}**
             dans la ville de: **${city}**
@@ -4347,7 +4348,7 @@ app.post('/api/reports/analyze-date', authenticateToken, async (req, res) => {
             2.  Une estimation de la demande du marché (ex: "Faible", "Moyenne", "Élevée", "Très Élevée").
             3.  Une suggestion de fourchette de prix pour une nuit à cette date, basée sur le marché (ex: "120€ - 140€").
 
-            Réponds UNIQUEMENT avec un objet JSON valide (pas de texte avant ou après, pas de markdown \`\`\`json).
+            Réponds UNIQUEMENT avec un objet JSON valide en français (pas de texte avant ou après, pas de markdown \`\`\`json).
             Le format doit être:
             {
               "marketDemand": "...",
@@ -4357,6 +4358,28 @@ app.post('/api/reports/analyze-date', authenticateToken, async (req, res) => {
               ],
               "priceSuggestion": "...",
               "analysisSummary": "Courte phrase résumant pourquoi la demande est ce qu'elle est."
+            }
+        ` : `
+            You are an expert market analyst for seasonal rentals.
+            Analyze market demand for the specific date: **${date}**
+            in the city of: **${city}**
+            for a "${property.property_type || 'apartment'}" type accommodation that can accommodate **${capacity} people**.
+
+            Use the Google search tool to find:
+            1.  Local events (concerts, trade shows, matches, school holidays, public holidays) taking place on this date or that weekend.
+            2.  A market demand estimate (e.g., "Low", "Medium", "High", "Very High").
+            3.  A price range suggestion for one night on this date, based on the market (e.g., "€120 - €140").
+
+            Respond ONLY with a valid JSON object in English (no text before or after, no markdown \`\`\`json).
+            The format should be:
+            {
+              "marketDemand": "...",
+              "events": [
+                "Event 1 (if found)",
+                "Event 2 (if found)"
+              ],
+              "priceSuggestion": "...",
+              "analysisSummary": "Short phrase summarizing why demand is what it is."
             }
         `;
 
