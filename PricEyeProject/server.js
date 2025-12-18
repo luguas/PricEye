@@ -4155,7 +4155,7 @@ RAPPEL CRITIQUE: Réponds UNIQUEMENT avec ce JSON, sans commentaire, sans texte 
         try {
             iaResult = await callGeminiAPI(positioningPrompt, 10, language);
         } catch (e) {
-            console.error('Erreur lors de l'appel IA pour le positionnement:', e);
+            console.error('Erreur lors de l\'appel IA pour le positionnement:', e);
         }
 
         // 4. Fallback local si l’IA ne renvoie rien d’exploitable
