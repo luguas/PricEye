@@ -4974,9 +4974,25 @@ app.get('/api/news', authenticateToken, async (req, res) => {
         const userProfileRef = db.collection('users').doc(userId);
         const userProfileDoc = await userProfileRef.get();
         const language = req.query.language || userProfileDoc.data()?.language || 'fr';
+        const forceRefresh = req.query.forceRefresh === 'true';
         
         const newsRef = db.collection('system').doc(`marketNews_${language}`);
         const newsDoc = await newsRef.get();
+        
+        // Si forceRefresh est activé, régénérer le cache immédiatement
+        if (forceRefresh) {
+            console.log(`Régénération forcée du cache des actualités pour la langue ${language}...`);
+            try {
+                await updateMarketNewsCache(language);
+                const refreshedNewsDoc = await newsRef.get();
+                if (refreshedNewsDoc.exists && refreshedNewsDoc.data() && refreshedNewsDoc.data().data) {
+                    return res.status(200).json(refreshedNewsDoc.data().data);
+                }
+            } catch (refreshError) {
+                console.error(`Erreur lors de la régénération forcée pour ${language}:`, refreshError);
+                // Continuer avec le cache existant si la régénération échoue
+            }
+        }
 
         // Si le cache n'existe pas pour cette langue, vérifier l'ancien format puis générer
         if (!newsDoc.exists || !newsDoc.data()) {

@@ -11,13 +11,13 @@ function NewsFeed({ token, userProfile }) {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState('');
 
-  const fetchNews = useCallback(async () => {
+  const fetchNews = useCallback(async (forceRefresh = false) => {
     if (!token) return;
     setIsLoading(true);
     setError('');
     try {
       // Toujours passer la langue explicitement pour s'assurer que le backend l'utilise
-      const data = await getMarketNews(token, language);
+      const data = await getMarketNews(token, language, forceRefresh);
       setNews(data || []);
     } catch (err) {
       setError(t('newsFeed.loadError', { message: err.message }));
@@ -118,7 +118,7 @@ function NewsFeed({ token, userProfile }) {
         </div>
         <button
           type="button"
-          onClick={fetchNews}
+          onClick={() => fetchNews(true)}
           className="text-sm px-4 py-2 rounded-full border border-global-stroke-box text-global-inactive hover:text-global-blanc hover:border-global-content-highlight-2nd transition shrink-0"
         >
           {t('dashboard.refresh')}

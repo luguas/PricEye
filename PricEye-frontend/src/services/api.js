@@ -537,8 +537,12 @@ export function getGroupRecommendations(token) {
     });
 }
 
-export function getMarketNews(token, language = 'fr') {
-    return apiRequest(`/api/news?language=${language}`, {
+export function getMarketNews(token, language = 'fr', forceRefresh = false) {
+    const params = new URLSearchParams({ language });
+    if (forceRefresh) {
+        params.append('forceRefresh', 'true');
+    }
+    return apiRequest(`/api/news?${params.toString()}`, {
         token,
     });
 }
