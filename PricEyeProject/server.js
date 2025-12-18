@@ -5209,7 +5209,7 @@ async function updateMarketNewsCache(language = 'fr') {
             3. Estimate the impact on prices as a percentage (e.g., 15 for +15%, -5 for -5%).
             4. Categorize this impact as "high", "medium", or "low".
 
-            Respond ONLY with a valid JSON array. 
+            Respond ONLY with a valid JSON array in English. 
             Do not include any text before or after the array, not even \`\`\`json.
             The format should be:
             [
