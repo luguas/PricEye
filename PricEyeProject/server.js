@@ -4148,9 +4148,7 @@ Contraintes:
 
 RAPPEL CRITIQUE: Réponds UNIQUEMENT avec ce JSON, sans commentaire, sans texte autour, sans markdown.`;
 
-        // Récupérer la langue de l'utilisateur
-        const userProfileRef = db.collection('users').doc(userId);
-        const userProfileDoc = await userProfileRef.get();
+        // Récupérer la langue de l'utilisateur (userProfileDoc déjà récupéré plus haut)
         const language = req.query.language || userProfileDoc.data()?.language || 'fr';
         
         let iaResult = null;
