@@ -4604,8 +4604,15 @@ async function callGeminiWithSearch(prompt, maxRetries = 10, language = 'fr') {
         ? "IMPORTANT: Réponds UNIQUEMENT en français. Tous les textes, labels, et descriptions doivent être en français."
         : `IMPORTANT: Respond ONLY in ${language === 'en' || language === 'en-US' ? 'English' : language}. All texts, labels, and descriptions must be in ${language === 'en' || language === 'en-US' ? 'English' : language}.`;
     
-    // Ajouter une instruction pour utiliser les recherches web récentes et la langue
-    const enhancedPrompt = `${prompt}\n\n${languageInstruction}`;
+    // Instruction JSON pour Perplexity (qui ne supporte pas response_format comme OpenAI)
+    const jsonInstruction = isFrench
+        ? "IMPORTANT: Réponds UNIQUEMENT avec un JSON valide, sans texte avant ou après, sans markdown ```json. Le format doit être un objet JSON ou un tableau JSON valide."
+        : "IMPORTANT: Respond ONLY with valid JSON, no text before or after, no markdown ```json. The format must be a valid JSON object or JSON array.";
+    
+    // Ajouter les instructions selon l'API utilisée
+    const enhancedPrompt = usePerplexity
+        ? `${prompt}\n\n${languageInstruction}\n\n${jsonInstruction}`
+        : `${prompt}\n\n${languageInstruction}`;
     
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
         try {
@@ -4617,7 +4624,6 @@ async function callGeminiWithSearch(prompt, maxRetries = 10, language = 'fr') {
                         content: enhancedPrompt
                     }
                 ],
-                response_format: { type: "json_object" },
                 temperature: 0.7
             };
             
@@ -4625,6 +4631,10 @@ async function callGeminiWithSearch(prompt, maxRetries = 10, language = 'fr') {
             if (usePerplexity) {
                 requestParams.search_recency_filter = "week"; // Rechercher dans les 7 derniers jours
                 requestParams.search_mode = "web"; // Mode recherche web
+                // Perplexity ne supporte pas response_format, on utilise l'instruction JSON dans le prompt
+            } else {
+                // OpenAI supporte response_format pour forcer le JSON
+                requestParams.response_format = { type: "json_object" };
             }
             
             const response = await openai.chat.completions.create(requestParams);
