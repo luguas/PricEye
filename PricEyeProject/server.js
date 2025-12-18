@@ -4968,7 +4968,13 @@ RAPPEL CRITIQUE : La réponse finale doit être UNIQUEMENT ce JSON, sans texte a
 app.get('/api/news', authenticateToken, async (req, res) => {
     try {
         const db = admin.firestore();
-        const language = req.query.language || 'fr'; // Par défaut français
+        const userId = req.user.uid;
+        
+        // Récupérer la langue : query param > profil utilisateur > français par défaut
+        const userProfileRef = db.collection('users').doc(userId);
+        const userProfileDoc = await userProfileRef.get();
+        const language = req.query.language || userProfileDoc.data()?.language || 'fr';
+        
         const newsRef = db.collection('system').doc(`marketNews_${language}`);
         const newsDoc = await newsRef.get();
 
