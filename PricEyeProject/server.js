@@ -290,8 +290,12 @@ function calculateBillingQuantities(userProperties, userGroups) {
             }
             
             // Ajouter toutes les propriétés du groupe au Set pour les exclure des propriétés indépendantes
-            groupProperties.forEach(propId => {
-                propertiesInGroups.add(propId);
+            // Gérer à la fois les IDs (strings) et les objets propriétés (Supabase)
+            groupProperties.forEach(prop => {
+                const propId = typeof prop === 'string' ? prop : (prop.id || prop.property_id);
+                if (propId) {
+                    propertiesInGroups.add(propId);
+                }
             });
             
             // TODO: Ajouter ici la validation de géolocalisation pour éviter la fraude
@@ -317,7 +321,6 @@ function calculateBillingQuantities(userProperties, userGroups) {
  * @param {string} subscriptionId - ID de l'abonnement Stripe
  * @param {number} currentPropertyCount - Nombre actuel de propriétés
  * @param {number} newPropertiesCount - Nombre de nouvelles propriétés à ajouter
- * @param {Object} db - Instance Firestore
  * @returns {Promise<{isAllowed: boolean, isTrialActive: boolean, currentCount: number, maxAllowed: number}>}
  */
 async function checkTrialPropertyLimit(userId, subscriptionId, currentPropertyCount, newPropertiesCount) {
@@ -406,16 +409,14 @@ async function isPMSSyncEnabled(userId) {
 async function recalculateAndUpdateBilling(userId) {
     try {
         // Récupérer le profil utilisateur pour vérifier l'abonnement Stripe
-        const userProfileRef = db.collection('users').doc(userId);
-        const userProfileDoc = await userProfileRef.get();
+        const userProfile = await db.getUser(userId);
         
-        if (!userProfileDoc.exists) {
+        if (!userProfile) {
             console.warn(`[Billing] Profil utilisateur ${userId} non trouvé. Facturation ignorée.`);
             return;
         }
         
-        const userProfile = userProfileDoc.data();
-        const subscriptionId = userProfile.stripeSubscriptionId;
+        const subscriptionId = userProfile.stripe_subscription_id || userProfile.subscription_id;
         
         // Si pas d'abonnement Stripe, on ne fait rien
         if (!subscriptionId) {
@@ -424,15 +425,13 @@ async function recalculateAndUpdateBilling(userId) {
         }
         
         // Récupérer le teamId pour récupérer toutes les propriétés de l'équipe
-        const teamId = userProfile.teamId || userId;
+        const teamId = userProfile.team_id || userId;
         
         // 1. Récupérer toutes les propriétés de l'équipe
-        const propertiesSnapshot = await db.collection('properties').where('teamId', '==', teamId).get();
-        const userProperties = propertiesSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        const userProperties = await db.getPropertiesByTeam(teamId);
         
         // 2. Récupérer tous les groupes de l'utilisateur
-        const groupsSnapshot = await db.collection('groups').where('ownerId', '==', userId).get();
-        const userGroups = groupsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        const userGroups = await db.getGroupsByOwner(userId);
         
         // 3. Calculer les quantités de facturation
         const quantities = calculateBillingQuantities(userProperties, userGroups);
@@ -1865,8 +1864,7 @@ app.post('/api/integrations/import-properties', authenticateToken, async (req, r
                 userId, 
                 subscriptionId, 
                 currentPropertyCount, 
-                newPropertiesCount,
-                db
+                newPropertiesCount
             );
             
             if (!limitCheck.isAllowed) {
@@ -2071,7 +2069,7 @@ app.post('/api/integrations/import-properties', authenticateToken, async (req, r
 
         // Recalculer et mettre à jour la facturation Stripe après l'import
         if (importedCount > 0) {
-            await recalculateAndUpdateBilling(userId, db);
+            await recalculateAndUpdateBilling(userId);
         }
         
         const message = `${importedCount} propriété(s) importée(s) avec succès.`;
