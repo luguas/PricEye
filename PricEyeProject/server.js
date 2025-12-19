@@ -2766,7 +2766,6 @@ app.get('/api/properties/:id/bookings', authenticateToken, async (req, res) => {
 // GET /api/bookings - Récupérer TOUTES les réservations pour une plage de dates
 app.get('/api/bookings', authenticateToken, async (req, res) => {
     try {
-        const db = admin.firestore();
         const userId = req.user.uid;
         const { startDate, endDate } = req.query; 
 
@@ -2775,39 +2774,37 @@ app.get('/api/bookings', authenticateToken, async (req, res) => {
         }
 
         // 1. Récupérer le teamId de l'utilisateur
-        const userProfileRef = db.collection('users').doc(userId);
-        const userProfileDoc = await userProfileRef.get();
-        if (!userProfileDoc.exists || !userProfileDoc.data().teamId) {
+        const userProfile = await db.getUser(userId);
+        if (!userProfile || !userProfile.team_id) {
             return res.status(404).send({ error: 'Impossible de trouver votre équipe.' });
         }
-        const teamId = userProfileDoc.data().teamId;
+        const teamId = userProfile.team_id;
 
         // 2. Interroger toutes les réservations de l'équipe qui chevauchent la période
-        const bookingsQuery = db.collectionGroup('reservations')
-            .where('teamId', '==', teamId)
-            .where('startDate', '<=', endDate) // Commencé avant ou pendant la fin
-            .where('endDate', '>', startDate);  // Fini après ou pendant le début
-            
-        const snapshot = await bookingsQuery.get();
+        const bookings = await db.getBookingsByTeamAndDateRange(teamId, startDate, endDate);
 
-        if (snapshot.empty) {
+        if (!bookings || bookings.length === 0) {
              return res.status(200).json([]); // Renvoyer un tableau vide
         }
         
-        // 3. Mapper les résultats
-        const bookings = snapshot.docs.map(doc => ({
-            id: doc.id,
-            propertyId: doc.ref.parent.parent.id, // Ajouter l'ID de la propriété
-            ...doc.data()
+        // 3. Mapper les résultats pour compatibilité avec le frontend
+        const formattedBookings = bookings.map(booking => ({
+            id: booking.id,
+            propertyId: booking.property_id,
+            startDate: booking.start_date,
+            endDate: booking.end_date,
+            pricePerNight: booking.price_per_night || (booking.revenue ? booking.revenue / Math.ceil((new Date(booking.end_date) - new Date(booking.start_date)) / (1000 * 60 * 60 * 24)) : 0),
+            totalPrice: booking.revenue,
+            channel: booking.source,
+            guestName: booking.guest_name,
+            numberOfGuests: booking.number_of_guests,
+            pmsId: booking.pms_booking_id,
+            status: booking.status || 'confirmé'
         }));
 
-        res.status(200).json(bookings);
+        res.status(200).json(formattedBookings);
 
     } catch (error) {
-        if (error.message && error.message.includes('requires an index')) {
-             console.error('ERREUR FIRESTORE - Index manquant :', error.message);
-             return res.status(500).send({ error: 'Index Firestore manquant. Veuillez exécuter la requête pour obtenir le lien de création dans les logs du serveur.' });
-        }
         console.error('Erreur lors de la récupération de toutes les réservations:', error);
         res.status(500).send({ error: 'Erreur serveur lors de la récupération des réservations.' });
     }
