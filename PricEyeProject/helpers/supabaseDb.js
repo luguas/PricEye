@@ -219,10 +219,65 @@ async function updateGroup(groupId, updateData) {
  * Supprime un groupe
  */
 async function deleteGroup(groupId) {
+  // Supprimer d'abord les relations dans group_properties
+  await supabase
+    .from('group_properties')
+    .delete()
+    .eq('group_id', groupId);
+  
+  // Puis supprimer le groupe
   const { error } = await supabase
     .from('groups')
     .delete()
     .eq('id', groupId);
+  
+  if (error) throw error;
+}
+
+/**
+ * Ajoute des propriétés à un groupe
+ */
+async function addPropertiesToGroup(groupId, propertyIds) {
+  // Vérifier que les propriétés ne sont pas déjà dans le groupe
+  const { data: existing, error: checkError } = await supabase
+    .from('group_properties')
+    .select('property_id')
+    .eq('group_id', groupId)
+    .in('property_id', propertyIds);
+  
+  if (checkError) throw checkError;
+  
+  const existingIds = new Set((existing || []).map(e => e.property_id));
+  const newPropertyIds = propertyIds.filter(id => !existingIds.has(id));
+  
+  if (newPropertyIds.length === 0) {
+    return []; // Toutes les propriétés sont déjà dans le groupe
+  }
+  
+  // Insérer les nouvelles relations
+  const relationsToInsert = newPropertyIds.map(propertyId => ({
+    group_id: groupId,
+    property_id: propertyId
+  }));
+  
+  const { data, error } = await supabase
+    .from('group_properties')
+    .insert(relationsToInsert)
+    .select();
+  
+  if (error) throw error;
+  return data || [];
+}
+
+/**
+ * Retire des propriétés d'un groupe
+ */
+async function removePropertiesFromGroup(groupId, propertyIds) {
+  const { error } = await supabase
+    .from('group_properties')
+    .delete()
+    .eq('group_id', groupId)
+    .in('property_id', propertyIds);
   
   if (error) throw error;
 }
@@ -556,6 +611,8 @@ module.exports = {
   getSystemCache,
   setSystemCache,
   getBooking,
-  getBookingsByTeamAndDateRange
+  getBookingsByTeamAndDateRange,
+  addPropertiesToGroup,
+  removePropertiesFromGroup
 };
 

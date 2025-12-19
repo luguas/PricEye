@@ -3291,42 +3291,39 @@ app.delete('/api/groups/:id', authenticateToken, async (req, res) => {
 
 app.put('/api/groups/:id/properties', authenticateToken, async (req, res) => {
     try {
-        const db = admin.firestore();
         const { id } = req.params;
         const { propertyIds } = req.body;
         const userId = req.user.uid;
         if (!propertyIds || !Array.isArray(propertyIds)) {
             return res.status(400).send({ error: 'Un tableau d\'IDs de propriétés est requis.' });
         }
-        const groupRef = db.collection('groups').doc(id);
-        const groupDoc = await groupRef.get();
-        if (!groupDoc.exists) {
+        
+        const group = await db.getGroup(id);
+        if (!group) {
             return res.status(404).send({ error: 'Groupe non trouvé.' });
         }
-        if (groupDoc.data().ownerId !== userId) {
+        if (group.owner_id !== userId) {
             return res.status(403).send({ error: 'Action non autorisée sur ce groupe.' });
         }
 
-        const userProfileRef = db.collection('users').doc(userId);
-        const userProfileDoc = await userProfileRef.get();
-        const teamId = userProfileDoc.exists ? userProfileDoc.data().teamId : userId;
+        const userProfile = await db.getUser(userId);
+        const teamId = userProfile ? (userProfile.team_id || userId) : userId;
         
-        const groupData = groupDoc.data();
-        const existingPropertiesInGroup = groupData.properties || [];
+        const existingPropertiesInGroup = (group.properties || []).map(p => typeof p === 'string' ? p : (p.id || p.property_id));
         let templatePropertyData = null;
 
         // 1. Définir le "modèle" de propriété (si le groupe n'est pas vide)
         if (existingPropertiesInGroup.length > 0) {
-            const templatePropertyId = groupData.mainPropertyId || existingPropertiesInGroup[0]; 
-            const templatePropDoc = await db.collection('properties').doc(templatePropertyId).get();
+            const templatePropertyId = group.main_property_id || existingPropertiesInGroup[0]; 
+            const templateProperty = await db.getProperty(templatePropertyId);
             
-            if (templatePropDoc.exists) {
-                templatePropertyData = templatePropDoc.data();
+            if (templateProperty) {
+                templatePropertyData = templateProperty;
             } else {
                 for (const propId of existingPropertiesInGroup) {
-                     const tempDoc = await db.collection('properties').doc(propId).get();
-                     if (tempDoc.exists) {
-                         templatePropertyData = tempDoc.data();
+                     const tempProp = await db.getProperty(propId);
+                     if (tempProp) {
+                         templatePropertyData = tempProp;
                          break;
                      }
                 }
@@ -3338,30 +3335,33 @@ app.put('/api/groups/:id/properties', authenticateToken, async (req, res) => {
 
         // 2. Vérifier chaque nouvelle propriété par rapport au modèle
         for (const propId of propertyIds) {
-            const propRef = db.collection('properties').doc(propId);
-            const propDoc = await propRef.get();
+            const property = await db.getProperty(propId);
             
-            const propTeamId = propDoc.exists ? (propDoc.data().teamId || propDoc.data().ownerId) : null;
-            if (!propDoc.exists || propTeamId !== teamId) { 
+            const propTeamId = property ? (property.team_id || property.owner_id) : null;
+            if (!property || propTeamId !== teamId) { 
                 return res.status(403).send({ error: `La propriété ${propId} est invalide ou n'appartient pas à votre équipe.` });
             }
 
-            const newPropertyData = propDoc.data();
-
             if (!templatePropertyData) {
                 // C'est la première propriété ajoutée. Elle devient le modèle.
-                templatePropertyData = newPropertyData;
+                templatePropertyData = property;
             } else {
                 // Vérification géofencing : distance < 500m
-                if (templatePropertyData.location && newPropertyData.location) {
+                if (templatePropertyData.location && property.location) {
                     // Extraire les coordonnées (format peut varier)
                     let templateLat, templateLon, newLat, newLon;
                     
-                    if (templatePropertyData.location.latitude && templatePropertyData.location.longitude) {
-                        templateLat = templatePropertyData.location.latitude;
-                        templateLon = templatePropertyData.location.longitude;
+                    const templateLoc = typeof templatePropertyData.location === 'object' 
+                        ? templatePropertyData.location 
+                        : (typeof templatePropertyData.location === 'string' ? JSON.parse(templatePropertyData.location) : null);
+                    const newLoc = typeof property.location === 'object' 
+                        ? property.location 
+                        : (typeof property.location === 'string' ? JSON.parse(property.location) : null);
+                    
+                    if (templateLoc?.latitude && templateLoc?.longitude) {
+                        templateLat = templateLoc.latitude;
+                        templateLon = templateLoc.longitude;
                     } else if (typeof templatePropertyData.location === 'string') {
-                        // Format "lat,lon" ou autre
                         const coords = templatePropertyData.location.split(',').map(c => parseFloat(c.trim()));
                         if (coords.length >= 2) {
                             templateLat = coords[0];
@@ -3369,11 +3369,11 @@ app.put('/api/groups/:id/properties', authenticateToken, async (req, res) => {
                         }
                     }
                     
-                    if (newPropertyData.location.latitude && newPropertyData.location.longitude) {
-                        newLat = newPropertyData.location.latitude;
-                        newLon = newPropertyData.location.longitude;
-                    } else if (typeof newPropertyData.location === 'string') {
-                        const coords = newPropertyData.location.split(',').map(c => parseFloat(c.trim()));
+                    if (newLoc?.latitude && newLoc?.longitude) {
+                        newLat = newLoc.latitude;
+                        newLon = newLoc.longitude;
+                    } else if (typeof property.location === 'string') {
+                        const coords = property.location.split(',').map(c => parseFloat(c.trim()));
                         if (coords.length >= 2) {
                             newLat = coords[0];
                             newLon = coords[1];
@@ -3398,9 +3398,9 @@ app.put('/api/groups/:id/properties', authenticateToken, async (req, res) => {
                 // Comparer au modèle (capacité, surface, et type de propriété)
                 const fieldsToMatch = ['capacity', 'surface', 'property_type'];
                 for (const field of fieldsToMatch) {
-                    if (newPropertyData[field] !== templatePropertyData[field]) {
+                    if (property[field] !== templatePropertyData[field]) {
                         return res.status(400).send({ 
-                            error: `Échec d'ajout : La propriété "${newPropertyData.address}" a un champ '${field}' (${newPropertyData[field] || 'N/A'}) 
+                            error: `Échec d'ajout : La propriété "${property.address || property.name}" a un champ '${field}' (${property[field] || 'N/A'}) 
                                     qui ne correspond pas au modèle du groupe (${templatePropertyData[field] || 'N/A'}). 
                                     Toutes les propriétés d'un groupe doivent avoir une capacité, une surface et un type identiques.`
                         });
@@ -3409,12 +3409,11 @@ app.put('/api/groups/:id/properties', authenticateToken, async (req, res) => {
             }
         }
         
-        await groupRef.update({
-            properties: admin.firestore.FieldValue.arrayUnion(...propertyIds)
-        });
+        // Ajouter les propriétés au groupe via la table de relation
+        await db.addPropertiesToGroup(id, propertyIds);
         
         // Recalculer et mettre à jour la facturation Stripe
-        await recalculateAndUpdateBilling(userId, db);
+        await recalculateAndUpdateBilling(userId);
         
         res.status(200).send({ message: 'Propriétés ajoutées au groupe avec succès.' });
     } catch (error) {
@@ -3425,25 +3424,25 @@ app.put('/api/groups/:id/properties', authenticateToken, async (req, res) => {
 
 app.delete('/api/groups/:id/properties', authenticateToken, async (req, res) => {
     try {
-        const db = admin.firestore();
         const { id } = req.params;
         const { propertyIds } = req.body;
         const userId = req.user.uid;
         if (!propertyIds || !Array.isArray(propertyIds) || propertyIds.length === 0) {
             return res.status(400).send({ error: 'Un tableau d\'IDs de propriétés est requis.' });
         }
-        const groupRef = db.collection('groups').doc(id);
-        const groupDoc = await groupRef.get();
-        if (!groupDoc.exists) {
+        
+        const group = await db.getGroup(id);
+        if (!group) {
             return res.status(404).send({ error: 'Groupe non trouvé.' });
         }
-        if (groupDoc.data().ownerId !== userId) { 
+        if (group.owner_id !== userId) { 
             return res.status(403).send({ error: 'Action non autorisée sur ce groupe.' });
         }
-        const currentPropertiesInGroup = groupDoc.data().properties || [];
+        
+        const currentPropertiesInGroup = (group.properties || []).map(p => typeof p === 'string' ? p : (p.id || p.property_id));
         const propertiesToRemove = propertyIds.filter(propId => currentPropertiesInGroup.includes(propId));
         
-        const mainPropertyId = groupDoc.data().mainPropertyId;
+        const mainPropertyId = group.main_property_id;
         let needsMainPropReset = false;
         if (mainPropertyId && propertiesToRemove.includes(mainPropertyId)) {
             needsMainPropReset = true;
@@ -3453,17 +3452,16 @@ app.delete('/api/groups/:id/properties', authenticateToken, async (req, res) => 
             return res.status(404).send({ error: 'Aucune des propriétés spécifiées n\'a été trouvée dans ce groupe.' });
         }
         
-        const updateData = {
-             properties: admin.firestore.FieldValue.arrayRemove(...propertiesToRemove)
-        };
+        // Retirer les propriétés du groupe via la table de relation
+        await db.removePropertiesFromGroup(id, propertiesToRemove);
+        
+        // Si la propriété principale est retirée, la réinitialiser
         if (needsMainPropReset) {
-            updateData.mainPropertyId = null; 
+            await db.updateGroup(id, { main_property_id: null });
         }
         
-        await groupRef.update(updateData);
-        
         // Recalculer et mettre à jour la facturation Stripe
-        await recalculateAndUpdateBilling(userId, db);
+        await recalculateAndUpdateBilling(userId);
         
         res.status(200).send({ message: 'Propriétés retirées du groupe avec succès.' });
     } catch (error) {
