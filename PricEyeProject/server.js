@@ -73,25 +73,46 @@ const authenticateToken = async (req, res, next) => {
 
     const accessToken = authHeader.split('Bearer ')[1];
     try {
-        // Vérifier le token avec Supabase
-        const { data: { user }, error } = await supabase.auth.getUser(accessToken);
-        
-        if (error || !user) {
-            console.error('Erreur de vérification du jeton Supabase:', error);
-            return res.status(403).send({ error: 'Jeton invalide ou expiré.' });
+        // Décoder le token JWT pour extraire l'ID utilisateur
+        // Les JWT sont en format base64url (3 parties séparées par des points)
+        let userId;
+        try {
+            const parts = accessToken.split('.');
+            if (parts.length !== 3) {
+                return res.status(403).send({ error: 'Jeton invalide: format incorrect.' });
+            }
+            
+            // Décoder la partie payload (partie 2)
+            const payload = Buffer.from(parts[1].replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf-8');
+            const decoded = JSON.parse(payload);
+            
+            if (!decoded || !decoded.sub) {
+                return res.status(403).send({ error: 'Jeton invalide: informations manquantes.' });
+            }
+            
+            userId = decoded.sub;
+        } catch (decodeError) {
+            console.error('Erreur de décodage du token:', decodeError);
+            return res.status(403).send({ error: 'Jeton invalide.' });
         }
         
-        // Vérifier si l'utilisateur est désactivé dans la base de données
-        // Note: Cette vérification nécessitera une migration de Firestore vers Supabase PostgreSQL
-        // Pour l'instant, on vérifie uniquement le statut dans Supabase Auth
-        if (user.banned_until && new Date(user.banned_until) > new Date()) {
+        // Vérifier que l'utilisateur existe toujours avec la clé de service role
+        const { data: user, error: userError } = await supabase.auth.admin.getUserById(userId);
+        
+        if (userError || !user) {
+            console.error('Erreur de récupération de l\'utilisateur:', userError);
+            return res.status(403).send({ error: 'Utilisateur non trouvé.' });
+        }
+        
+        // Vérifier si l'utilisateur est désactivé
+        if (user.user.banned_until && new Date(user.user.banned_until) > new Date()) {
             return res.status(403).send({ error: 'Votre accès a été désactivé. Veuillez contacter le support.' });
         }
         
         // Adapter le format pour compatibilité avec le reste du code
         req.user = {
-            uid: user.id,
-            email: user.email,
+            uid: user.user.id,
+            email: user.user.email,
             // Ajouter d'autres propriétés si nécessaire
         };
         
