@@ -4936,9 +4936,13 @@ RAPPEL CRITIQUE : La réponse finale doit être UNIQUEMENT ce JSON, sans texte a
                 // 2. Appeler updateBatchRates
                 // Nous filtrons les prix verrouillés localement AVANT de les envoyer au PMS
                 // (Bien que la logique de verrouillage soit gérée côté Priceye)
-                const lockedPricesCol = db.collection('properties').doc(id).collection('price_overrides');
-                const lockedSnapshot = await lockedPricesCol.where('isLocked', '==', true).get();
-                const lockedDates = new Set(lockedSnapshot.docs.map(doc => doc.id));
+                const allOverrides = await db.getPriceOverrides(id);
+                const lockedDates = new Set();
+                allOverrides.forEach(override => {
+                    if (override.is_locked) {
+                        lockedDates.add(override.date);
+                    }
+                });
                 
                 const pricesToSync = strategyResult.daily_prices.filter(day => !lockedDates.has(day.date));
                 
@@ -4958,27 +4962,28 @@ RAPPEL CRITIQUE : La réponse finale doit être UNIQUEMENT ce JSON, sans texte a
         }
         // --- FIN DE L'ÉTAPE DE SYNCHRONISATION PMS ---
 
- 
-        const batch = db.batch(); 
+        // Récupérer les prix verrouillés existants
         const floor = property.floor_price;
         const ceiling = property.ceiling_price;
 
-        const overridesCol = db.collection('properties').doc(id).collection('price_overrides');
-        const lockedSnapshot = await overridesCol.where('isLocked', '==', true).get();
+        // Récupérer tous les price_overrides pour cette propriété pour trouver les prix verrouillés
+        const allOverrides = await db.getPriceOverrides(id);
         const lockedPrices = new Map();
-        lockedSnapshot.forEach(doc => {
-            lockedPrices.set(doc.id, doc.data().price); 
+        allOverrides.forEach(override => {
+            if (override.is_locked) {
+                lockedPrices.set(override.date, override.price);
+            }
         });
         console.log(`Trouvé ${lockedPrices.size} prix verrouillés pour ${id}. Ils ne seront pas modifiés.`);
 
-
+        // Préparer les overrides à sauvegarder
+        const overridesToSave = [];
         for (const day of strategyResult.daily_prices) {
             const priceNum = Number(day.price);
-             if (isNaN(priceNum)) {
-                 console.warn(`Prix invalide reçu pour ${day.date}: ${day.price}. Utilisation du prix plancher.`);
-                 day.price = floor;
-                 continue;
-             }
+            if (isNaN(priceNum)) {
+                console.warn(`Prix invalide reçu pour ${day.date}: ${day.price}. Utilisation du prix plancher.`);
+                continue;
+            }
              
             if (lockedPrices.has(day.date)) {
                 console.log(`Ignoré ${day.date}: prix verrouillé manuellement.`);
@@ -4987,30 +4992,35 @@ RAPPEL CRITIQUE : La réponse finale doit être UNIQUEMENT ce JSON, sans texte a
 
             let finalPrice = priceNum;
             if (priceNum < floor) {
-                 console.warn(`Prix ${priceNum}€ pour ${day.date} inférieur au plancher ${floor}€. Ajustement.`);
-                 finalPrice = floor;
+                console.warn(`Prix ${priceNum}€ pour ${day.date} inférieur au plancher ${floor}€. Ajustement.`);
+                finalPrice = floor;
             }
             if (ceiling != null && priceNum > ceiling) {
-                 console.warn(`Prix ${priceNum}€ pour ${day.date} supérieur au plafond ${ceiling}€. Ajustement.`);
-                 finalPrice = ceiling;
+                console.warn(`Prix ${priceNum}€ pour ${day.date} supérieur au plafond ${ceiling}€. Ajustement.`);
+                finalPrice = ceiling;
             }
             
-            const dayRef = db.collection('properties').doc(id).collection('price_overrides').doc(day.date);
-            batch.set(dayRef, {
+            overridesToSave.push({
                 date: day.date,
                 price: finalPrice,
                 reason: day.reason || "Stratégie IA",
-                isLocked: false 
+                isLocked: false,
+                updatedBy: req.user.uid
             });
         }
         
-        await batch.commit();
-        console.log(`Stratégie IA sauvegardée pour ${id} (en respectant les prix verrouillés).`);
+        // Sauvegarder tous les overrides en une seule opération
+        if (overridesToSave.length > 0) {
+            await db.upsertPriceOverrides(id, overridesToSave);
+            console.log(`Stratégie IA sauvegardée pour ${id} (${overridesToSave.length} jours, en respectant les prix verrouillés).`);
+        } else {
+            console.log(`Aucun prix à sauvegarder pour ${id} (tous verrouillés ou invalides).`);
+        }
         
         // Log de l'action
         await logPropertyChange(id, req.user.uid, req.user.email, 'update:ia-pricing', {
             summary: strategyResult.strategy_summary,
-            days: strategyResult.daily_prices.length,
+            days: overridesToSave.length,
             lockedPricesIgnored: lockedPrices.size
         });
 
@@ -5614,9 +5624,13 @@ RAPPEL CRITIQUE : La réponse finale doit être UNIQUEMENT ce JSON, sans texte a
             } else {
                 try {
                     const client = await getUserPMSClient(userId);
-                    const lockedPricesCol = db.collection('properties').doc(propertyId).collection('price_overrides');
-                    const lockedSnapshot = await lockedPricesCol.where('isLocked', '==', true).get();
-                    const lockedDates = new Set(lockedSnapshot.docs.map(doc => doc.id));
+                    const allOverrides = await db.getPriceOverrides(propertyId);
+                    const lockedDates = new Set();
+                    allOverrides.forEach(override => {
+                        if (override.is_locked) {
+                            lockedDates.add(override.date);
+                        }
+                    });
                     
                     const pricesToSync = strategyResult.daily_prices.filter(day => !lockedDates.has(day.date));
                     
@@ -5631,18 +5645,21 @@ RAPPEL CRITIQUE : La réponse finale doit être UNIQUEMENT ce JSON, sans texte a
             }
         }
 
-        // Sauvegarder les prix dans Firestore
-        const batch = db.batch();
+        // Sauvegarder les prix dans Supabase
         const floor = property.floor_price;
         const ceiling = property.ceiling_price;
 
-        const overridesCol = db.collection('properties').doc(propertyId).collection('price_overrides');
-        const lockedSnapshot = await overridesCol.where('isLocked', '==', true).get();
+        // Récupérer tous les price_overrides pour cette propriété pour trouver les prix verrouillés
+        const allOverrides = await db.getPriceOverrides(propertyId);
         const lockedPrices = new Map();
-        lockedSnapshot.forEach(doc => {
-            lockedPrices.set(doc.id, doc.data().price);
+        allOverrides.forEach(override => {
+            if (override.is_locked) {
+                lockedPrices.set(override.date, override.price);
+            }
         });
 
+        // Préparer les overrides à sauvegarder
+        const overridesToSave = [];
         let pricesApplied = 0;
         for (const day of strategyResult.daily_prices) {
             const priceNum = Number(day.price);
@@ -5663,17 +5680,20 @@ RAPPEL CRITIQUE : La réponse finale doit être UNIQUEMENT ce JSON, sans texte a
                 finalPrice = ceiling;
             }
 
-            const dayRef = db.collection('properties').doc(propertyId).collection('price_overrides').doc(day.date);
-            batch.set(dayRef, {
+            overridesToSave.push({
                 date: day.date,
                 price: finalPrice,
                 reason: day.reason || "Stratégie IA (Auto)",
-                isLocked: false
+                isLocked: false,
+                updatedBy: userId
             });
             pricesApplied++;
         }
 
-        await batch.commit();
+        // Sauvegarder tous les overrides en une seule opération
+        if (overridesToSave.length > 0) {
+            await db.upsertPriceOverrides(propertyId, overridesToSave);
+        }
 
         // Log de l'action
         await logPropertyChange(propertyId, userId, userEmail, 'update:ia-pricing-auto', {

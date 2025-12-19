@@ -82,13 +82,43 @@ function AppContent() {
     }
   }, []);
 
-  const handleLogout = useCallback(() => {
+  const handleLogout = useCallback(async () => {
+    try {
+      // Déconnecter de Supabase
+      const { supabase } = await import('./config/supabase.js');
+      await supabase.auth.signOut();
+    } catch (error) {
+      console.error('Erreur lors de la déconnexion Supabase:', error);
+      // Continuer même si la déconnexion Supabase échoue
+    }
+    
+    // Nettoyer tous les éléments du localStorage liés à l'auth AVANT de nettoyer l'état
+    localStorage.removeItem('authToken');
+    
+    // Nettoyer toutes les clés Supabase du localStorage
+    Object.keys(localStorage).forEach(key => {
+      if (key.startsWith('sb-')) {
+        localStorage.removeItem(key);
+      }
+    });
+    
+    // Nettoyer l'état local
     setToken(null);
     setUserProfile(null);
     setNotifications([]);
     setPropertyCount(null);
-    localStorage.removeItem('authToken');
-    setCurrentView('login'); 
+    
+    // Forcer la redirection vers login
+    setCurrentView('login');
+    
+    // Forcer un rechargement complet pour s'assurer que tout est nettoyé
+    // Utiliser replaceState pour éviter de garder l'historique
+    window.history.replaceState({}, '', '/');
+    
+    // Attendre un peu pour que le nettoyage soit effectué avant le rechargement
+    setTimeout(() => {
+      window.location.href = '/';
+    }, 100);
   }, []);
 
   // Effet pour écouter les événements d'expiration de token
@@ -129,10 +159,20 @@ function AppContent() {
     
     const storedToken = localStorage.getItem('authToken');
     if (storedToken) {
-      setToken(storedToken);
-      // Définir dashboard seulement au premier chargement
-      if (currentView === 'login' || currentView === 'register') {
-        setCurrentView('dashboard');
+      // Vérifier que le token est valide avant de l'utiliser
+      try {
+        const { jwtDecode } = require('jwt-decode');
+        jwtDecode(storedToken); // Vérifier que le token est valide
+        setToken(storedToken);
+        // Définir dashboard seulement au premier chargement
+        if (currentView === 'login' || currentView === 'register') {
+          setCurrentView('dashboard');
+        }
+      } catch (e) {
+        // Token invalide, nettoyer et rediriger vers login
+        console.error('Token invalide au chargement:', e);
+        localStorage.removeItem('authToken');
+        setCurrentView('login');
       }
     } else {
       setCurrentView('login');
@@ -266,6 +306,7 @@ function AppContent() {
               notifications={notifications}
               token={token}
               onNotificationsUpdate={handleNotificationsUpdate}
+              onLogout={handleLogout}
             />
           </div>
           <nav className="bg-bg-sidebar md:hidden p-4 flex-shrink-0 flex flex-col rounded-b-3xl border border-border-primary">

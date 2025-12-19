@@ -62,15 +62,38 @@ function SettingsPage({ token, userProfile: initialProfile, onThemeChange, onLog
   // États pour les modales
   const [confirmModal, setConfirmModal] = useState({ isOpen: false, message: '', onConfirm: null });
 
+  // Vérifier le token et rediriger si nécessaire
+  useEffect(() => {
+      if (!token && onLogout) {
+          // Si pas de token, rediriger immédiatement
+          onLogout();
+          return;
+      }
+      
+      if (token) {
+          try {
+              const decodedToken = jwtDecode(token);
+              // Si le token est valide, on continue
+          } catch (e) {
+              console.error("Erreur de décodage du token:", e);
+              // Si erreur de décodage, nettoyer et rediriger
+              if (onLogout) {
+                  onLogout();
+              }
+          }
+      }
+  }, [token, onLogout]);
+
   let currentUserId = null;
   try {
       if (token) {
           const decodedToken = jwtDecode(token);
-          currentUserId = decodedToken?.user_id; 
+          // Supabase utilise 'sub' comme identifiant utilisateur dans le JWT
+          currentUserId = decodedToken?.sub || decodedToken?.user_id || decodedToken?.uid; 
       }
   } catch (e) {
       console.error("Erreur de décodage du token:", e);
-      setError(t('settings.sessionError'));
+      // L'erreur sera gérée par le useEffect ci-dessus
   }
 
 
@@ -334,7 +357,9 @@ function SettingsPage({ token, userProfile: initialProfile, onThemeChange, onLog
     );
   }
   
-   if (!currentUserId && !isLoading) {
+   // Si pas de token ou pas de currentUserId, afficher un message
+   // La redirection sera gérée par le useEffect ci-dessus
+   if (!token || (!currentUserId && !isLoading)) {
        return (
          <div className="relative min-h-screen">
            <div
@@ -345,8 +370,17 @@ function SettingsPage({ token, userProfile: initialProfile, onThemeChange, onLog
                zIndex: 0,
              }}
            />
-           <div className="relative z-10 flex items-center justify-center min-h-screen">
-             <p className="text-center text-red-400 p-8">{t('settings.sessionError')}</p>
+           <div className="relative z-10 flex flex-col items-center justify-center min-h-screen gap-4 p-8">
+             <p className="text-center text-red-400">{t('settings.sessionError')}</p>
+             <p className="text-center text-global-inactive text-sm">Redirection en cours...</p>
+             {onLogout && (
+               <button
+                 onClick={onLogout}
+                 className="px-6 py-3 bg-red-600 hover:bg-red-700 text-white rounded-lg font-medium transition-colors"
+               >
+                 {t('settings.disconnect')}
+               </button>
+             )}
            </div>
          </div>
        );

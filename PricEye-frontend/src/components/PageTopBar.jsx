@@ -40,6 +40,7 @@ function PageTopBar({
   notifications = [],
   token = null,
   onNotificationsUpdate,
+  onLogout = null,
   ...props
 }) {
   const { t } = useLanguage();
@@ -144,14 +145,29 @@ function PageTopBar({
           </span>
         </div>
 
-        <div
-          className="rounded-full w-11 h-11 flex items-center justify-center bg-white p-1"
-        >
-          <img 
-            src={logoPriceye} 
-            alt="PricEye Logo" 
-            className="w-full h-full object-contain rounded-full"
-          />
+        {/* Menu utilisateur avec déconnexion */}
+        <div className="relative group">
+          <div
+            className="rounded-full w-11 h-11 flex items-center justify-center bg-white p-1 cursor-pointer"
+          >
+            <img 
+              src={logoPriceye} 
+              alt="PricEye Logo" 
+              className="w-full h-full object-contain rounded-full"
+            />
+          </div>
+          
+          {/* Menu déroulant */}
+          {onLogout && (
+            <div className="absolute right-0 top-full mt-2 w-48 bg-global-bg-box border border-global-stroke-box rounded-lg shadow-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-50">
+              <button
+                onClick={onLogout}
+                className="w-full text-left px-4 py-2 text-global-blanc hover:bg-global-stroke-box transition-colors rounded-lg"
+              >
+                {t('settings.disconnect')}
+              </button>
+            </div>
+          )}
         </div>
       </div>
     </div>

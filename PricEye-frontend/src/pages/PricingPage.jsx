@@ -100,10 +100,11 @@ function PricingPage({ token, userProfile }) {
 
       try {
         // Obtenir l'userId depuis le token
+        // Supabase utilise 'sub' comme identifiant utilisateur dans le JWT
         let userId = null;
         try {
           const decodedToken = jwtDecode(token);
-          userId = decodedToken?.user_id || decodedToken?.uid;
+          userId = decodedToken?.sub || decodedToken?.user_id || decodedToken?.uid;
         } catch (e) {
           console.error("Erreur de décodage du token:", e);
           setIsLoadingAutoPricing(false);
@@ -328,10 +329,11 @@ function PricingPage({ token, userProfile }) {
     
     try {
       // Obtenir l'userId depuis le token
+      // Supabase utilise 'sub' comme identifiant utilisateur dans le JWT
       let userId = null;
       try {
         const decodedToken = jwtDecode(token);
-        userId = decodedToken?.user_id || decodedToken?.uid;
+        userId = decodedToken?.sub || decodedToken?.user_id || decodedToken?.uid;
       } catch (decodeError) {
         console.error("Erreur de décodage du token:", decodeError);
         setAutoPricingError(t('pricing.autoPricing.authError'));
