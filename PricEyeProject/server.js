@@ -5064,10 +5064,30 @@ app.get('/api/news', authenticateToken, async (req, res) => {
             }
         }
 
-        // Si le cache n'existe pas pour cette langue, vérifier l'ancien format puis générer
-        if (!newsDoc || !newsDoc.data) {
+        // Vérifier si le cache existe et est à jour (moins de 24h)
+        const oneDay = 24 * 60 * 60 * 1000;
+        let cacheIsValid = false;
+        let cacheAge = null;
+        
+        if (newsDoc && newsDoc.data) {
+            // Vérifier que le cache correspond à la langue demandée
+            const cacheLanguage = newsDoc.language;
+            if (cacheLanguage && cacheLanguage !== language) {
+                console.log(`Cache trouvé pour une autre langue (${cacheLanguage} au lieu de ${language}), invalide.`);
+            } else if (newsDoc.updated_at) {
+                cacheAge = Date.now() - new Date(newsDoc.updated_at).getTime();
+                // Le cache est valide s'il existe, a des données, correspond à la langue, et est récent (< 24h)
+                cacheIsValid = cacheAge < oneDay;
+            } else {
+                // Cache sans date de mise à jour, considérer comme invalide
+                console.log(`Cache sans date de mise à jour pour ${language}, invalide.`);
+            }
+        }
+        
+        // Si le cache n'existe pas ou est invalide, générer uniquement si forceRefresh ou si vraiment nécessaire
+        if (!cacheIsValid) {
             // Essayer d'abord l'ancien format de cache (marketNews sans suffixe) comme fallback temporaire
-            if (language === 'fr') {
+            if (language === 'fr' && !forceRefresh) {
                 const oldCacheDoc = await db.getSystemCache('marketNews');
                 if (oldCacheDoc && oldCacheDoc.data) {
                     const oldData = Array.isArray(oldCacheDoc.data) ? oldCacheDoc.data : oldCacheDoc.data;
@@ -5081,32 +5101,39 @@ app.get('/api/news', authenticateToken, async (req, res) => {
                     }
                 }
             }
-            console.log(`Cache d'actualités non trouvé pour la langue ${language}, génération en cours...`);
-            try {
-                await updateMarketNewsCache(language);
-                // Réessayer après génération
-                const newNewsDoc = await db.getSystemCache(cacheKey);
-                if (newNewsDoc && newNewsDoc.data) {
-                    return res.status(200).json(newNewsDoc.data);
-                }
-            } catch (genError) {
-                console.error(`Erreur lors de la génération des actualités pour ${language}:`, genError);
-                // Fallback sur le français si disponible
-                if (language !== 'fr') {
-                    const fallbackDoc = await db.getSystemCache('marketNews_fr');
-                    if (fallbackDoc && fallbackDoc.data) {
-                        return res.status(200).json(fallbackDoc.data);
+            
+            // Générer uniquement si forceRefresh est activé OU si le cache n'existe vraiment pas
+            if (forceRefresh || !newsDoc || !newsDoc.data) {
+                console.log(`Génération des actualités pour la langue ${language}${forceRefresh ? ' (force refresh)' : ' (cache manquant)'}...`);
+                try {
+                    await updateMarketNewsCache(language);
+                    // Réessayer après génération
+                    const newNewsDoc = await db.getSystemCache(cacheKey);
+                    if (newNewsDoc && newNewsDoc.data) {
+                        return res.status(200).json(newNewsDoc.data);
                     }
-                }
-                // Fallback sur l'ancien format de cache
-                const oldCacheDoc = await db.getSystemCache('marketNews');
-                if (oldCacheDoc && oldCacheDoc.data) {
-                    const oldData = Array.isArray(oldCacheDoc.data) ? oldCacheDoc.data : oldCacheDoc.data;
-                    if (Array.isArray(oldData)) {
-                        return res.status(200).json(oldData);
+                } catch (genError) {
+                    console.error(`Erreur lors de la génération des actualités pour ${language}:`, genError);
+                    // Fallback sur le français si disponible
+                    if (language !== 'fr') {
+                        const fallbackDoc = await db.getSystemCache('marketNews_fr');
+                        if (fallbackDoc && fallbackDoc.data) {
+                            return res.status(200).json(fallbackDoc.data);
+                        }
                     }
+                    // Fallback sur l'ancien format de cache
+                    const oldCacheDoc = await db.getSystemCache('marketNews');
+                    if (oldCacheDoc && oldCacheDoc.data) {
+                        const oldData = Array.isArray(oldCacheDoc.data) ? oldCacheDoc.data : oldCacheDoc.data;
+                        if (Array.isArray(oldData)) {
+                            return res.status(200).json(oldData);
+                        }
+                    }
+                    return res.status(404).send({ error: 'Cache d\'actualités non encore généré. Veuillez patienter.' });
                 }
-                return res.status(404).send({ error: 'Cache d\'actualités non encore généré. Veuillez patienter.' });
+            } else {
+                // Cache expiré mais pas de forceRefresh : utiliser le cache existant même s'il est vieux
+                console.log(`Cache expiré pour ${language} (${Math.round(cacheAge / (60 * 60 * 1000))}h), utilisation du cache existant. Utilisez forceRefresh=true pour régénérer.`);
             }
         }
         
@@ -5122,35 +5149,6 @@ app.get('/api/news', authenticateToken, async (req, res) => {
                 }
             }
             return res.status(404).send({ error: 'Cache d\'actualités non encore généré. Veuillez patienter.' });
-        }
-
-        // Vérifier que le cache correspond à la langue demandée
-        const cacheLanguage = docData.language;
-        if (cacheLanguage && cacheLanguage !== language) {
-            console.log(`Cache trouvé pour une autre langue (${cacheLanguage} au lieu de ${language}), régénération...`);
-            try {
-                await updateMarketNewsCache(language);
-                const newNewsDoc = await db.getSystemCache(cacheKey);
-                if (newNewsDoc && newNewsDoc.data) {
-                    return res.status(200).json(newNewsDoc.data);
-                }
-            } catch (genError) {
-                console.error(`Erreur lors de la régénération pour ${language}:`, genError);
-                // Continuer avec le cache existant si la génération échoue
-            }
-        }
-        
-        // Vérifier l'âge du cache (régénérer si > 24h)
-        const oneDay = 24 * 60 * 60 * 1000;
-        if (docData.updated_at) {
-            const cacheAge = Date.now() - new Date(docData.updated_at).getTime();
-            if (cacheAge > oneDay) {
-                console.log(`Cache expiré pour ${language} (${Math.round(cacheAge / (60 * 60 * 1000))}h), régénération en arrière-plan...`);
-                // Régénérer en arrière-plan sans bloquer la réponse
-                updateMarketNewsCache(language).catch(err => 
-                    console.error(`Erreur lors de la régénération en arrière-plan:`, err)
-                );
-            }
         }
 
         // Récupérer les actualités
@@ -5365,10 +5363,27 @@ async function updateMarketNewsCache(language = 'fr') {
 }
 
 // Planifier la tâche pour s'exécuter tous les jours à 3h00 du matin
+// Ne générer que les langues qui ont un cache existant (langues réellement utilisées)
 console.log("Mise en place de la tâche planifiée pour les actualités (tous les jours à 3h00).");
-cron.schedule('0 3 * * *', () => {
-    updateMarketNewsCache('fr');
-    updateMarketNewsCache('en');
+cron.schedule('0 3 * * *', async () => {
+    // Vérifier quelles langues sont réellement utilisées (ont un cache existant)
+    const frCache = await db.getSystemCache('marketNews_fr');
+    const enCache = await db.getSystemCache('marketNews_en');
+    
+    // Ne générer que pour les langues qui ont déjà été utilisées
+    if (frCache && frCache.data) {
+        console.log('[Cron] Régénération des actualités en français (cache existant détecté)');
+        updateMarketNewsCache('fr').catch(err => 
+            console.error('[Cron] Erreur lors de la régénération des actualités FR:', err)
+        );
+    }
+    
+    if (enCache && enCache.data) {
+        console.log('[Cron] Régénération des actualités en anglais (cache existant détecté)');
+        updateMarketNewsCache('en').catch(err => 
+            console.error('[Cron] Erreur lors de la régénération des actualités EN:', err)
+        );
+    }
 }, {
     scheduled: true,
     timezone: "Europe/Paris"
@@ -5384,11 +5399,10 @@ cron.schedule('0 4 * * *', () => {
 });
 
 
-// Lancer une mise à jour au démarrage du serveur (pour avoir des données fraîches)
-setTimeout(() => {
-    updateMarketNewsCache('fr');
-    updateMarketNewsCache('en');
-}, 10000); // Délai de 10s
+// Ne plus générer automatiquement au démarrage
+// Les actualités seront générées à la demande lors de la première connexion d'un utilisateur
+// et seulement pour sa langue, une fois par jour maximum
+console.log("Génération des actualités désactivée au démarrage. Génération à la demande uniquement.");
 
 
 // ============================================================================
