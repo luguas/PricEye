@@ -6061,7 +6061,17 @@ app.get('/api/properties/:id/price-overrides', authenticateToken, async (req, re
         // Récupérer les price overrides
         const overrides = await db.getPriceOverrides(propertyId, startDate, endDate);
 
-        res.status(200).json(overrides);
+        // Transformer le tableau en objet indexé par date pour compatibilité avec le frontend
+        const overridesByDate = {};
+        overrides.forEach(override => {
+            overridesByDate[override.date] = {
+                price: override.price,
+                isLocked: override.is_locked || false,
+                reason: override.reason || 'Manuel'
+            };
+        });
+
+        res.status(200).json(overridesByDate);
     } catch (error) {
         console.error('Erreur lors de la récupération des price overrides:', error);
         res.status(500).send({ error: 'Erreur lors de la récupération des price overrides.' });

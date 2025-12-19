@@ -266,11 +266,22 @@ function PricingPage({ token, userProfile }) {
       for (const propId of propertyIdsToUpdate) {
            try {
                const overridesData = await getPriceOverrides(propId, token);
-               Object.keys(overridesData).forEach(date => {
-                   if (overridesData[date].isLocked) {
-                       lockedPricesMap.set(`${propId}-${date}`, overridesData[date].price);
+               
+               // Gérer à la fois le format tableau (ancien) et objet (nouveau)
+               if (Array.isArray(overridesData)) {
+                 overridesData.forEach(override => {
+                   if (override.date && (override.is_locked || override.isLocked)) {
+                     lockedPricesMap.set(`${propId}-${override.date}`, override.price);
                    }
-               });
+                 });
+               } else if (typeof overridesData === 'object' && overridesData !== null) {
+                 Object.keys(overridesData).forEach(date => {
+                   const override = overridesData[date];
+                   if (override && (override.isLocked || override.is_locked)) {
+                     lockedPricesMap.set(`${propId}-${date}`, override.price);
+                   }
+                 });
+               }
            } catch (err) {
                console.warn(`Erreur lors de la récupération des prix verrouillés pour ${propId}:`, err);
            }
@@ -471,9 +482,27 @@ function PricingPage({ token, userProfile }) {
       // Fetch Overrides via API backend
       const overridesData = await getPriceOverrides(propertyIdToFetch, token, startOfMonth, endOfMonth);
       const newOverrides = {};
-      Object.keys(overridesData).forEach(date => {
-        newOverrides[date] = overridesData[date].price;
-      });
+      
+      // Gérer à la fois le format tableau (ancien) et objet (nouveau)
+      if (Array.isArray(overridesData)) {
+        // Format tableau : transformer en objet
+        overridesData.forEach(override => {
+          if (override.date) {
+            newOverrides[override.date] = override.price;
+          }
+        });
+      } else if (typeof overridesData === 'object' && overridesData !== null) {
+        // Format objet : déjà dans le bon format
+        Object.keys(overridesData).forEach(date => {
+          if (overridesData[date] && typeof overridesData[date] === 'object') {
+            newOverrides[date] = overridesData[date].price;
+          } else {
+            // Format simple : { date: price }
+            newOverrides[date] = overridesData[date];
+          }
+        });
+      }
+      
       setPriceOverrides(newOverrides);
 
       // Fetch Bookings
