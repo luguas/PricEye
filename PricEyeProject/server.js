@@ -3155,7 +3155,6 @@ app.get('/api/properties/:id/news', authenticateToken, async (req, res) => {
 // --- ROUTES DE GESTION DES GROUPES (SÉCURISÉES) ---
 app.post('/api/groups', authenticateToken, async (req, res) => {
     try {
-        const db = admin.firestore();
         const { name } = req.body;
         const userId = req.user.uid;
         if (!name) {
@@ -3163,17 +3162,15 @@ app.post('/api/groups', authenticateToken, async (req, res) => {
         }
         const newGroup = {
             name,
-            ownerId: userId,
-            properties: [],
-            createdAt: admin.firestore.FieldValue.serverTimestamp(),
-            syncPrices: false 
+            owner_id: userId,
+            sync_prices: false
         };
-        const docRef = await db.collection('groups').add(newGroup);
+        const createdGroup = await db.createGroup(newGroup);
         
         // Recalculer et mettre à jour la facturation Stripe
-        await recalculateAndUpdateBilling(userId, db);
+        await recalculateAndUpdateBilling(userId);
         
-        res.status(201).send({ message: 'Groupe créé avec succès', id: docRef.id });
+        res.status(201).send({ message: 'Groupe créé avec succès', id: createdGroup.id });
     } catch (error) {
         console.error('Erreur lors de la création du groupe:', error);
         res.status(500).send({ error: 'Erreur lors de la création du groupe.' });
@@ -3182,11 +3179,27 @@ app.post('/api/groups', authenticateToken, async (req, res) => {
 
 app.get('/api/groups', authenticateToken, async (req, res) => {
     try {
-        const db = admin.firestore();
         const userId = req.user.uid;
-        const groupsSnapshot = await db.collection('groups').where('ownerId', '==', userId).get();
-        const groups = groupsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-        res.status(200).json(groups);
+        const groups = await db.getGroupsByOwner(userId);
+        
+        // Adapter le format pour compatibilité avec le frontend
+        const formattedGroups = groups.map(group => ({
+            id: group.id,
+            name: group.name,
+            ownerId: group.owner_id,
+            owner_id: group.owner_id, // Garder les deux formats
+            properties: (group.properties || []).map(p => p.id || p),
+            syncPrices: group.sync_prices || false,
+            sync_prices: group.sync_prices || false,
+            mainPropertyId: group.main_property_id,
+            main_property_id: group.main_property_id,
+            strategy: group.strategy,
+            rules: group.rules,
+            createdAt: group.created_at,
+            created_at: group.created_at
+        }));
+        
+        res.status(200).json(formattedGroups);
     } catch (error) {
         console.error('Erreur lors de la récupération des groupes:', error);
         res.status(500).send({ error: 'Erreur lors de la récupération des groupes.' });
@@ -3195,19 +3208,17 @@ app.get('/api/groups', authenticateToken, async (req, res) => {
 
 app.put('/api/groups/:id', authenticateToken, async (req, res) => {
     try {
-        const db = admin.firestore();
         const { id } = req.params;
         const { name, syncPrices, mainPropertyId } = req.body; 
         const userId = req.user.uid;
 
-        const groupRef = db.collection('groups').doc(id);
-        const doc = await groupRef.get();
+        const group = await db.getGroup(id);
 
-        if (!doc.exists) {
+        if (!group) {
             return res.status(404).send({ error: 'Groupe non trouvé.' });
         }
 
-        if (doc.data().ownerId !== userId) {
+        if (group.owner_id !== userId) {
             return res.status(403).send({ error: 'Action non autorisée sur ce groupe.' });
         }
 
@@ -3216,11 +3227,13 @@ app.put('/api/groups/:id', authenticateToken, async (req, res) => {
             dataToUpdate.name = name;
         }
         if (syncPrices != null && typeof syncPrices === 'boolean') {
-            dataToUpdate.syncPrices = syncPrices;
+            dataToUpdate.sync_prices = syncPrices;
         }
-         if (mainPropertyId) {
-            if (doc.data().properties && doc.data().properties.includes(mainPropertyId)) {
-                dataToUpdate.mainPropertyId = mainPropertyId;
+        if (mainPropertyId) {
+            // Vérifier que la propriété est dans le groupe
+            const propertyIds = (group.properties || []).map(p => p.id || p);
+            if (propertyIds.includes(mainPropertyId)) {
+                dataToUpdate.main_property_id = mainPropertyId;
             } else {
                 return res.status(400).send({ error: 'La propriété principale doit faire partie du groupe.' });
             }
@@ -3230,7 +3243,7 @@ app.put('/api/groups/:id', authenticateToken, async (req, res) => {
              return res.status(400).send({ error: 'Aucune donnée valide à mettre à jour (name, syncPrices ou mainPropertyId requis).' });
         }
 
-        await groupRef.update(dataToUpdate);
+        await db.updateGroup(id, dataToUpdate);
 
         res.status(200).send({ message: 'Groupe mis à jour avec succès', id });
     } catch (error) {
@@ -3241,21 +3254,20 @@ app.put('/api/groups/:id', authenticateToken, async (req, res) => {
 
 app.delete('/api/groups/:id', authenticateToken, async (req, res) => {
     try {
-        const db = admin.firestore();
         const { id } = req.params;
         const userId = req.user.uid;
-        const groupRef = db.collection('groups').doc(id);
-        const doc = await groupRef.get();
-        if (!doc.exists) {
+        
+        const group = await db.getGroup(id);
+        if (!group) {
             return res.status(404).send({ error: 'Groupe non trouvé.' });
         }
-        if (doc.data().ownerId !== userId) {
+        if (group.owner_id !== userId) {
             return res.status(403).send({ error: 'Action non autorisée sur ce groupe.' });
         }
-        await groupRef.delete();
+        await db.deleteGroup(id);
         
         // Recalculer et mettre à jour la facturation Stripe
-        await recalculateAndUpdateBilling(userId, db);
+        await recalculateAndUpdateBilling(userId);
         
         res.status(200).send({ message: 'Groupe supprimé avec succès', id });
     } catch (error) {

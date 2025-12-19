@@ -134,6 +134,35 @@ async function deleteProperty(propertyId) {
 }
 
 /**
+ * Récupère un groupe par son ID
+ */
+async function getGroup(groupId) {
+  const { data, error } = await supabase
+    .from('groups')
+    .select(`
+      *,
+      group_properties (
+        property_id,
+        properties (*)
+      )
+    `)
+    .eq('id', groupId)
+    .single();
+  
+  if (error && error.code !== 'PGRST116') {
+    throw error;
+  }
+  
+  if (!data) return null;
+  
+  // Transformer les données pour correspondre au format attendu
+  return {
+    ...data,
+    properties: (data.group_properties || []).map(gp => gp.properties).filter(Boolean)
+  };
+}
+
+/**
  * Récupère les groupes d'un propriétaire
  */
 async function getGroupsByOwner(ownerId) {
@@ -457,6 +486,7 @@ module.exports = {
   createProperty,
   updateProperty,
   deleteProperty,
+  getGroup,
   getGroupsByOwner,
   createGroup,
   updateGroup,
