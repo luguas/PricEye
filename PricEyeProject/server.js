@@ -775,29 +775,27 @@ app.post('/api/webhooks/stripe', async (req, res) => {
         return res.status(400).send({ error: `Webhook Error: ${err.message}` });
     }
     
-    const db = admin.firestore();
-    
     try {
         // Gérer les différents événements Stripe
         switch (event.type) {
             case 'checkout.session.completed':
-                await handleCheckoutSessionCompleted(event.data.object, db);
+                await handleCheckoutSessionCompleted(event.data.object);
                 break;
                 
             case 'invoice.payment_failed':
-                await handlePaymentFailed(event.data.object, db);
+                await handlePaymentFailed(event.data.object);
                 break;
                 
             case 'invoice.paid':
-                await handlePaymentSucceeded(event.data.object, db);
+                await handlePaymentSucceeded(event.data.object);
                 break;
                 
             case 'customer.subscription.updated':
-                await handleSubscriptionUpdated(event.data.object, db);
+                await handleSubscriptionUpdated(event.data.object);
                 break;
                 
             case 'customer.subscription.deleted':
-                await handleSubscriptionDeleted(event.data.object, db);
+                await handleSubscriptionDeleted(event.data.object);
                 break;
                 
             default:
@@ -816,7 +814,7 @@ app.post('/api/webhooks/stripe', async (req, res) => {
  * Gère l'échec de paiement d'une facture
  * Coupe l'accès à Priceye si le paiement échoue après la période d'essai
  */
-async function handlePaymentFailed(invoice, db) {
+async function handlePaymentFailed(invoice) {
     try {
         const subscriptionId = invoice.subscription;
         const customerId = invoice.customer;
@@ -845,10 +843,10 @@ async function handlePaymentFailed(invoice, db) {
         if (!isTrialOver) {
             console.log(`[Webhook] Paiement échoué mais l'utilisateur est encore en période d'essai. Pas de coupure d'accès.`);
             // Mettre à jour le statut mais ne pas couper l'accès
-            await db.collection('users').doc(userId).update({
-                subscriptionStatus: 'trialing',
-                paymentFailed: true,
-                lastPaymentFailureAt: admin.firestore.FieldValue.serverTimestamp()
+            await db.updateUser(userId, {
+                subscription_status: 'trialing',
+                payment_failed: true,
+                last_payment_failure_at: new Date().toISOString()
             });
             return;
         }
@@ -856,27 +854,27 @@ async function handlePaymentFailed(invoice, db) {
         // Période d'essai terminée : couper l'accès
         console.log(`[Webhook] Période d'essai terminée. Coupure de l'accès pour l'utilisateur ${userId}`);
         
-        // Désactiver l'accès dans Firestore
-        await db.collection('users').doc(userId).update({
-            subscriptionStatus: 'past_due',
-            accessDisabled: true,
-            accessDisabledAt: admin.firestore.FieldValue.serverTimestamp(),
-            paymentFailed: true,
-            lastPaymentFailureAt: admin.firestore.FieldValue.serverTimestamp(),
-            lastPaymentFailureInvoiceId: invoice.id,
-            pmsSyncEnabled: false, // STOPPER la synchronisation PMS
-            pmsSyncStoppedReason: 'payment_failed',
-            pmsSyncStoppedAt: admin.firestore.FieldValue.serverTimestamp()
+        // Désactiver l'accès dans Supabase
+        await db.updateUser(userId, {
+            subscription_status: 'past_due',
+            access_disabled: true,
+            access_disabled_at: new Date().toISOString(),
+            payment_failed: true,
+            last_payment_failure_at: new Date().toISOString(),
+            last_payment_failure_invoice_id: invoice.id,
+            pms_sync_enabled: false, // STOPPER la synchronisation PMS
+            pms_sync_stopped_reason: 'payment_failed',
+            pms_sync_stopped_at: new Date().toISOString()
         });
         
-        // Optionnel : Désactiver l'utilisateur dans Firebase Auth
+        // Optionnel : Désactiver l'utilisateur dans Supabase Auth
         try {
-            await admin.auth().updateUser(userId, {
-                disabled: true
+            await supabase.auth.admin.updateUserById(userId, {
+                ban_expires_at: '9999-12-31T23:59:59Z' // Bannir indéfiniment
             });
-            console.log(`[Webhook] Utilisateur ${userId} désactivé dans Firebase Auth`);
+            console.log(`[Webhook] Utilisateur ${userId} désactivé dans Supabase Auth`);
         } catch (authError) {
-            console.error(`[Webhook] Erreur lors de la désactivation de l'utilisateur dans Firebase Auth:`, authError);
+            console.error(`[Webhook] Erreur lors de la désactivation de l'utilisateur dans Supabase Auth:`, authError);
         }
         
         console.log(`[Webhook] Accès coupé avec succès pour l'utilisateur ${userId}`);
@@ -891,7 +889,7 @@ async function handlePaymentFailed(invoice, db) {
  * Gère la complétion d'une session Stripe Checkout
  * Active l'abonnement et enregistre les listing IDs pour l'anti-abus
  */
-async function handleCheckoutSessionCompleted(session, db) {
+async function handleCheckoutSessionCompleted(session) {
     try {
         const customerId = session.customer;
         const subscriptionId = session.subscription;
@@ -917,62 +915,63 @@ async function handleCheckoutSessionCompleted(session, db) {
         // Récupérer l'abonnement pour obtenir le statut
         const subscription = await stripe.subscriptions.retrieve(subscriptionId);
         
-        // Mettre à jour le profil utilisateur dans Firestore
-        await db.collection('users').doc(userId).update({
-            stripeCustomerId: customerId,
-            stripeSubscriptionId: subscriptionId,
-            subscriptionStatus: subscription.status, // 'trialing' ou 'active'
-            subscriptionCreatedAt: admin.firestore.FieldValue.serverTimestamp(),
-            accessDisabled: false,
-            pmsSyncEnabled: true // Activer la synchronisation PMS
+        // Mettre à jour le profil utilisateur dans Supabase
+        await db.updateUser(userId, {
+            stripe_customer_id: customerId,
+            stripe_subscription_id: subscriptionId,
+            subscription_status: subscription.status, // 'trialing' ou 'active'
+            subscription_created_at: new Date().toISOString(),
+            access_disabled: false,
+            pms_sync_enabled: true // Activer la synchronisation PMS
         });
         
         console.log(`[Webhook] Profil utilisateur ${userId} mis à jour avec l'abonnement ${subscriptionId}`);
         
         // Enregistrer les listing IDs pour l'anti-abus des essais gratuits
         // Récupérer toutes les propriétés de l'utilisateur
-        const userProfile = await db.collection('users').doc(userId).get();
-        const teamId = userProfile.data()?.teamId || userId;
+        const userProfile = await db.getUser(userId);
+        const teamId = userProfile?.team_id || userId;
         
-        const propertiesSnapshot = await db.collection('properties')
-            .where('teamId', '==', teamId)
-            .get();
+        const properties = await db.getPropertiesByTeam(teamId);
         
-        const listingIds = [];
-        propertiesSnapshot.docs.forEach(doc => {
-            const prop = doc.data();
-            if (prop.pmsId) {
-                listingIds.push(prop.pmsId);
-            }
-        });
+        const listingIds = properties
+            .filter(prop => prop.pms_id)
+            .map(prop => prop.pms_id);
         
-        // Enregistrer chaque listing ID dans la collection used_listing_ids
+        // Enregistrer chaque listing ID dans la table used_listing_ids
         if (listingIds.length > 0) {
-            const batch = db.batch();
-            for (const listingId of listingIds) {
-                // Vérifier si le listing ID n'est pas déjà enregistré
-                const existing = await db.collection('used_listing_ids')
-                    .where('listingId', '==', listingId)
-                    .limit(1)
-                    .get();
+            try {
+                // Vérifier quels listing IDs ne sont pas déjà enregistrés
+                const { data: existing } = await supabase
+                    .from('used_listing_ids')
+                    .select('listing_id')
+                    .in('listing_id', listingIds);
                 
-                if (existing.empty) {
-                    // Enregistrer le listing ID
-                    const usedListingRef = db.collection('used_listing_ids').doc();
-                    batch.set(usedListingRef, {
-                        listingId: listingId,
-                        userId: userId,
-                        usedAt: admin.firestore.FieldValue.serverTimestamp(),
-                        checkoutSessionId: session.id,
-                        subscriptionId: subscriptionId,
-                        source: 'checkout_completed' // Source de l'enregistrement
-                    });
+                const existingIds = new Set((existing || []).map(e => e.listing_id));
+                const newListingIds = listingIds.filter(id => !existingIds.has(id));
+                
+                if (newListingIds.length > 0) {
+                    const listingIdsToInsert = newListingIds.map(listingId => ({
+                        listing_id: listingId,
+                        user_id: userId,
+                        checkout_session_id: session.id,
+                        subscription_id: subscriptionId,
+                        source: 'checkout_completed'
+                    }));
+                    
+                    await supabase
+                        .from('used_listing_ids')
+                        .insert(listingIdsToInsert);
+                    
+                    console.log(`[Webhook] ${newListingIds.length} listing ID(s) enregistré(s) pour l'anti-abus`);
                 }
-            }
-            
-            if (listingIds.length > 0) {
-                await batch.commit();
-                console.log(`[Webhook] ${listingIds.length} listing ID(s) enregistré(s) pour l'anti-abus`);
+            } catch (error) {
+                // Si la table n'existe pas, on ignore l'erreur (pas critique)
+                if (error.code === 'PGRST204' || error.message.includes('does not exist')) {
+                    console.log('[Webhook] Table used_listing_ids non trouvée. Enregistrement ignoré.');
+                } else {
+                    console.error('[Webhook] Erreur lors de l\'enregistrement des listing IDs:', error);
+                }
             }
         }
         
@@ -988,7 +987,7 @@ async function handleCheckoutSessionCompleted(session, db) {
  * Gère le succès de paiement d'une facture
  * Réactive l'accès à Priceye
  */
-async function handlePaymentSucceeded(invoice, db) {
+async function handlePaymentSucceeded(invoice) {
     try {
         const subscriptionId = invoice.subscription;
         const customerId = invoice.customer;
@@ -1011,21 +1010,21 @@ async function handlePaymentSucceeded(invoice, db) {
         // Réactiver l'accès
         console.log(`[Webhook] Réactivation de l'accès pour l'utilisateur ${userId}`);
         
-        await db.collection('users').doc(userId).update({
-            subscriptionStatus: 'active',
-            accessDisabled: false,
-            accessReactivatedAt: admin.firestore.FieldValue.serverTimestamp(),
-            paymentFailed: false
+        await db.updateUser(userId, {
+            subscription_status: 'active',
+            access_disabled: false,
+            access_reactivated_at: new Date().toISOString(),
+            payment_failed: false
         });
         
-        // Réactiver l'utilisateur dans Firebase Auth
+        // Réactiver l'utilisateur dans Supabase Auth
         try {
-            await admin.auth().updateUser(userId, {
-                disabled: false
+            await supabase.auth.admin.updateUserById(userId, {
+                ban_expires_at: null // Retirer le ban
             });
-            console.log(`[Webhook] Utilisateur ${userId} réactivé dans Firebase Auth`);
+            console.log(`[Webhook] Utilisateur ${userId} réactivé dans Supabase Auth`);
         } catch (authError) {
-            console.error(`[Webhook] Erreur lors de la réactivation de l'utilisateur dans Firebase Auth:`, authError);
+            console.error(`[Webhook] Erreur lors de la réactivation de l'utilisateur dans Supabase Auth:`, authError);
         }
         
         console.log(`[Webhook] Accès réactivé avec succès pour l'utilisateur ${userId}`);
@@ -1040,7 +1039,7 @@ async function handlePaymentSucceeded(invoice, db) {
  * Gère la mise à jour d'un abonnement
  * Met à jour le statut dans Firestore
  */
-async function handleSubscriptionUpdated(subscription, db) {
+async function handleSubscriptionUpdated(subscription) {
     try {
         const customerId = subscription.customer;
         const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
@@ -1051,9 +1050,9 @@ async function handleSubscriptionUpdated(subscription, db) {
             return;
         }
         
-        await db.collection('users').doc(userId).update({
-            subscriptionStatus: subscription.status,
-            subscriptionUpdatedAt: admin.firestore.FieldValue.serverTimestamp()
+        await db.updateUser(userId, {
+            subscription_status: subscription.status,
+            subscription_updated_at: new Date().toISOString()
         });
         
         console.log(`[Webhook] Statut d'abonnement mis à jour pour ${userId}: ${subscription.status}`);
@@ -1067,7 +1066,7 @@ async function handleSubscriptionUpdated(subscription, db) {
  * Gère la suppression d'un abonnement
  * Coupe l'accès définitivement
  */
-async function handleSubscriptionDeleted(subscription, db) {
+async function handleSubscriptionDeleted(subscription) {
     try {
         const customerId = subscription.customer;
         const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
@@ -1080,17 +1079,17 @@ async function handleSubscriptionDeleted(subscription, db) {
         
         console.log(`[Webhook] Abonnement annulé. Coupure de l'accès pour l'utilisateur ${userId}`);
         
-        await db.collection('users').doc(userId).update({
-            subscriptionStatus: 'canceled',
-            accessDisabled: true,
-            accessDisabledAt: admin.firestore.FieldValue.serverTimestamp(),
-            subscriptionCanceledAt: admin.firestore.FieldValue.serverTimestamp()
+        await db.updateUser(userId, {
+            subscription_status: 'canceled',
+            access_disabled: true,
+            access_disabled_at: new Date().toISOString(),
+            subscription_canceled_at: new Date().toISOString()
         });
         
-        // Désactiver l'utilisateur dans Firebase Auth
+        // Désactiver l'utilisateur dans Supabase Auth
         try {
-            await admin.auth().updateUser(userId, {
-                disabled: true
+            await supabase.auth.admin.updateUserById(userId, {
+                ban_expires_at: '9999-12-31T23:59:59Z' // Bannir indéfiniment
             });
         } catch (authError) {
             console.error(`[Webhook] Erreur lors de la désactivation de l'utilisateur:`, authError);
@@ -1208,7 +1207,6 @@ app.post('/api/subscriptions/create', authenticateToken, async (req, res) => {
  */
 app.post('/api/subscriptions/end-trial-and-bill', authenticateToken, async (req, res) => {
     try {
-        const db = admin.firestore();
         const userId = req.user.uid;
         const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
         
@@ -1342,20 +1340,17 @@ app.post('/api/subscriptions/end-trial-and-bill', authenticateToken, async (req,
  */
 app.post('/api/billing/portal-session', authenticateToken, async (req, res) => {
     try {
-        const db = admin.firestore();
         const userId = req.user.uid;
         const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
         
         // Récupérer le profil utilisateur
-        const userProfileRef = db.collection('users').doc(userId);
-        const userProfileDoc = await userProfileRef.get();
+        const userProfile = await db.getUser(userId);
         
-        if (!userProfileDoc.exists) {
+        if (!userProfile) {
             return res.status(404).send({ error: 'Profil utilisateur non trouvé.' });
         }
         
-        const userProfile = userProfileDoc.data();
-        const customerId = userProfile.stripeCustomerId;
+        const customerId = userProfile.stripe_customer_id;
         
         if (!customerId) {
             return res.status(400).json({ error: 'Aucun customer Stripe trouvé. Vous devez d\'abord créer un abonnement.' });
@@ -1384,7 +1379,6 @@ app.post('/api/billing/portal-session', authenticateToken, async (req, res) => {
  */
 app.post('/api/checkout/create-session', authenticateToken, async (req, res) => {
     try {
-        const db = admin.firestore();
         const userId = req.user.uid;
         
         // Vérifier que la clé Stripe est configurée
@@ -1397,35 +1391,31 @@ app.post('/api/checkout/create-session', authenticateToken, async (req, res) => 
         const stripeManager = require('./integrations/stripeManager');
         
         // Récupérer le profil utilisateur
-        const userProfileRef = db.collection('users').doc(userId);
-        const userProfileDoc = await userProfileRef.get();
+        const userProfile = await db.getUser(userId);
         
-        if (!userProfileDoc.exists) {
+        if (!userProfile) {
             return res.status(404).send({ error: 'Profil utilisateur non trouvé.' });
         }
         
-        const userProfile = userProfileDoc.data();
-        
         // Vérifier si l'utilisateur a déjà un abonnement actif
-        if (userProfile.stripeSubscriptionId) {
+        const subscriptionId = userProfile.stripe_subscription_id || userProfile.subscription_id;
+        if (subscriptionId) {
             try {
-                const existingSubscription = await stripe.subscriptions.retrieve(userProfile.stripeSubscriptionId);
+                const existingSubscription = await stripe.subscriptions.retrieve(subscriptionId);
                 if (existingSubscription.status === 'active' || existingSubscription.status === 'trialing') {
                     return res.status(400).send({ error: 'Vous avez déjà un abonnement actif.' });
                 }
             } catch (error) {
-                console.log(`[Checkout] L'abonnement existant ${userProfile.stripeSubscriptionId} n'est plus valide.`);
+                console.log(`[Checkout] L'abonnement existant ${subscriptionId} n'est plus valide.`);
             }
         }
         
         // 1. Récupérer toutes les propriétés de l'utilisateur
-        const teamId = userProfile.teamId || userId;
-        const propertiesSnapshot = await db.collection('properties').where('teamId', '==', teamId).get();
-        const userProperties = propertiesSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        const teamId = userProfile.team_id || userId;
+        const userProperties = await db.getPropertiesByTeam(teamId);
         
         // 2. Récupérer tous les groupes de l'utilisateur
-        const groupsSnapshot = await db.collection('groups').where('ownerId', '==', userId).get();
-        const userGroups = groupsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        const userGroups = await db.getGroupsByOwner(userId);
         
         // 3. Calculer les buckets Parent/Enfant
         const quantities = calculateBillingQuantities(userProperties, userGroups);
@@ -1438,13 +1428,13 @@ app.post('/api/checkout/create-session', authenticateToken, async (req, res) => 
         // 4. Vérifier l'anti-abus des essais gratuits (listing IDs)
         let trialPeriodDays = 30; // Par défaut, essai gratuit de 30 jours
         
-        // Extraire tous les listing IDs (pmsId) des propriétés importées
+        // Extraire tous les listing IDs (pms_id) des propriétés importées
         const listingIds = userProperties
-            .filter(p => p.pmsId)
-            .map(p => p.pmsId);
+            .filter(p => p.pms_id)
+            .map(p => p.pms_id);
         
         if (listingIds.length > 0) {
-            const hasAbuse = await checkListingIdsAbuse(listingIds, db);
+            const hasAbuse = await checkListingIdsAbuse(listingIds);
             if (hasAbuse) {
                 console.log(`[Checkout] Anti-abus détecté pour l'utilisateur ${userId}. Essai gratuit refusé.`);
                 trialPeriodDays = 0; // Pas d'essai gratuit
@@ -1456,7 +1446,7 @@ app.post('/api/checkout/create-session', authenticateToken, async (req, res) => 
             userId,
             userProfile.email || req.user.email,
             userProfile.name || 'Utilisateur',
-            userProfile.stripeCustomerId
+            userProfile.stripe_customer_id
         );
         
         // 6. Construire les line_items pour Stripe Checkout
@@ -1573,7 +1563,6 @@ async function checkListingIdsAbuse(listingIds, db) {
  */
 app.get('/api/users/auto-pricing/:userId', authenticateToken, async (req, res) => {
     try {
-        const db = admin.firestore();
         const requestedUserId = req.params.userId;
         const authenticatedUserId = req.user.uid;
 
@@ -1584,26 +1573,24 @@ app.get('/api/users/auto-pricing/:userId', authenticateToken, async (req, res) =
             });
         }
 
-        const userRef = db.collection('users').doc(requestedUserId);
-        const userDoc = await userRef.get();
+        const userData = await db.getUser(requestedUserId);
 
         // Vérifier que l'utilisateur existe
-        if (!userDoc.exists) {
+        if (!userData) {
             return res.status(404).send({ 
                 error: 'Utilisateur non trouvé.' 
             });
         }
 
-        const userData = userDoc.data();
-        const autoPricing = userData.autoPricing || {};
+        const autoPricing = userData.auto_pricing || {};
 
         // Retourner l'état actuel avec des valeurs par défaut si non défini
         const response = {
             enabled: autoPricing.enabled || false,
             timezone: autoPricing.timezone || userData.timezone || 'Europe/Paris',
-            lastRun: autoPricing.lastRun || null,
-            enabledAt: autoPricing.enabledAt || null,
-            updatedAt: autoPricing.updatedAt || null
+            lastRun: autoPricing.lastRun || autoPricing.last_run || null,
+            enabledAt: autoPricing.enabledAt || autoPricing.enabled_at || null,
+            updatedAt: autoPricing.updatedAt || autoPricing.updated_at || null
         };
 
         res.status(200).send(response);
@@ -1637,7 +1624,6 @@ app.get('/api/users/auto-pricing/:userId', authenticateToken, async (req, res) =
  */
 app.put('/api/users/auto-pricing/:userId', authenticateToken, async (req, res) => {
     try {
-        const db = admin.firestore();
         const requestedUserId = req.params.userId;
         const authenticatedUserId = req.user.uid;
         const { enabled, timezone } = req.body;
@@ -1670,43 +1656,44 @@ app.put('/api/users/auto-pricing/:userId', authenticateToken, async (req, res) =
             });
         }
 
-        const userRef = db.collection('users').doc(requestedUserId);
-        const userDoc = await userRef.get();
+        const userData = await db.getUser(requestedUserId);
 
         // Vérifier que l'utilisateur existe
-        if (!userDoc.exists) {
+        if (!userData) {
             return res.status(404).send({ 
                 error: 'Utilisateur non trouvé.' 
             });
         }
 
         // Préparer les données à mettre à jour
+        const currentAutoPricing = userData.auto_pricing || {};
         const updateData = {
-            autoPricing: {
+            auto_pricing: {
+                ...currentAutoPricing,
                 enabled: enabled,
                 timezone: timezone,
-                updatedAt: admin.firestore.FieldValue.serverTimestamp()
+                updated_at: new Date().toISOString(),
+                enabled_at: enabled && !currentAutoPricing.enabled ? new Date().toISOString() : currentAutoPricing.enabled_at
             }
         };
 
         // Si la génération automatique est activée, enregistrer aussi la date d'activation
         if (enabled) {
-            const existingData = userDoc.data();
-            if (!existingData.autoPricing || !existingData.autoPricing.enabled) {
-                updateData.autoPricing.enabledAt = admin.firestore.FieldValue.serverTimestamp();
+            if (!currentAutoPricing.enabled) {
+                updateData.auto_pricing.enabled_at = new Date().toISOString();
                 // Initialiser le compteur d'échecs à 0 lors de l'activation
-                updateData.autoPricing.failedAttempts = 0;
+                updateData.auto_pricing.failed_attempts = 0;
             } else {
                 // Conserver la date d'activation existante si elle existe
-                updateData.autoPricing.enabledAt = existingData.autoPricing.enabledAt || admin.firestore.FieldValue.serverTimestamp();
+                updateData.auto_pricing.enabled_at = currentAutoPricing.enabled_at || new Date().toISOString();
             }
         } else {
             // Si désactivé, on peut optionnellement enregistrer la date de désactivation
-            updateData.autoPricing.disabledAt = admin.firestore.FieldValue.serverTimestamp();
+            updateData.auto_pricing.disabled_at = new Date().toISOString();
         }
 
         // Mettre à jour le document utilisateur
-        await userRef.update(updateData);
+        await db.updateUser(requestedUserId, updateData);
 
         // Message de confirmation
         const message = enabled 
@@ -1857,25 +1844,20 @@ app.post('/api/integrations/import-properties', authenticateToken, async (req, r
     }
 
     try {
-        const db = admin.firestore();
-        
         // 1. Get user's teamId
-        const userProfileRef = db.collection('users').doc(userId);
-        const userProfileDoc = await userProfileRef.get();
-        if (!userProfileDoc.exists || !userProfileDoc.data().teamId) { // CORRECTION: Vérification plus robuste
-             console.error(`[Import] Échec: Profil utilisateur ${userId} non trouvé ou n'a pas de teamId.`);
-             return res.status(404).send({ error: 'Profil utilisateur non trouvé ou teamId manquant.' });
+        const userProfile = await db.getUser(userId);
+        if (!userProfile || !userProfile.team_id) {
+             console.error(`[Import] Échec: Profil utilisateur ${userId} non trouvé ou n'a pas de team_id.`);
+             return res.status(404).send({ error: 'Profil utilisateur non trouvé ou team_id manquant.' });
         }
-        const userProfile = userProfileDoc.data();
-        const teamId = userProfile.teamId;
+        const teamId = userProfile.team_id;
         
         // 2. Vérification de la limite de 10 propriétés pendant l'essai gratuit
-        const subscriptionId = userProfile.stripeSubscriptionId;
+        const subscriptionId = userProfile.stripe_subscription_id || userProfile.subscription_id;
         if (subscriptionId) {
             // Compter les propriétés actuelles
-            const currentPropertiesSnapshot = await db.collection('properties')
-                .where('teamId', '==', teamId).get();
-            const currentPropertyCount = currentPropertiesSnapshot.size;
+            const currentProperties = await db.getPropertiesByTeam(teamId);
+            const currentPropertyCount = currentProperties.length;
             
             // Compter les nouvelles propriétés à importer
             const newPropertiesCount = propertiesToImport.filter(p => p.pmsId && p.name).length;
@@ -1900,9 +1882,9 @@ app.post('/api/integrations/import-properties', authenticateToken, async (req, r
             }
         }
         
-        // 3. Batch write to Firestore
-        const batch = db.batch();
+        // 3. Créer les propriétés en batch
         let importedCount = 0;
+        const propertiesToCreate = [];
         
         for (const prop of propertiesToImport) {
             if (!prop.pmsId || !prop.name) {
@@ -1910,17 +1892,14 @@ app.post('/api/integrations/import-properties', authenticateToken, async (req, r
                 continue;
             }
 
-            // 3. Create new document in 'properties' collection
-            const newPropertyRef = db.collection('properties').doc(); // Auto-generate ID
-            
             const newPropertyData = {
                 // PMS Info
-                pmsId: prop.pmsId,
-                pmsType: pmsType,
+                pms_id: prop.pmsId,
+                pms_type: pmsType,
                 
                 // User/Team Info
-                ownerId: userId,
-                teamId: teamId, // CORRECTION: Assure que teamId est bien défini
+                owner_id: userId,
+                team_id: teamId,
                 
                 // Normalized Data from PMS
                 address: prop.name, // Utilise le 'name' du PMS comme 'address'
@@ -1942,23 +1921,35 @@ app.post('/api/integrations/import-properties', authenticateToken, async (req, r
                 weekend_markup_percent: null
             };
 
-            batch.set(newPropertyRef, newPropertyData);
-            
-            // 4. Log this creation
-            const logRef = db.collection('properties').doc(newPropertyRef.id).collection('logs').doc();
-            batch.set(logRef, {
-                timestamp: admin.firestore.FieldValue.serverTimestamp(),
-                userId: userId,
-                userEmail: userEmail,
-                action: 'import:pms',
-                changes: { pmsId: prop.pmsId, pmsType: pmsType, name: prop.name }
-            });
-
-            importedCount++;
+            propertiesToCreate.push(newPropertyData);
         }
 
-        // 5. Commit batch
-        await batch.commit();
+        // 4. Insérer toutes les propriétés en une seule requête
+        if (propertiesToCreate.length > 0) {
+            const { data: createdProperties, error: createError } = await supabase
+                .from('properties')
+                .insert(propertiesToCreate)
+                .select();
+            
+            if (createError) throw createError;
+            
+            importedCount = createdProperties.length;
+            
+            // 5. Log les créations
+            const logsToCreate = createdProperties.map(property => ({
+                property_id: property.id,
+                user_id: userId,
+                user_email: userEmail,
+                action: 'import:pms',
+                changes: { pms_id: property.pms_id, pms_type: property.pms_type, name: property.address }
+            }));
+            
+            if (logsToCreate.length > 0) {
+                await supabase
+                    .from('property_logs')
+                    .insert(logsToCreate);
+            }
+        }
 
         // 5bis. Enregistrer les listing IDs pour l'anti-abus des essais gratuits
         // (Même si l'utilisateur n'a pas encore fait de checkout, on enregistre les IDs)
@@ -1967,30 +1958,36 @@ app.post('/api/integrations/import-properties', authenticateToken, async (req, r
             .map(p => p.pmsId);
         
         if (listingIdsToRegister.length > 0) {
-            const listingBatch = db.batch();
-            for (const listingId of listingIdsToRegister) {
-                // Vérifier si le listing ID n'est pas déjà enregistré
-                const existing = await db.collection('used_listing_ids')
-                    .where('listingId', '==', listingId)
-                    .limit(1)
-                    .get();
+            try {
+                // Vérifier quels listing IDs ne sont pas déjà enregistrés
+                const { data: existing } = await supabase
+                    .from('used_listing_ids')
+                    .select('listing_id')
+                    .in('listing_id', listingIdsToRegister);
                 
-                if (existing.empty) {
-                    // Enregistrer le listing ID
-                    const usedListingRef = db.collection('used_listing_ids').doc();
-                    listingBatch.set(usedListingRef, {
-                        listingId: listingId,
-                        userId: userId,
-                        usedAt: admin.firestore.FieldValue.serverTimestamp(),
-                        source: 'import_properties', // Source de l'enregistrement
-                        propertyCount: listingIdsToRegister.length
-                    });
+                const existingIds = new Set((existing || []).map(e => e.listing_id));
+                const newListingIds = listingIdsToRegister.filter(id => !existingIds.has(id));
+                
+                if (newListingIds.length > 0) {
+                    // Enregistrer les nouveaux listing IDs
+                    const listingIdsToInsert = newListingIds.map(listingId => ({
+                        listing_id: listingId,
+                        user_id: userId,
+                        source: 'import_properties',
+                        property_count: listingIdsToRegister.length
+                    }));
+                    
+                    await supabase
+                        .from('used_listing_ids')
+                        .insert(listingIdsToInsert);
                 }
-            }
-            
-            if (listingIdsToRegister.length > 0) {
-                await listingBatch.commit();
-                console.log(`[Import] ${listingIdsToRegister.length} listing ID(s) enregistré(s) pour l'anti-abus`);
+            } catch (error) {
+                // Si la table n'existe pas, on ignore l'erreur (pas critique)
+                if (error.code === 'PGRST204' || error.message.includes('does not exist')) {
+                    console.log('[Import] Table used_listing_ids non trouvée. Enregistrement ignoré.');
+                } else {
+                    console.error('[Import] Erreur lors de l\'enregistrement des listing IDs:', error);
+                }
             }
         }
 
@@ -2464,7 +2461,6 @@ app.put('/api/properties/:id/strategy', authenticateToken, async (req, res) => {
 
 app.put('/api/properties/:id/rules', authenticateToken, async (req, res) => {
     try {
-        const db = admin.firestore();
         const { id } = req.params;
         const userId = req.user.uid;
         const { 
@@ -2930,7 +2926,6 @@ app.delete('/api/properties/:id/bookings/:bookingId', authenticateToken, async (
 // POST /api/properties/:id/bookings/sync - Synchroniser les réservations depuis le PMS
 app.post('/api/properties/:id/bookings/sync', authenticateToken, async (req, res) => {
     try {
-        const db = admin.firestore();
         const { id: propertyId } = req.params;
         const userId = req.user.uid;
         const { startDate, endDate } = req.body;
@@ -2939,79 +2934,72 @@ app.post('/api/properties/:id/bookings/sync', authenticateToken, async (req, res
             return res.status(400).send({ error: 'Les dates de début et de fin sont requises.' });
         }
 
-        const propertyRef = db.collection('properties').doc(propertyId);
-        const propertyDoc = await propertyRef.get();
-        if (!propertyDoc.exists) {
+        const property = await db.getProperty(propertyId);
+        if (!property) {
             return res.status(404).send({ error: 'Propriété non trouvée.' });
         }
 
-        const userProfileRef = db.collection('users').doc(userId);
-        const userProfileDoc = await userProfileRef.get();
-        const propertyTeamId = propertyDoc.data().teamId || propertyDoc.data().ownerId;
-        if (!userProfileDoc.exists || userProfileDoc.data().teamId !== propertyTeamId) {
+        const userProfile = await db.getUser(userId);
+        if (!userProfile) {
+            return res.status(404).send({ error: 'Profil utilisateur non trouvé.' });
+        }
+        
+        const propertyTeamId = property.team_id || property.owner_id;
+        if (userProfile.team_id !== propertyTeamId) {
             return res.status(403).send({ error: 'Action non autorisée (pas dans la bonne équipe).' });
         }
 
-        const propertyData = propertyDoc.data();
-        if (!propertyData.pmsId || !propertyData.pmsType) {
+        if (!property.pms_id || !property.pms_type) {
             return res.status(400).send({ error: 'Cette propriété n\'est pas liée à un PMS.' });
         }
 
         try {
-            console.log(`[PMS Sync] Synchronisation des réservations depuis ${propertyData.pmsType} pour ${propertyId}...`);
+            console.log(`[PMS Sync] Synchronisation des réservations depuis ${property.pms_type} pour ${propertyId}...`);
             const client = await getUserPMSClient(userId);
             const pmsReservations = await client.getReservations(startDate, endDate);
 
             // Filtrer les réservations pour cette propriété uniquement
             const propertyReservations = pmsReservations.filter(
-                res => res.propertyId === propertyData.pmsId
+                res => res.propertyId === property.pms_id
             );
 
-            const batch = db.batch();
-            const reservationsRef = propertyRef.collection('reservations');
             let importedCount = 0;
             let updatedCount = 0;
 
             for (const pmsReservation of propertyReservations) {
-                // Chercher si une réservation avec ce pmsId existe déjà
-                const existingQuery = await reservationsRef
-                    .where('pmsId', '==', pmsReservation.pmsId)
-                    .limit(1)
-                    .get();
+                // Chercher si une réservation avec ce pms_booking_id existe déjà
+                const { data: existing } = await supabase
+                    .from('bookings')
+                    .select('id')
+                    .eq('property_id', propertyId)
+                    .eq('pms_booking_id', pmsReservation.pmsId)
+                    .limit(1);
+
+                const nights = Math.max(1, Math.round((new Date(pmsReservation.endDate) - new Date(pmsReservation.startDate)) / (1000 * 60 * 60 * 24)));
+                const pricePerNight = pmsReservation.totalPrice ? Math.round(pmsReservation.totalPrice / nights) : 0;
 
                 const reservationData = {
-                    startDate: pmsReservation.startDate,
-                    endDate: pmsReservation.endDate,
-                    pricePerNight: pmsReservation.totalPrice ? 
-                        Math.round(pmsReservation.totalPrice / 
-                            Math.max(1, Math.round((new Date(pmsReservation.endDate) - new Date(pmsReservation.startDate)) / (1000 * 60 * 60 * 24)))) : 0,
-                    totalPrice: pmsReservation.totalPrice || 0,
-                    channel: pmsReservation.channel || 'Direct',
-                    status: pmsReservation.status === 'confirmed' ? 'confirmé' : pmsReservation.status || 'confirmé',
-                    guestName: pmsReservation.guestName || '',
-                    pmsId: pmsReservation.pmsId,
-                    teamId: propertyTeamId,
-                    pricingMethod: 'pms', // Marquer comme importé depuis PMS
-                    syncedAt: admin.firestore.FieldValue.serverTimestamp()
+                    property_id: propertyId,
+                    start_date: pmsReservation.startDate,
+                    end_date: pmsReservation.endDate,
+                    price_per_night: pricePerNight,
+                    revenue: pmsReservation.totalPrice || 0,
+                    source: pmsReservation.channel || 'Direct',
+                    guest_name: pmsReservation.guestName || null,
+                    pms_booking_id: pmsReservation.pmsId,
+                    synced_at: new Date().toISOString()
                 };
 
-                if (existingQuery.empty) {
+                if (!existing || existing.length === 0) {
                     // Nouvelle réservation
-                    const newReservationRef = reservationsRef.doc();
-                    batch.set(newReservationRef, {
-                        ...reservationData,
-                        bookedAt: admin.firestore.FieldValue.serverTimestamp()
-                    });
+                    await db.createBooking(propertyId, reservationData);
                     importedCount++;
                 } else {
                     // Mise à jour de la réservation existante
-                    const existingDoc = existingQuery.docs[0];
-                    batch.update(existingDoc.ref, reservationData);
+                    await db.updateBooking(existing[0].id, reservationData);
                     updatedCount++;
                 }
             }
-
-            await batch.commit();
 
             res.status(200).send({ 
                 message: `Synchronisation réussie. ${importedCount} nouvelle(s) réservation(s) importée(s), ${updatedCount} réservation(s) mise(s) à jour.`,
@@ -3032,48 +3020,38 @@ app.post('/api/properties/:id/bookings/sync', authenticateToken, async (req, res
 // GET /api/properties/:id/news - Récupérer les actualités spécifiques (avec cache par propriété)
 app.get('/api/properties/:id/news', authenticateToken, async (req, res) => {
     try {
-        const db = admin.firestore();
         const { id: propertyId } = req.params;
         const userId = req.user.uid;
 
         // 1. Vérifier la propriété et les droits
-        const propertyRef = db.collection('properties').doc(propertyId);
-        const propertyDoc = await propertyRef.get();
-        if (!propertyDoc.exists) {
+        const property = await db.getProperty(propertyId);
+        if (!property) {
             return res.status(404).send({ error: 'Propriété non trouvée.' });
         }
         
-        const userProfileRef = db.collection('users').doc(userId);
-        const userProfileDoc = await userProfileRef.get();
-        const propertyTeamId = propertyDoc.data().teamId || propertyDoc.data().ownerId; 
-        if (!userProfileDoc.exists || userProfileDoc.data().teamId !== propertyTeamId) { 
+        const userProfile = await db.getUser(userId);
+        if (!userProfile) {
+            return res.status(404).send({ error: 'Profil utilisateur non trouvé.' });
+        }
+        
+        const propertyTeamId = property.team_id || property.owner_id; 
+        if (userProfile.team_id !== propertyTeamId) { 
              return res.status(403).send({ error: 'Action non autorisée sur cette propriété (pas dans la bonne équipe).' });
         }
         
-        const property = propertyDoc.data();
         const fullLocation = property.location || 'France';
         const city = fullLocation.split(',')[0].trim();
 
         // 2. Vérifier le cache de cette propriété (avec langue)
-        const language = req.query.language || userProfileDoc.data()?.language || 'fr';
-        const cacheRef = db.collection('properties').doc(propertyId).collection('cache').doc(`localNews_${language}`);
-        const cacheDoc = await cacheRef.get();
-        const now = new Date();
-        const oneDay = 24 * 60 * 60 * 1000; 
+        const language = req.query.language || userProfile?.language || 'fr';
         
-        if (cacheDoc.exists) {
-            const cacheData = cacheDoc.data();
-            const cacheAge = (now.getTime() - cacheData.updatedAt.toDate().getTime());
-            
-            if (cacheAge < oneDay && cacheData.language === language) {
-                console.log(`Utilisation du cache pour les actualités de ${propertyId} (${language})`);
-                return res.status(200).json(cacheData.data);
-            }
-        }
+        // Note: Le cache par propriété n'est pas encore implémenté dans Supabase
+        // Pour l'instant, on ignore le cache et on génère toujours les actualités
+        // TODO: Implémenter un système de cache par propriété dans Supabase si nécessaire
 
         // 3. Si cache vide ou expiré, appeler l'IA
         const isFrench = language === 'fr' || language === 'fr-FR';
-        console.log(`Cache expiré ou absent pour ${propertyId} (ville: ${city}, langue: ${language}), appel de recherche web...`);
+        console.log(`Génération des actualités pour ${propertyId} (ville: ${city}, langue: ${language}), appel de recherche web...`);
         
         const prompt = isFrench ? `
             Tu es un analyste de marché expert pour la location saisonnière.
@@ -3136,13 +3114,7 @@ app.get('/api/properties/:id/news', authenticateToken, async (req, res) => {
              console.warn("Aucune actualité pertinente trouvée pour", city);
         }
 
-        // 4. Mettre à jour le cache (avec langue)
-        await cacheRef.set({
-            data: newsDataArray,
-            language: language,
-            updatedAt: admin.firestore.FieldValue.serverTimestamp()
-        });
-        
+        // 4. Log de l'action (le cache sera implémenté plus tard si nécessaire)
         await logPropertyChange(propertyId, "system", "auto-update", 'update:news-cache', { count: newsDataArray.length });
 
 
@@ -3469,17 +3441,15 @@ app.delete('/api/groups/:id/properties', authenticateToken, async (req, res) => 
 
 app.put('/api/groups/:id/strategy', authenticateToken, async (req, res) => {
     try {
-        const db = admin.firestore();
         const { id } = req.params;
         const userId = req.user.uid;
         const { strategy, floor_price, base_price, ceiling_price } = req.body;
 
-        const groupRef = db.collection('groups').doc(id);
-        const groupDoc = await groupRef.get();
-        if (!groupDoc.exists) {
+        const group = await db.getGroup(id);
+        if (!group) {
             return res.status(404).send({ error: 'Groupe non trouvé.' });
         }
-        if (groupDoc.data().ownerId !== userId) {
+        if (group.owner_id !== userId) {
             return res.status(403).send({ error: 'Action non autorisée sur ce groupe.' });
         }
         
@@ -3494,7 +3464,6 @@ app.put('/api/groups/:id/strategy', authenticateToken, async (req, res) => {
         if (isNaN(floorPriceNum) || floorPriceNum < 0 || isNaN(basePriceNum) || basePriceNum < 0) {
              return res.status(400).send({ error: 'Prix plancher et de base sont requis et doivent être des nombres positifs.' });
          }
-         // ... (autres validations)
 
         const strategyData = {
             strategy,
@@ -3503,25 +3472,20 @@ app.put('/api/groups/:id/strategy', authenticateToken, async (req, res) => {
             ceiling_price: ceilingPriceNum,
         };
 
-        const propertiesInGroup = groupDoc.data().properties || [];
+        const propertiesInGroup = (group.properties || []).map(p => typeof p === 'string' ? p : (p.id || p.property_id));
         if (propertiesInGroup.length === 0) {
             return res.status(400).send({ error: 'Ce groupe ne contient aucune propriété.' });
         }
         
-        const batch = db.batch();
-        
         // Mettre à jour le document du groupe lui-même avec la stratégie
-        batch.update(groupRef, strategyData);
+        await db.updateGroup(id, strategyData);
         
         // Mettre à jour toutes les propriétés du groupe
-        propertiesInGroup.forEach(propId => {
-            const propRef = db.collection('properties').doc(propId);
-            batch.update(propRef, strategyData);
+        for (const propId of propertiesInGroup) {
+            await db.updateProperty(propId, strategyData);
             // Log de l'action
-            logPropertyChange(propId, req.user.uid, req.user.email, 'update:strategy:group', { ...strategyData, groupId: id });
-        });
-        
-        await batch.commit();
+            await logPropertyChange(propId, req.user.uid, req.user.email, 'update:strategy:group', { ...strategyData, groupId: id });
+        }
         
         res.status(200).send({ message: `Stratégie appliquée au groupe et à ${propertiesInGroup.length} propriété(s).` });
         
@@ -3533,16 +3497,14 @@ app.put('/api/groups/:id/strategy', authenticateToken, async (req, res) => {
 
 app.put('/api/groups/:id/rules', authenticateToken, async (req, res) => {
      try {
-        const db = admin.firestore();
         const { id } = req.params;
         const userId = req.user.uid;
         
-        const groupRef = db.collection('groups').doc(id);
-        const groupDoc = await groupRef.get();
-        if (!groupDoc.exists) {
+        const group = await db.getGroup(id);
+        if (!group) {
             return res.status(404).send({ error: 'Groupe non trouvé.' });
         }
-        if (groupDoc.data().ownerId !== userId) {
+        if (group.owner_id !== userId) {
             return res.status(403).send({ error: 'Action non autorisée sur ce groupe.' });
         }
 
@@ -3571,20 +3533,17 @@ app.put('/api/groups/:id/rules', authenticateToken, async (req, res) => {
              return res.status(200).send({ message: 'Aucune règle valide fournie, aucune mise à jour effectuée.' });
         }
 
-        const propertiesInGroup = groupDoc.data().properties || [];
+        const propertiesInGroup = (group.properties || []).map(p => typeof p === 'string' ? p : (p.id || p.property_id));
         if (propertiesInGroup.length === 0) {
             return res.status(400).send({ error: 'Ce groupe ne contient aucune propriété.' });
         }
         
-        const batch = db.batch();
-        propertiesInGroup.forEach(propId => {
-            const propRef = db.collection('properties').doc(propId);
-            batch.update(propRef, cleanRulesData);
+        // Mettre à jour toutes les propriétés du groupe
+        for (const propId of propertiesInGroup) {
+            await db.updateProperty(propId, cleanRulesData);
             // Log de l'action
-            logPropertyChange(propId, req.user.uid, req.user.email, 'update:rules:group', { ...cleanRulesData, groupId: id });
-        });
-        
-        await batch.commit();
+            await logPropertyChange(propId, req.user.uid, req.user.email, 'update:rules:group', { ...cleanRulesData, groupId: id });
+        }
         
         res.status(200).send({ message: `Règles appliquées à ${propertiesInGroup.length} propriétés.` });
         
@@ -3598,7 +3557,6 @@ app.put('/api/groups/:id/rules', authenticateToken, async (req, res) => {
 // --- ROUTES DE GESTION D'ÉQUIPE (SÉCURISÉES) ---
 app.post('/api/teams/invites', authenticateToken, async (req, res) => {
     try {
-        const db = admin.firestore();
         const { email: inviteeEmail, role = 'member' } = req.body;
         const inviterId = req.user.uid;
 
@@ -3611,57 +3569,67 @@ app.post('/api/teams/invites', authenticateToken, async (req, res) => {
             return res.status(400).send({ error: 'Rôle invalide.' });
         }
 
-        const inviterProfileRef = db.collection('users').doc(inviterId);
-        const inviterProfileDoc = await inviterProfileRef.get();
-        if (!inviterProfileDoc.exists || !inviterProfileDoc.data().teamId) {
+        const inviterData = await db.getUser(inviterId);
+        if (!inviterData || !inviterData.team_id) {
              return res.status(404).send({ error: 'Profil de l\'inviteur ou ID d\'équipe non trouvé.' });
         }
-        const inviterData = inviterProfileDoc.data();
-        const teamId = inviterData.teamId;
+        const teamId = inviterData.team_id;
 
         if (inviterData.role !== 'admin') {
              return res.status(403).send({ error: 'Seul un administrateur peut inviter des membres.' });
         }
         
+        // Vérifier si l'utilisateur existe dans Supabase Auth
         let inviteeUser;
         try {
-            inviteeUser = await admin.auth().getUserByEmail(inviteeEmail);
-             const inviteeProfileRef = db.collection('users').doc(inviteeUser.uid);
-             const inviteeProfileDoc = await inviteeProfileRef.get();
-             if (inviteeProfileDoc.exists && inviteeProfileDoc.data().teamId) {
-                  return res.status(409).send({ error: 'Cet utilisateur fait déjà partie d\'une équipe.' });
-             }
+            const { data: { users }, error: listError } = await supabase.auth.admin.listUsers();
+            if (!listError) {
+                inviteeUser = users.find(u => u.email === inviteeEmail);
+            }
+            
+            if (inviteeUser) {
+                const inviteeProfile = await db.getUser(inviteeUser.id);
+                if (inviteeProfile && inviteeProfile.team_id) {
+                    return res.status(409).send({ error: 'Cet utilisateur fait déjà partie d\'une équipe.' });
+                }
+            }
         } catch (error) {
-            if (error.code !== 'auth/user-not-found') { throw error; }
+            // Si l'utilisateur n'existe pas, on continue (il pourra être créé lors de l'acceptation de l'invitation)
         }
 
-        const existingInviteQuery = await db.collection('invitations')
-            .where('teamId', '==', teamId)
-            .where('inviteeEmail', '==', inviteeEmail)
-            .where('status', '==', 'pending')
-            .limit(1)
-            .get();
+        // Vérifier s'il existe déjà une invitation en attente
+        const { data: existing } = await supabase
+            .from('invitations')
+            .select('id')
+            .eq('team_id', teamId)
+            .eq('invitee_email', inviteeEmail)
+            .eq('status', 'pending')
+            .limit(1);
         
-        if (!existingInviteQuery.empty) {
+        if (existing && existing.length > 0) {
             return res.status(409).send({ error: 'Une invitation est déjà en attente pour cet utilisateur et cette équipe.' });
         }
 
-        const invitation = {
-            teamId: teamId,
-            inviteeEmail: inviteeEmail,
-            inviterId: inviterId,
-            role: role,
-            status: 'pending',
-            createdAt: admin.firestore.FieldValue.serverTimestamp(),
-        };
+        // Créer l'invitation
+        const { data: invitation, error: inviteError } = await supabase
+            .from('invitations')
+            .insert({
+                team_id: teamId,
+                invitee_email: inviteeEmail,
+                inviter_id: inviterId,
+                role: role,
+                status: 'pending'
+            })
+            .select()
+            .single();
+        
+        if (inviteError) throw inviteError;
 
-        const docRef = await db.collection('invitations').add(invitation);
-
-        console.log(`SIMULATION: Envoi d'un email d'invitation à ${inviteeEmail} pour rejoindre l'équipe ${teamId} avec le rôle ${role}. Invitation ID: ${docRef.id}`);
+        console.log(`SIMULATION: Envoi d'un email d'invitation à ${inviteeEmail} pour rejoindre l'équipe ${teamId} avec le rôle ${role}. Invitation ID: ${invitation.id}`);
 
         res.status(201).send({
             message: 'Invitation envoyée avec succès (simulation)',
-            inviteId: docRef.id
+            inviteId: invitation.id
         });
 
     } catch (error) {
@@ -3672,29 +3640,23 @@ app.post('/api/teams/invites', authenticateToken, async (req, res) => {
 
 app.get('/api/teams/members', authenticateToken, async (req, res) => {
     try {
-        const db = admin.firestore();
         const userId = req.user.uid;
 
-        const userProfileRef = db.collection('users').doc(userId);
-        const userProfileDoc = await userProfileRef.get();
-        if (!userProfileDoc.exists || !userProfileDoc.data().teamId) {
+        const userProfile = await db.getUser(userId);
+        if (!userProfile || !userProfile.team_id) {
             return res.status(404).send({ error: 'Impossible de trouver votre équipe.' });
         }
-        const teamId = userProfileDoc.data().teamId;
+        const teamId = userProfile.team_id;
 
-        const membersSnapshot = await db.collection('users').where('teamId', '==', teamId).get();
+        // Récupérer tous les membres de l'équipe
+        const { data: members, error } = await supabase
+            .from('users')
+            .select('id, name, email, role')
+            .eq('team_id', teamId);
 
-        const members = membersSnapshot.docs.map(doc => {
-            const data = doc.data();
-            return {
-                id: doc.id,
-                name: data.name,
-                email: data.email,
-                role: data.role
-            };
-        });
+        if (error) throw error;
 
-        res.status(200).json(members);
+        res.status(200).json(members || []);
 
     } catch (error) {
         console.error('Erreur lors de la récupération des membres de l\'équipe:', error);
@@ -3704,7 +3666,6 @@ app.get('/api/teams/members', authenticateToken, async (req, res) => {
 
 app.put('/api/teams/members/:memberId/role', authenticateToken, async (req, res) => {
     try {
-        const db = admin.firestore();
         const { memberId } = req.params;
         const { role: newRole } = req.body;
         const adminId = req.user.uid;
@@ -3714,27 +3675,25 @@ app.put('/api/teams/members/:memberId/role', authenticateToken, async (req, res)
             return res.status(400).send({ error: 'Rôle invalide.' });
         }
 
-        const adminProfileRef = db.collection('users').doc(adminId);
-        const adminProfileDoc = await adminProfileRef.get();
-        if (!adminProfileDoc.exists || adminProfileDoc.data().role !== 'admin') {
+        const adminProfile = await db.getUser(adminId);
+        if (!adminProfile || adminProfile.role !== 'admin') {
             return res.status(403).send({ error: 'Action non autorisée. Seul un administrateur peut modifier les rôles.' });
         }
-        const teamId = adminProfileDoc.data().teamId;
+        const teamId = adminProfile.team_id;
 
         if (adminId === memberId) {
              return res.status(400).send({ error: 'Vous ne pouvez pas modifier votre propre rôle.' });
         }
 
-        const memberProfileRef = db.collection('users').doc(memberId);
-        const memberProfileDoc = await memberProfileRef.get();
-        if (!memberProfileDoc.exists) {
+        const memberProfile = await db.getUser(memberId);
+        if (!memberProfile) {
             return res.status(404).send({ error: 'Membre non trouvé.' });
         }
-        if (memberProfileDoc.data().teamId !== teamId) {
+        if (memberProfile.team_id !== teamId) {
             return res.status(403).send({ error: 'Ce membre ne fait pas partie de votre équipe.' });
         }
 
-        await memberProfileRef.update({ role: newRole });
+        await db.updateUser(memberId, { role: newRole });
 
         res.status(200).send({ message: 'Rôle du membre mis à jour avec succès.' });
 
@@ -3746,33 +3705,31 @@ app.put('/api/teams/members/:memberId/role', authenticateToken, async (req, res)
 
 app.delete('/api/teams/members/:memberId', authenticateToken, async (req, res) => {
     try {
-        const db = admin.firestore();
         const { memberId } = req.params;
         const adminId = req.user.uid;
 
-        const adminProfileRef = db.collection('users').doc(adminId);
-        const adminProfileDoc = await adminProfileRef.get();
-        if (!adminProfileDoc.exists || adminProfileDoc.data().role !== 'admin') {
+        const adminProfile = await db.getUser(adminId);
+        if (!adminProfile || adminProfile.role !== 'admin') {
             return res.status(403).send({ error: 'Action non autorisée. Seul un administrateur peut supprimer des membres.' });
         }
-        const teamId = adminProfileDoc.data().teamId;
+        const teamId = adminProfile.team_id;
 
         if (adminId === memberId) {
              return res.status(400).send({ error: 'Vous ne pouvez pas vous supprimer vous-même de l\'équipe.' });
         }
 
-        const memberProfileRef = db.collection('users').doc(memberId);
-        const memberProfileDoc = await memberProfileRef.get();
-        if (!memberProfileDoc.exists) {
+        const memberProfile = await db.getUser(memberId);
+        if (!memberProfile) {
             return res.status(404).send({ error: 'Membre non trouvé.' });
         }
-        if (memberProfileDoc.data().teamId !== teamId) {
+        if (memberProfile.team_id !== teamId) {
             return res.status(403).send({ error: 'Ce membre ne fait pas partie de votre équipe.' });
         }
 
-        await memberProfileRef.update({
-             teamId: admin.firestore.FieldValue.delete(), 
-             role: admin.firestore.FieldValue.delete() 
+        // Retirer le membre de l'équipe en mettant team_id et role à null
+        await db.updateUser(memberId, {
+             team_id: null, 
+             role: null 
         });
 
         res.status(200).send({ message: 'Membre retiré de l\'équipe avec succès.' });
@@ -4027,7 +3984,6 @@ app.get('/api/reports/market-demand-snapshot', authenticateToken, async (req, re
 // GET /api/reports/positioning - ADR vs marché + distribution prix concurrents (avec IA)
 app.get('/api/reports/positioning', authenticateToken, async (req, res) => {
     try {
-        const db = admin.firestore();
         const userId = req.user.uid;
         const { startDate, endDate } = req.query;
 
@@ -4036,15 +3992,14 @@ app.get('/api/reports/positioning', authenticateToken, async (req, res) => {
         }
 
         // 1. Récupérer le teamId et les propriétés
-        const userProfileRef = db.collection('users').doc(userId);
-        const userProfileDoc = await userProfileRef.get();
-        if (!userProfileDoc.exists || !userProfileDoc.data().teamId) {
+        const userProfile = await db.getUser(userId);
+        if (!userProfile || !userProfile.team_id) {
             return res.status(404).send({ error: 'Impossible de trouver votre équipe.' });
         }
-        const teamId = userProfileDoc.data().teamId;
+        const teamId = userProfile.team_id;
 
-        const propertiesSnapshot = await db.collection('properties').where('teamId', '==', teamId).get();
-        if (propertiesSnapshot.empty) {
+        const propertiesList = await db.getPropertiesByTeam(teamId);
+        if (propertiesList.length === 0) {
             return res.status(200).json({
                 adrVsMarket: { labels: [], yourAdrData: [], marketAdrData: [] },
                 priceDistribution: { labels: [], data: [] }
@@ -4054,17 +4009,16 @@ app.get('/api/reports/positioning', authenticateToken, async (req, res) => {
         const properties = [];
         const propertyIdIndexMap = new Map();
         let index = 0;
-        propertiesSnapshot.forEach(doc => {
-            const data = doc.data();
+        propertiesList.forEach(prop => {
             properties.push({
-                id: doc.id,
-                name: data.name || data.title || 'Propriété',
-                location: data.location || '',
-                type: data.property_type || 'appartement',
-                basePrice: data.base_price || 0,
-                capacity: data.capacity || 2
+                id: prop.id,
+                name: prop.address || prop.name || 'Propriété',
+                location: prop.location || '',
+                type: prop.property_type || 'appartement',
+                basePrice: prop.base_price || 0,
+                capacity: prop.capacity || 2
             });
-            propertyIdIndexMap.set(doc.id, index++);
+            propertyIdIndexMap.set(prop.id, index++);
         });
 
         // 2. Agréger ADR par propriété sur la période (basé sur les réservations)
@@ -4078,24 +4032,18 @@ app.get('/api/reports/positioning', authenticateToken, async (req, res) => {
             nights: 0
         }));
 
-        const bookingsQuery = db.collectionGroup('reservations')
-            .where('teamId', '==', teamId)
-            .where('startDate', '<=', endDate)
-            .where('endDate', '>', startDate);
+        // Récupérer toutes les réservations de l'équipe pour la période
+        const bookings = await db.getBookingsByTeamAndDateRange(teamId, startDate, endDate);
 
-        const snapshot = await bookingsQuery.get();
-
-        snapshot.forEach(doc => {
-            const booking = doc.data();
-            const propertyRef = doc.ref.parent.parent;
-            const propertyId = propertyRef ? propertyRef.id : null;
+        bookings.forEach(booking => {
+            const propertyId = booking.property_id;
             if (!propertyId || !propertyIdIndexMap.has(propertyId)) return;
 
             const statIndex = propertyIdIndexMap.get(propertyId);
             const stat = adrStats[statIndex];
 
-            const bookingStart = new Date(booking.startDate + 'T00:00:00Z');
-            const bookingEnd = new Date(booking.endDate + 'T00:00:00Z');
+            const bookingStart = new Date(booking.start_date + 'T00:00:00Z');
+            const bookingEnd = new Date(booking.end_date + 'T00:00:00Z');
 
             const effectiveStart = bookingStart < start ? start : bookingStart;
             const effectiveEnd = bookingEnd > end ? end : bookingEnd;
@@ -4103,7 +4051,7 @@ app.get('/api/reports/positioning', authenticateToken, async (req, res) => {
             let currentDate = new Date(effectiveStart);
             while (currentDate < effectiveEnd) {
                 stat.nights += 1;
-                stat.revenue += booking.pricePerNight || 0;
+                stat.revenue += booking.price_per_night || (booking.revenue ? booking.revenue / Math.ceil((bookingEnd - bookingStart) / (1000 * 60 * 60 * 24)) : 0);
                 currentDate.setUTCDate(currentDate.getUTCDate() + 1);
             }
         });
@@ -4231,7 +4179,6 @@ CRITICAL REMINDER: Respond ONLY with this JSON, no comments, no text around, no 
 // GET /api/reports/performance-over-time
 app.get('/api/reports/performance-over-time', authenticateToken, async (req, res) => {
     try {
-        const db = admin.firestore();
         const userId = req.user.uid;
         const { startDate, endDate } = req.query;
 
@@ -4240,15 +4187,14 @@ app.get('/api/reports/performance-over-time', authenticateToken, async (req, res
         }
 
         // 1. Find teamId and total properties
-        const userProfileRef = db.collection('users').doc(userId);
-        const userProfileDoc = await userProfileRef.get();
-        if (!userProfileDoc.exists || !userProfileDoc.data().teamId) {
+        const userProfile = await db.getUser(userId);
+        if (!userProfile || !userProfile.team_id) {
             return res.status(404).send({ error: 'Impossible de trouver votre équipe.' });
         }
-        const teamId = userProfileDoc.data().teamId;
+        const teamId = userProfile.team_id;
 
-        const propertiesSnapshot = await db.collection('properties').where('teamId', '==', teamId).get();
-        const totalPropertiesInTeam = propertiesSnapshot.size;
+        const propertiesList = await db.getPropertiesByTeam(teamId);
+        const totalPropertiesInTeam = propertiesList.length;
 
         if (totalPropertiesInTeam === 0) {
              return res.status(200).json({ labels: [], bookingCounts: [], occupancyRates: [] });
@@ -4269,17 +4215,11 @@ app.get('/api/reports/performance-over-time', authenticateToken, async (req, res
         }
 
         // 4. Get bookings
-        const bookingsQuery = db.collectionGroup('reservations')
-            .where('teamId', '==', teamId)
-            .where('startDate', '<=', endDate)
-            .where('endDate', '>', startDate);
-            
-        const snapshot = await bookingsQuery.get();
+        const bookings = await db.getBookingsByTeamAndDateRange(teamId, startDate, endDate);
 
         // 5. Populate dailyData map
-        snapshot.forEach(doc => {
-            const booking = doc.data();
-            const bookingStartDateStr = booking.startDate;
+        bookings.forEach(booking => {
+            const bookingStartDateStr = booking.start_date;
             
             // A. Count new bookings (bookingCount)
             if (dailyData.has(bookingStartDateStr)) {
@@ -4287,8 +4227,8 @@ app.get('/api/reports/performance-over-time', authenticateToken, async (req, res
             }
             
             // B. Count occupied nights (occupancyRate)
-            let bookingDay = new Date(booking.startDate + 'T00:00:00Z');
-            const bookingEnd = new Date(booking.endDate + 'T00:00:00Z');
+            let bookingDay = new Date(booking.start_date + 'T00:00:00Z');
+            const bookingEnd = new Date(booking.end_date + 'T00:00:00Z');
             while (bookingDay < bookingEnd) {
                 const dateStr = bookingDay.toISOString().split('T')[0];
                 if (dailyData.has(dateStr)) {
@@ -4348,7 +4288,6 @@ app.get('/api/reports/performance-over-time', authenticateToken, async (req, res
 // POST /api/reports/analyze-date
 app.post('/api/reports/analyze-date', authenticateToken, async (req, res) => {
     try {
-        const db = admin.firestore();
         const userId = req.user.uid;
         const { propertyId, date } = req.body;
 
@@ -4357,26 +4296,27 @@ app.post('/api/reports/analyze-date', authenticateToken, async (req, res) => {
         }
 
         // 1. Vérifier la propriété et les droits
-        const propertyRef = db.collection('properties').doc(propertyId);
-        const propertyDoc = await propertyRef.get();
-        if (!propertyDoc.exists) {
+        const property = await db.getProperty(propertyId);
+        if (!property) {
             return res.status(404).send({ error: 'Propriété non trouvée.' });
         }
         
-        const userProfileRef = db.collection('users').doc(userId);
-        const userProfileDoc = await userProfileRef.get();
-        const propertyTeamId = propertyDoc.data().teamId || propertyDoc.data().ownerId; 
-        if (!userProfileDoc.exists || userProfileDoc.data().teamId !== propertyTeamId) { 
+        const userProfile = await db.getUser(userId);
+        if (!userProfile) {
+            return res.status(404).send({ error: 'Profil utilisateur non trouvé.' });
+        }
+        
+        const propertyTeamId = property.team_id || property.owner_id; 
+        if (userProfile.team_id !== propertyTeamId) { 
              return res.status(403).send({ error: 'Action non autorisée sur cette propriété.' });
         }
         
-        const property = propertyDoc.data();
         const location = property.location || 'France';
         const city = location.split(',')[0].trim();
         const capacity = property.capacity || 2;
         
         // Récupérer la langue de l'utilisateur
-        const language = req.query.language || userProfileDoc.data()?.language || 'fr';
+        const language = req.query.language || userProfile?.language || 'fr';
         const isFrench = language === 'fr' || language === 'fr-FR';
 
         // 2. Construire le prompt pour ChatGPT
@@ -4406,7 +4346,7 @@ app.post('/api/reports/analyze-date', authenticateToken, async (req, res) => {
             You are an expert market analyst for seasonal rentals.
             Analyze market demand for the specific date: **${date}**
             in the city of: **${city}**
-            for a "${property.property_type || 'apartment'}" type accommodation that can accommodate **${capacity} people**.
+            for a "${property.property_type || property.propertyType || 'apartment'}" type accommodation that can accommodate **${capacity} people**.
 
             Use the Google search tool to find:
             1.  Local events (concerts, trade shows, matches, school holidays, public holidays) taking place on this date or that weekend.
@@ -4783,29 +4723,28 @@ async function callGeminiWithSearch(prompt, maxRetries = 10, language = 'fr') {
 // POST /api/properties/:id/pricing-strategy - Générer une stratégie de prix
 app.post('/api/properties/:id/pricing-strategy', authenticateToken, async (req, res) => {
     try {
-        const db = admin.firestore();
         const { id } = req.params;
         const userId = req.user.uid;
 
-        const propertyRef = db.collection('properties').doc(id);
-        const propertyDoc = await propertyRef.get();
-
-        if (!propertyDoc.exists) {
+        const property = await db.getProperty(id);
+        if (!property) {
             return res.status(404).send({ error: 'Propriété non trouvée.' });
         }
         
-        const userProfileRef = db.collection('users').doc(userId);
-        const userProfileDoc = await userProfileRef.get();
-        const propertyTeamId = propertyDoc.data().teamId || propertyDoc.data().ownerId; 
-        if (!userProfileDoc.exists || userProfileDoc.data().teamId !== propertyTeamId) { 
+        const userProfile = await db.getUser(userId);
+        if (!userProfile) {
+            return res.status(404).send({ error: 'Profil utilisateur non trouvé.' });
+        }
+        
+        const propertyTeamId = property.team_id || property.owner_id; 
+        if (userProfile.team_id !== propertyTeamId) { 
              return res.status(403).send({ error: 'Action non autorisée sur cette propriété (pas dans la bonne équipe).' });
         }
         
-        const property = propertyDoc.data();
         const today = new Date().toISOString().split('T')[0];
         
         // Récupérer la langue de l'utilisateur
-        const language = req.query.language || userProfileDoc.data()?.language || 'fr';
+        const language = req.query.language || userProfile?.language || 'fr';
 
         // Nouveau prompt : moteur de tarification intelligente (Revenue Management complet)
         const prompt = `
@@ -5222,48 +5161,38 @@ app.get('/api/news', authenticateToken, async (req, res) => {
 // GET /api/properties/:id/news - Récupérer les actualités spécifiques (avec cache par propriété)
 app.get('/api/properties/:id/news', authenticateToken, async (req, res) => {
     try {
-        const db = admin.firestore();
         const { id: propertyId } = req.params;
         const userId = req.user.uid;
 
         // 1. Vérifier la propriété et les droits
-        const propertyRef = db.collection('properties').doc(propertyId);
-        const propertyDoc = await propertyRef.get();
-        if (!propertyDoc.exists) {
+        const property = await db.getProperty(propertyId);
+        if (!property) {
             return res.status(404).send({ error: 'Propriété non trouvée.' });
         }
         
-        const userProfileRef = db.collection('users').doc(userId);
-        const userProfileDoc = await userProfileRef.get();
-        const propertyTeamId = propertyDoc.data().teamId || propertyDoc.data().ownerId; 
-        if (!userProfileDoc.exists || userProfileDoc.data().teamId !== propertyTeamId) { 
+        const userProfile = await db.getUser(userId);
+        if (!userProfile) {
+            return res.status(404).send({ error: 'Profil utilisateur non trouvé.' });
+        }
+        
+        const propertyTeamId = property.team_id || property.owner_id; 
+        if (userProfile.team_id !== propertyTeamId) { 
              return res.status(403).send({ error: 'Action non autorisée sur cette propriété (pas dans la bonne équipe).' });
         }
         
-        const property = propertyDoc.data();
         const fullLocation = property.location || 'France';
         const city = fullLocation.split(',')[0].trim();
 
         // 2. Vérifier le cache de cette propriété (avec langue)
-        const language = req.query.language || userProfileDoc.data()?.language || 'fr';
-        const cacheRef = db.collection('properties').doc(propertyId).collection('cache').doc(`localNews_${language}`);
-        const cacheDoc = await cacheRef.get();
-        const now = new Date();
-        const oneDay = 24 * 60 * 60 * 1000; 
+        const language = req.query.language || userProfile?.language || 'fr';
         
-        if (cacheDoc.exists) {
-            const cacheData = cacheDoc.data();
-            const cacheAge = (now.getTime() - cacheData.updatedAt.toDate().getTime());
-            
-            if (cacheAge < oneDay && cacheData.language === language) {
-                console.log(`Utilisation du cache pour les actualités de ${propertyId} (${language})`);
-                return res.status(200).json(cacheData.data);
-            }
-        }
+        // Note: Le cache par propriété n'est pas encore implémenté dans Supabase
+        // Pour l'instant, on ignore le cache et on génère toujours les actualités
+        // TODO: Implémenter un système de cache par propriété dans Supabase si nécessaire
 
         // 3. Si cache vide ou expiré, appeler l'IA
         const isFrench = language === 'fr' || language === 'fr-FR';
-        console.log(`Cache expiré ou absent pour ${propertyId} (ville: ${city}, langue: ${language}), appel de recherche web...`);
+        console.log(`Génération des actualités pour ${propertyId} (ville: ${city}, langue: ${language}), appel de recherche web...`);
         
         const prompt = isFrench ? `
             Tu es un analyste de marché expert pour la location saisonnière.
@@ -5326,13 +5255,7 @@ app.get('/api/properties/:id/news', authenticateToken, async (req, res) => {
              console.warn("Aucune actualité pertinente trouvée pour", city);
         }
 
-        // 4. Mettre à jour le cache (avec langue)
-        await cacheRef.set({
-            data: newsDataArray,
-            language: language,
-            updatedAt: admin.firestore.FieldValue.serverTimestamp()
-        });
-        
+        // 4. Log de l'action (le cache sera implémenté plus tard si nécessaire)
         await logPropertyChange(propertyId, "system", "auto-update", 'update:news-cache', { count: newsDataArray.length });
 
 
@@ -5499,15 +5422,12 @@ function getCurrentTimeInTimezone(timezone) {
  * @returns {Promise<{success: boolean, propertyId: string, message: string}>}
  */
 async function generateAndApplyPricingForProperty(propertyId, property, userId, userEmail) {
-    const db = admin.firestore();
-    
     try {
         const today = new Date().toISOString().split('T')[0];
         
         // Récupérer la langue de l'utilisateur
-        const userProfileRef = db.collection('users').doc(userId);
-        const userProfileDoc = await userProfileRef.get();
-        const language = userProfileDoc.exists ? (userProfileDoc.data()?.language || 'fr') : 'fr';
+        const userProfile = await db.getUser(userId);
+        const language = userProfile?.language || 'fr';
 
         // Construire le nouveau prompt pour l'IA (identique à l'endpoint de pricing-strategy)
         const prompt = `
@@ -5854,38 +5774,39 @@ async function generatePricingForGroups(userId, userEmail, groups, allProperties
  * @returns {Promise<{success: boolean, userId: string, results: Array}>}
  */
 async function processAutoPricingForUser(userId, userData) {
-    const db = admin.firestore();
     const startTime = new Date();
 
     try {
         console.log(`[Auto-Pricing] Début du traitement pour l'utilisateur ${userId} (${userData.email || 'N/A'})`);
 
         // Récupérer toutes les propriétés de l'utilisateur
-        // Les propriétés peuvent être liées par ownerId ou teamId
-        const teamId = userData.teamId || userId;
+        // Les propriétés peuvent être liées par owner_id ou team_id
+        const teamId = userData.team_id || userId;
         
-        // Récupérer les propriétés par ownerId
-        const propertiesByOwner = await db.collection('properties')
-            .where('ownerId', '==', userId)
-            .get();
+        // Récupérer les propriétés par owner_id
+        const { data: propertiesByOwner } = await supabase
+            .from('properties')
+            .select('*')
+            .eq('owner_id', userId);
         
-        // Récupérer les propriétés par teamId (si différent de userId)
+        // Récupérer les propriétés par team_id (si différent de userId)
         let propertiesByTeam = [];
         if (teamId !== userId) {
-            const teamSnapshot = await db.collection('properties')
-                .where('teamId', '==', teamId)
-                .get();
-            propertiesByTeam = teamSnapshot;
+            const { data: teamProps } = await supabase
+                .from('properties')
+                .select('*')
+                .eq('team_id', teamId);
+            propertiesByTeam = teamProps || [];
         }
 
         // Combiner les résultats et éviter les doublons
         const propertiesMap = new Map();
-        propertiesByOwner.forEach(doc => {
-            propertiesMap.set(doc.id, { id: doc.id, ...doc.data() });
+        (propertiesByOwner || []).forEach(prop => {
+            propertiesMap.set(prop.id, prop);
         });
-        propertiesByTeam.forEach(doc => {
-            if (!propertiesMap.has(doc.id)) {
-                propertiesMap.set(doc.id, { id: doc.id, ...doc.data() });
+        propertiesByTeam.forEach(prop => {
+            if (!propertiesMap.has(prop.id)) {
+                propertiesMap.set(prop.id, prop);
             }
         });
 
@@ -5902,19 +5823,12 @@ async function processAutoPricingForUser(userId, userData) {
         }
 
         // Récupérer tous les groupes de l'utilisateur
-        const groupsSnapshot = await db.collection('groups')
-            .where('ownerId', '==', userId)
-            .get();
-
-        const groups = [];
-        groupsSnapshot.forEach(doc => {
-            groups.push({ id: doc.id, ...doc.data() });
-        });
+        const groups = await db.getGroupsByOwner(userId);
 
         const results = [];
 
         // Traiter les groupes avec synchronisation activée
-        const groupsWithSync = groups.filter(g => g.syncPrices && g.mainPropertyId);
+        const groupsWithSync = groups.filter(g => g.sync_prices && g.main_property_id);
         if (groupsWithSync.length > 0) {
             const groupResults = await generatePricingForGroups(userId, userData.email, groupsWithSync, properties);
             results.push(...groupResults);
@@ -5923,7 +5837,8 @@ async function processAutoPricingForUser(userId, userData) {
         // Traiter les propriétés individuelles (non dans un groupe avec sync)
         const propertiesInSyncedGroups = new Set();
         groupsWithSync.forEach(group => {
-            group.properties.forEach(propId => propertiesInSyncedGroups.add(propId));
+            const groupProps = (group.properties || []).map(p => typeof p === 'string' ? p : (p.id || p.property_id));
+            groupProps.forEach(propId => propertiesInSyncedGroups.add(propId));
         });
 
         const individualProperties = properties.filter(p => !propertiesInSyncedGroups.has(p.id));
@@ -5944,26 +5859,27 @@ async function processAutoPricingForUser(userId, userData) {
         const failureCount = results.filter(r => !r.success).length;
 
         // Mettre à jour lastRun dans le profil utilisateur (toujours, même en cas d'échec)
-        const userRef = db.collection('users').doc(userId);
+        const now = new Date().toISOString();
         const updateData = {
-            'autoPricing.lastRun': admin.firestore.FieldValue.serverTimestamp(),
-            'autoPricing.lastAttempt': admin.firestore.FieldValue.serverTimestamp()
+            auto_pricing: {
+                ...(userData.auto_pricing || {}),
+                last_run: now,
+                last_attempt: now
+            }
         };
 
         // Si toutes les propriétés ont réussi, mettre à jour lastSuccessfulRun
         if (failureCount === 0 && results.length > 0) {
-            updateData['autoPricing.lastSuccessfulRun'] = admin.firestore.FieldValue.serverTimestamp();
-            updateData['autoPricing.failedAttempts'] = 0; // Réinitialiser le compteur d'échecs
+            updateData.auto_pricing.last_successful_run = now;
+            updateData.auto_pricing.failed_attempts = 0; // Réinitialiser le compteur d'échecs
             console.log(`[Auto-Pricing] Traitement terminé avec succès pour ${userId}: ${successCount} succès (${duration}s)`);
         } else if (failureCount > 0) {
             // Incrémenter le compteur d'échecs
-            const userDoc = await userRef.get();
-            const currentFailedAttempts = (userDoc.data()?.autoPricing?.failedAttempts || 0) + 1;
-            updateData['autoPricing.failedAttempts'] = currentFailedAttempts;
-            console.log(`[Auto-Pricing] Traitement terminé avec échecs pour ${userId}: ${successCount} succès, ${failureCount} échecs (${duration}s) - Tentative ${currentFailedAttempts}`);
+            updateData.auto_pricing.failed_attempts = ((userData.auto_pricing?.failed_attempts || 0) + 1);
+            console.log(`[Auto-Pricing] Traitement terminé avec échecs pour ${userId}: ${successCount} succès, ${failureCount} échecs (${duration}s) - Tentative ${updateData.auto_pricing.failed_attempts}`);
         }
 
-        await userRef.update(updateData);
+        await db.updateUser(userId, updateData);
 
         return {
             success: failureCount === 0,
@@ -5992,28 +5908,32 @@ async function processAutoPricingForUser(userId, userData) {
  * Réessaye toutes les heures tant que le pricing n'a pas réussi
  */
 async function checkAndRunAutoPricing() {
-    const db = admin.firestore();
     const now = new Date();
 
     try {
         console.log(`[Auto-Pricing] Vérification des utilisateurs éligibles à ${now.toISOString()}`);
 
-        // Récupérer tous les utilisateurs avec autoPricing.enabled = true
-        const usersSnapshot = await db.collection('users')
-            .where('autoPricing.enabled', '==', true)
-            .get();
+        // Récupérer tous les utilisateurs avec auto_pricing.enabled = true
+        const { data: users, error } = await supabase
+            .from('users')
+            .select('*')
+            .eq('auto_pricing->enabled', true);
 
-        if (usersSnapshot.empty) {
+        if (error) {
+            console.error('[Auto-Pricing] Erreur lors de la récupération des utilisateurs:', error);
+            return;
+        }
+
+        if (!users || users.length === 0) {
             console.log(`[Auto-Pricing] Aucun utilisateur avec génération automatique activée.`);
             return;
         }
 
         const eligibleUsers = [];
 
-        usersSnapshot.forEach(doc => {
-            const userData = doc.data();
-            const autoPricing = userData.autoPricing || {};
-            const timezone = autoPricing.timezone || userData.timezone || 'Europe/Paris';
+        users.forEach(user => {
+            const autoPricing = user.auto_pricing || {};
+            const timezone = autoPricing.timezone || user.timezone || 'Europe/Paris';
 
             // Vérifier si c'est 00h00 dans le fuseau horaire de l'utilisateur (première tentative du jour)
             const { hour, minute } = getCurrentTimeInTimezone(timezone);
@@ -6049,13 +5969,13 @@ async function checkAndRunAutoPricing() {
             // Éligible si c'est l'heure prévue (00h00) OU si on doit réessayer après un échec
             if (isScheduledTime || shouldRetry) {
                 eligibleUsers.push({
-                    userId: doc.id,
-                    userData: userData,
+                    userId: user.id,
+                    userData: user,
                     timezone: timezone,
                     isRetry: shouldRetry && !isScheduledTime
                 });
                 const reason = isScheduledTime ? 'Heure prévue (00h00)' : `Réessai après échec (tentative ${failedAttempts})`;
-                console.log(`[Auto-Pricing] Utilisateur ${doc.id} (${userData.email || 'N/A'}) éligible - ${reason} - Fuseau: ${timezone}`);
+                console.log(`[Auto-Pricing] Utilisateur ${user.id} (${user.email || 'N/A'}) éligible - ${reason} - Fuseau: ${timezone}`);
             }
         });
 
@@ -6098,50 +6018,28 @@ console.log('[Auto-Pricing] Service de planification démarré. Vérification to
 // GET /api/properties/:id/price-overrides - Récupérer les price overrides pour une période
 app.get('/api/properties/:id/price-overrides', authenticateToken, async (req, res) => {
     try {
-        const db = admin.firestore();
         const propertyId = req.params.id;
         const userId = req.user.uid;
         const { startDate, endDate } = req.query;
 
         // Vérifier que la propriété appartient à l'utilisateur
-        const propertyRef = db.collection('properties').doc(propertyId);
-        const propertyDoc = await propertyRef.get();
-        
-        if (!propertyDoc.exists) {
+        const property = await db.getProperty(propertyId);
+        if (!property) {
             return res.status(404).send({ error: 'Propriété non trouvée.' });
         }
 
-        const propertyData = propertyDoc.data();
-        const userProfileRef = db.collection('users').doc(userId);
-        const userProfileDoc = await userProfileRef.get();
-        const propertyTeamId = propertyData.teamId || propertyData.ownerId;
+        const userProfile = await db.getUser(userId);
+        if (!userProfile) {
+            return res.status(404).send({ error: 'Profil utilisateur non trouvé.' });
+        }
         
-        if (!userProfileDoc.exists || userProfileDoc.data().teamId !== propertyTeamId) {
+        const propertyTeamId = property.team_id || property.owner_id;
+        if (userProfile.team_id !== propertyTeamId) {
             return res.status(403).send({ error: 'Action non autorisée.' });
         }
 
-        // Construire la requête
-        const overridesCol = db.collection(`properties/${propertyId}/price_overrides`);
-        let query = overridesCol;
-
-        if (startDate) {
-            query = query.where('date', '>=', startDate);
-        }
-        if (endDate) {
-            query = query.where('date', '<=', endDate);
-        }
-
-        const snapshot = await query.get();
-        const overrides = {};
-        
-        snapshot.forEach(doc => {
-            const data = doc.data();
-            overrides[data.date] = {
-                price: data.price,
-                isLocked: data.isLocked || false,
-                date: data.date
-            };
-        });
+        // Récupérer les price overrides
+        const overrides = await db.getPriceOverrides(propertyId, startDate, endDate);
 
         res.status(200).json(overrides);
     } catch (error) {
