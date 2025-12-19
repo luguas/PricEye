@@ -424,7 +424,9 @@ async function upsertPriceOverrides(propertyId, overrides) {
     property_id: propertyId,
     date: override.date,
     price: override.price,
-    reason: override.reason
+    is_locked: override.isLocked || false,
+    reason: override.reason || 'Manuel',
+    updated_by: override.updatedBy || null
   }));
   
   const { data, error } = await supabase
@@ -436,6 +438,23 @@ async function upsertPriceOverrides(propertyId, overrides) {
   
   if (error) throw error;
   return data || [];
+}
+
+/**
+ * Récupère une réservation par son ID
+ */
+async function getBooking(bookingId) {
+  const { data, error } = await supabase
+    .from('bookings')
+    .select('*')
+    .eq('id', bookingId)
+    .single();
+  
+  if (error && error.code !== 'PGRST116') {
+    throw error;
+  }
+  
+  return data || null;
 }
 
 /**
@@ -504,6 +523,7 @@ module.exports = {
   getPriceOverrides,
   upsertPriceOverrides,
   getSystemCache,
-  setSystemCache
+  setSystemCache,
+  getBooking
 };
 
