@@ -3771,7 +3771,6 @@ app.delete('/api/teams/members/:memberId', authenticateToken, async (req, res) =
 // --- ROUTES POUR LES RAPPORTS (SÉCURISÉES) ---
 app.get('/api/reports/kpis', authenticateToken, async (req, res) => {
     try {
-        const db = admin.firestore();
         const userId = req.user.uid;
         const { startDate, endDate } = req.query; // ex: '2025-01-01', '2025-01-31'
 
@@ -3780,25 +3779,24 @@ app.get('/api/reports/kpis', authenticateToken, async (req, res) => {
         }
 
         // 1. Récupérer le teamId de l'utilisateur
-        const userProfileRef = db.collection('users').doc(userId);
-        const userProfileDoc = await userProfileRef.get();
-        if (!userProfileDoc.exists || !userProfileDoc.data().teamId) {
+        const userProfile = await db.getUser(userId);
+        if (!userProfile || !userProfile.team_id) {
             return res.status(404).send({ error: 'Impossible de trouver votre équipe.' });
         }
-        const teamId = userProfileDoc.data().teamId;
+        const teamId = userProfile.team_id;
 
         // 2. Récupérer les données des propriétés (pour le prix de base)
-        const propertiesSnapshot = await db.collection('properties').where('teamId', '==', teamId).get();
-        if (propertiesSnapshot.empty) {
+        const properties = await db.getPropertiesByTeam(teamId);
+        if (!properties || properties.length === 0) {
             return res.status(200).json({ totalRevenue: 0, totalNightsBooked: 0, adr: 0, occupancy: 0, totalNightsAvailable: 0, iaGain: 0, iaScore: 0, revPar: 0 });
         }
         
         const propertyBasePrices = new Map();
-        propertiesSnapshot.forEach(doc => {
-            propertyBasePrices.set(doc.id, doc.data().base_price || 0); // Utiliser 0 si non défini
+        properties.forEach(prop => {
+            propertyBasePrices.set(prop.id, prop.base_price || 0); // Utiliser 0 si non défini
         });
         
-        const totalPropertiesInTeam = propertiesSnapshot.size;
+        const totalPropertiesInTeam = properties.length;
 
         // 3. Calculer le nombre de jours dans la période
         const start = new Date(startDate);
@@ -3807,14 +3805,9 @@ app.get('/api/reports/kpis', authenticateToken, async (req, res) => {
         const totalNightsAvailable = totalPropertiesInTeam * daysInPeriod;
 
         // 4. Interroger toutes les réservations de l'équipe qui chevauchent la période
-        const bookingsQuery = db.collectionGroup('reservations')
-            .where('teamId', '==', teamId)
-            .where('startDate', '<=', endDate) // Commencé avant ou pendant la fin
-            .where('endDate', '>', startDate);  // Fini après ou pendant le début
-            
-        const snapshot = await bookingsQuery.get();
+        const bookings = await db.getBookingsByTeamAndDateRange(teamId, startDate, endDate);
 
-        if (snapshot.empty) {
+        if (!bookings || bookings.length === 0) {
              return res.status(200).json({ totalRevenue: 0, totalNightsBooked: 0, adr: 0, occupancy: 0, totalNightsAvailable: totalNightsAvailable, iaGain: 0, iaScore: 0, revPar: 0 });
         }
 
@@ -3824,13 +3817,12 @@ app.get('/api/reports/kpis', authenticateToken, async (req, res) => {
         let premiumNights = 0; // Pour le score IA
 
         // 5. Calculer les KPIs
-        snapshot.forEach(doc => {
-            const booking = doc.data();
-            const propertyId = doc.ref.parent.parent.id; // ID de la propriété parente
+        bookings.forEach(booking => {
+            const propertyId = booking.property_id;
             const basePrice = propertyBasePrices.get(propertyId) || 0; // Récupérer le prix de base
 
-            const bookingStart = new Date(booking.startDate);
-            const bookingEnd = new Date(booking.endDate);
+            const bookingStart = new Date(booking.start_date);
+            const bookingEnd = new Date(booking.end_date);
 
             const effectiveStart = new Date(Math.max(bookingStart.getTime(), start.getTime()));
             const effectiveEnd = new Date(Math.min(bookingEnd.getTime(), end.getTime()));
@@ -3842,12 +3834,14 @@ app.get('/api/reports/kpis', authenticateToken, async (req, res) => {
                 currentDate.setDate(currentDate.getDate() + 1);
             }
             
+            const pricePerNight = booking.price_per_night || (booking.revenue ? booking.revenue / Math.ceil((bookingEnd - bookingStart) / (1000 * 60 * 60 * 24)) : 0);
+            
             totalNightsBooked += nightsInPeriod;
-            totalRevenue += (booking.pricePerNight || 0) * nightsInPeriod;
+            totalRevenue += pricePerNight * nightsInPeriod;
             
             // Nouveaux calculs
             totalBaseRevenue += (basePrice || 0) * nightsInPeriod;
-            if (booking.pricePerNight > basePrice) {
+            if (pricePerNight > basePrice) {
                 premiumNights += nightsInPeriod;
             }
         });
@@ -3871,10 +3865,6 @@ app.get('/api/reports/kpis', authenticateToken, async (req, res) => {
         });
 
     } catch (error) {
-        if (error.message && error.message.includes('requires an index')) {
-             console.error('ERREUR FIRESTORE - Index manquant :', error.message);
-             return res.status(500).send({ error: 'Index Firestore manquant. Veuillez exécuter la requête pour obtenir le lien de création dans les logs du serveur.' });
-        }
         console.error('Erreur lors du calcul des KPIs:', error);
         res.status(500).send({ error: 'Erreur serveur lors du calcul des KPIs.' });
     }
@@ -3883,7 +3873,6 @@ app.get('/api/reports/kpis', authenticateToken, async (req, res) => {
 // GET /api/reports/revenue-over-time
 app.get('/api/reports/revenue-over-time', authenticateToken, async (req, res) => {
     try {
-        const db = admin.firestore();
         const userId = req.user.uid;
         const { startDate, endDate } = req.query;
 
@@ -3892,15 +3881,14 @@ app.get('/api/reports/revenue-over-time', authenticateToken, async (req, res) =>
         }
 
         // 1. Trouver le teamId et le nombre total de propriétés
-        const userProfileRef = db.collection('users').doc(userId);
-        const userProfileDoc = await userProfileRef.get();
-        if (!userProfileDoc.exists || !userProfileDoc.data().teamId) {
+        const userProfile = await db.getUser(userId);
+        if (!userProfile || !userProfile.team_id) {
             return res.status(404).send({ error: 'Impossible de trouver votre équipe.' });
         }
-        const teamId = userProfileDoc.data().teamId;
+        const teamId = userProfile.team_id;
 
-        const propertiesSnapshot = await db.collection('properties').where('teamId', '==', teamId).get();
-        const totalPropertiesInTeam = propertiesSnapshot.size;
+        const properties = await db.getPropertiesByTeam(teamId);
+        const totalPropertiesInTeam = properties.length;
 
         // 2. Initialiser une carte de dates
         const datesMap = new Map();
@@ -3913,20 +3901,14 @@ app.get('/api/reports/revenue-over-time', authenticateToken, async (req, res) =>
         }
 
         // 3. Récupérer les réservations qui chevauchent la période
-        const bookingsQuery = db.collectionGroup('reservations')
-            .where('teamId', '==', teamId)
-            .where('startDate', '<=', endDate)
-            .where('endDate', '>', startDate);
-            
-        const snapshot = await bookingsQuery.get();
+        const bookings = await db.getBookingsByTeamAndDateRange(teamId, startDate, endDate);
 
         // 4. Itérer sur chaque réservation et chaque jour de la réservation
-        snapshot.forEach(doc => {
-            const booking = doc.data();
-            const pricePerNight = booking.pricePerNight || 0;
+        bookings.forEach(booking => {
+            const pricePerNight = booking.price_per_night || (booking.revenue ? booking.revenue / Math.ceil((new Date(booking.end_date) - new Date(booking.start_date)) / (1000 * 60 * 60 * 24)) : 0);
             
-            let bookingDay = new Date(booking.startDate + 'T00:00:00Z');
-            const bookingEnd = new Date(booking.endDate + 'T00:00:00Z');
+            let bookingDay = new Date(booking.start_date + 'T00:00:00Z');
+            const bookingEnd = new Date(booking.end_date + 'T00:00:00Z');
 
             while (bookingDay < bookingEnd) {
                 const dateStr = bookingDay.toISOString().split('T')[0];
@@ -3957,33 +3939,51 @@ app.get('/api/reports/revenue-over-time', authenticateToken, async (req, res) =>
 // GET /api/reports/market-demand-snapshot - Indicateurs de demande sur les dernières 24h
 app.get('/api/reports/market-demand-snapshot', authenticateToken, async (req, res) => {
     try {
-        const db = admin.firestore();
         const userId = req.user.uid;
         const { timezone } = req.query;
 
         // 1. Récupérer le teamId de l'utilisateur
-        const userProfileRef = db.collection('users').doc(userId);
-        const userProfileDoc = await userProfileRef.get();
-        if (!userProfileDoc.exists || !userProfileDoc.data().teamId) {
+        const userProfile = await db.getUser(userId);
+        if (!userProfile || !userProfile.team_id) {
             return res.status(404).send({ error: 'Impossible de trouver votre équipe.' });
         }
-        const teamId = userProfileDoc.data().teamId;
+        const teamId = userProfile.team_id;
 
         // 2. Déterminer la fenêtre temporelle (24h glissantes)
         const now = new Date();
-        const end = now;
-        const start = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+        const end = now.toISOString();
+        const start = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString();
 
         // 3. Pour une première version, on s'appuie sur les réservations récentes
         //    comme proxy de la demande (faute de logs de recherches/visites détaillées).
-        const bookingsQuery = db.collectionGroup('reservations')
-            .where('teamId', '==', teamId)
-            .where('createdAt', '>=', start)
-            .where('createdAt', '<=', end);
+        // Récupérer les propriétés de l'équipe
+        const properties = await db.getPropertiesByTeam(teamId);
+        
+        if (!properties || properties.length === 0) {
+            return res.status(200).json({
+                activeSearches: 0,
+                listingViews: 0,
+                conversionRate: 0,
+                windowStart: start,
+                windowEnd: end,
+                timezone: timezone || 'UTC'
+            });
+        }
+        
+        const propertyIds = properties.map(p => p.id);
+        
+        // Récupérer les réservations créées dans les dernières 24h
+        // Note: Si la table bookings n'a pas de created_at, on utilise start_date comme approximation
+        const { data: bookings, error: bookingsError } = await supabase
+            .from('bookings')
+            .select('id')
+            .in('property_id', propertyIds)
+            .gte('start_date', start.split('T')[0])
+            .lte('start_date', end.split('T')[0]);
+        
+        if (bookingsError) throw bookingsError;
 
-        const snapshot = await bookingsQuery.get();
-
-        const totalBookings = snapshot.size;
+        const totalBookings = bookings ? bookings.length : 0;
 
         // Heuristique simple :
         // - "recherches actives" ≈ 20x le nombre de réservations créées
@@ -4437,38 +4437,36 @@ app.post('/api/reports/analyze-date', authenticateToken, async (req, res) => {
 // GET /api/recommendations/group-candidates - Suggérer des groupes
 app.get('/api/recommendations/group-candidates', authenticateToken, async (req, res) => {
     try {
-        const db = admin.firestore();
         const userId = req.user.uid;
 
         // 1. Trouver le teamId de l'utilisateur
-        const userProfileRef = db.collection('users').doc(userId);
-        const userProfileDoc = await userProfileRef.get();
-        if (!userProfileDoc.exists || !userProfileDoc.data().teamId) {
+        const userProfile = await db.getUser(userId);
+        if (!userProfile || !userProfile.team_id) {
              return res.status(404).send({ error: 'Impossible de trouver votre équipe.' });
         }
-        const teamId = userProfileDoc.data().teamId;
+        const teamId = userProfile.team_id;
 
         // 2. Récupérer toutes les propriétés de l'équipe
-        const propertiesSnapshot = await db.collection('properties').where('teamId', '==', teamId).get();
-        if (propertiesSnapshot.empty) {
+        const properties = await db.getPropertiesByTeam(teamId);
+        if (!properties || properties.length === 0) {
             return res.status(200).json([]); // Pas de propriétés, pas de recommandations
         }
 
         // 3. Récupérer tous les groupes et les propriétés déjà groupées
-        const groupsSnapshot = await db.collection('groups').where('ownerId', '==', userId).get(); // ou 'teamId' si les groupes sont partagés
+        const groups = await db.getGroupsByOwner(userId);
         const groupedPropertyIds = new Set();
-        groupsSnapshot.forEach(doc => {
-            const propertiesInGroup = doc.data().properties || [];
-            propertiesInGroup.forEach(propId => groupedPropertyIds.add(propId));
+        groups.forEach(group => {
+            const propertiesInGroup = group.properties || [];
+            propertiesInGroup.forEach(prop => {
+                const propId = typeof prop === 'string' ? prop : (prop.id || prop.property_id);
+                if (propId) {
+                    groupedPropertyIds.add(propId);
+                }
+            });
         });
 
         // 4. Filtrer les propriétés qui ne sont dans AUCUN groupe
-        const ungroupedProperties = [];
-        propertiesSnapshot.forEach(doc => {
-            if (!groupedPropertyIds.has(doc.id)) {
-                ungroupedProperties.push({ id: doc.id, ...doc.data() });
-            }
-        });
+        const ungroupedProperties = properties.filter(prop => !groupedPropertyIds.has(prop.id));
 
         // 5. Regrouper les propriétés non groupées par caractéristiques
         const candidates = new Map();

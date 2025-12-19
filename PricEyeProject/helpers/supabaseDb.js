@@ -351,6 +351,37 @@ async function getBookingsForMonth(propertyId, year, month) {
 }
 
 /**
+ * Récupère les réservations d'une équipe qui chevauchent une période
+ */
+async function getBookingsByTeamAndDateRange(teamId, startDate, endDate) {
+  // Récupérer d'abord les propriétés de l'équipe
+  const { data: properties, error: propsError } = await supabase
+    .from('properties')
+    .select('id')
+    .eq('team_id', teamId);
+  
+  if (propsError) throw propsError;
+  if (!properties || properties.length === 0) return [];
+  
+  const propertyIds = properties.map(p => p.id);
+  
+  // Récupérer les réservations qui chevauchent la période
+  const { data, error } = await supabase
+    .from('bookings')
+    .select(`
+      *,
+      properties!inner(team_id)
+    `)
+    .in('property_id', propertyIds)
+    .lte('start_date', endDate)
+    .gte('end_date', startDate)
+    .order('start_date', { ascending: true });
+  
+  if (error) throw error;
+  return data || [];
+}
+
+/**
  * Crée une réservation
  */
 async function createBooking(propertyId, bookingData) {
@@ -524,6 +555,7 @@ module.exports = {
   upsertPriceOverrides,
   getSystemCache,
   setSystemCache,
-  getBooking
+  getBooking,
+  getBookingsByTeamAndDateRange
 };
 
