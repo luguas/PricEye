@@ -1,33 +1,13 @@
 // Importer les modules nécessaires
 const express = require('express');
-const admin = require('firebase-admin');
 const cors = require('cors');
 require('dotenv').config();
 const cron = require('node-cron');
 const OpenAI = require('openai'); 
 
-// Configuration Firebase (nécessaire pour la clé API web)
-const firebaseConfig = {
-    apiKey: "AIzaSyCqdbT96st3gc9bQ9A4Yk7uxU-Dfuzyiuc",
-    authDomain: "priceye-6f81a.firebaseapp.com",
-    databaseURL: "https://priceye-6f81a-default-rtdb.europe-west1.firebasedatabase.app",
-    projectId: "priceye-6f81a",
-    storageBucket: "priceye-6f81a.appspot.com",
-    messagingSenderId: "244431363759",
-    appId: "1:244431363759:web:c2f600581f341fbca63e5a",
-    measurementId: "G-QC6JW8HXBE"
-};
-
-// --- INITIALISATION DE FIREBASE ADMIN ---
-try {
-  admin.initializeApp({
-    credential: admin.credential.applicationDefault()
-  });
-  console.log('Connecté à Firebase avec succès.');
-} catch (error) {
-  console.error('Erreur d\'initialisation de Firebase Admin:', error);
-  process.exit(1);
-}
+// --- INITIALISATION DE SUPABASE ---
+const { supabase } = require('./config/supabase.js');
+console.log('✅ Connecté à Supabase avec succès.');
 
 const app = express();
 const port = process.env.PORT || 5000;
@@ -91,34 +71,39 @@ const authenticateToken = async (req, res, next) => {
         return res.status(401).send({ error: 'Accès non autorisé. Jeton manquant.' });
     }
 
-    const idToken = authHeader.split('Bearer ')[1];
+    const accessToken = authHeader.split('Bearer ')[1];
     try {
-        const decodedToken = await admin.auth().verifyIdToken(idToken);
+        // Vérifier le token avec Supabase
+        const { data: { user }, error } = await supabase.auth.getUser(accessToken);
         
-        // Vérifier si l'utilisateur est désactivé (accès coupé)
-        if (decodedToken.disabled) {
+        if (error || !user) {
+            console.error('Erreur de vérification du jeton Supabase:', error);
+            return res.status(403).send({ error: 'Jeton invalide ou expiré.' });
+        }
+        
+        // Vérifier si l'utilisateur est désactivé dans la base de données
+        // Note: Cette vérification nécessitera une migration de Firestore vers Supabase PostgreSQL
+        // Pour l'instant, on vérifie uniquement le statut dans Supabase Auth
+        if (user.banned_until && new Date(user.banned_until) > new Date()) {
             return res.status(403).send({ error: 'Votre accès a été désactivé. Veuillez contacter le support.' });
         }
         
-        // Vérifier également dans Firestore si l'accès est désactivé
-        const db = admin.firestore();
-        const userDoc = await db.collection('users').doc(decodedToken.uid).get();
-        if (userDoc.exists) {
-            const userData = userDoc.data();
-            if (userData.accessDisabled === true) {
-                return res.status(403).send({ 
-                    error: 'Votre accès a été désactivé. Veuillez mettre à jour votre moyen de paiement ou contacter le support.' 
-                });
-            }
-        }
+        // Adapter le format pour compatibilité avec le reste du code
+        req.user = {
+            uid: user.id,
+            email: user.email,
+            // Ajouter d'autres propriétés si nécessaire
+        };
         
-        req.user = decodedToken; // Ajoute les infos user (uid, email) à la requête
         next();
     } catch (error) {
         console.error('Erreur de vérification du jeton:', error);
         res.status(403).send({ error: 'Jeton invalide ou expiré.' });
     }
 };
+
+// Importer les helpers Supabase
+const db = require('./helpers/supabaseDb.js');
 
 /**
  * FONCTION D'AUDIT: Enregistre une action dans les logs d'une propriété.
@@ -129,25 +114,9 @@ const authenticateToken = async (req, res, next) => {
  * @param {object} changes - Objet décrivant les changements
  */
 async function logPropertyChange(propertyId, userId, userEmail, action, changes) {
-  try {
-    const db = admin.firestore();
-    const logRef = db.collection('properties').doc(propertyId).collection('logs').doc();
-    
-    // Nettoyer les 'undefined' potentiels
-    const cleanChanges = JSON.parse(JSON.stringify(changes || {}));
-
-    await logRef.set({
-      timestamp: admin.firestore.FieldValue.serverTimestamp(),
-      userId: userId,
-      userEmail: userEmail || 'Inconnu',
-      action: action,
-      changes: cleanChanges
-    });
-    console.log(`Log enregistré pour ${propertyId}: action ${action}`);
-  } catch (error) {
-    console.error(`Erreur lors de l'enregistrement du log pour ${propertyId}:`, error);
-    // Ne pas bloquer la requête principale si le logging échoue
-  }
+  // Nettoyer les 'undefined' potentiels
+  const cleanChanges = JSON.parse(JSON.stringify(changes || {}));
+  await db.logPropertyChange(propertyId, userId, userEmail, action, cleanChanges);
 }
 
 /**
@@ -156,22 +125,19 @@ async function logPropertyChange(propertyId, userId, userEmail, action, changes)
  * @returns {Promise<PMSBase>} - Une instance de l'adaptateur PMS (ex: SmoobuAdapter)
  */
 async function getUserPMSClient(userId) {
-    const db = admin.firestore();
-    // Les intégrations sont stockées sous /users/{userId}/integrations/{pmsType}
-    const integrationsRef = db.collection('users').doc(userId).collection('integrations');
-    const snapshot = await integrationsRef.limit(1).get(); // Prend la première intégration trouvée
-
-    if (snapshot.empty) {
+    // Récupérer la première intégration de l'utilisateur
+    const integrations = await db.getIntegrationsByUser(userId);
+    
+    if (!integrations || integrations.length === 0) {
         throw new Error("Aucun PMS n'est connecté à ce compte.");
     }
 
-    const integrationDoc = snapshot.docs[0];
-    const integration = integrationDoc.data();
-    const pmsType = integrationDoc.id; // Le type (ex: 'smoobu') est l'ID du document
-    const credentials = integration.credentials; // Les identifiants stockés
+    const integration = integrations[0];
+    const pmsType = integration.type;
+    const credentials = integration.credentials;
 
     if (!pmsType || !credentials) {
-         throw new Error("Configuration PMS invalide ou manquante dans Firestore.");
+         throw new Error("Configuration PMS invalide ou manquante.");
     }
 
     // Utiliser l'import() dynamique car pmsManager est un module ES6
@@ -186,30 +152,28 @@ async function getUserPMSClient(userId) {
  */
 async function syncAllPMSRates() {
     console.log('[PMS Sync] Démarrage de la tâche de synchronisation quotidienne des tarifs...');
-    const db = admin.firestore();
     const { getPMSClient } = await import('./integrations/pmsManager.js');
 
-    // 1. Récupérer toutes les connexions PMS actives
-    const integrationsSnapshot = await db.collectionGroup('integrations').get();
-    if (integrationsSnapshot.empty) {
+    // 1. Récupérer toutes les connexions PMS actives avec les infos utilisateur
+    const integrations = await db.getAllIntegrations();
+    if (!integrations || integrations.length === 0) {
         console.log('[PMS Sync] Aucune intégration PMS active trouvée. Tâche terminée.');
         return;
     }
 
-    console.log(`[PMS Sync] ${integrationsSnapshot.size} connexions PMS trouvées. Traitement...`);
+    console.log(`[PMS Sync] ${integrations.length} connexions PMS trouvées. Traitement...`);
     
     // Traiter chaque intégration individuellement
-    for (const doc of integrationsSnapshot.docs) {
-        const userId = doc.ref.parent.parent.id;
-        const pmsType = doc.id;
-        const credentials = doc.data().credentials;
-        const userDoc = await db.collection('users').doc(userId).get();
-        const userData = userDoc.data();
+    for (const integration of integrations) {
+        const userId = integration.user_id;
+        const pmsType = integration.type;
+        const credentials = integration.credentials;
+        const userData = integration.users;
         const userEmail = userData?.email || 'email-inconnu';
 
         // Vérifier si la synchronisation PMS est activée pour cet utilisateur
-        if (userData?.pmsSyncEnabled === false) {
-            console.log(`[PMS Sync] Synchronisation désactivée pour ${userEmail} (ID: ${userId}). Raison: ${userData.pmsSyncStoppedReason || 'unknown'}`);
+        if (userData?.pms_sync_enabled === false) {
+            console.log(`[PMS Sync] Synchronisation désactivée pour ${userEmail} (ID: ${userId}). Raison: ${userData.pms_sync_stopped_reason || 'unknown'}`);
             continue; // Passer à l'utilisateur suivant
         }
 
@@ -356,7 +320,7 @@ function calculateBillingQuantities(userProperties, userGroups) {
  * @param {Object} db - Instance Firestore
  * @returns {Promise<{isAllowed: boolean, isTrialActive: boolean, currentCount: number, maxAllowed: number}>}
  */
-async function checkTrialPropertyLimit(userId, subscriptionId, currentPropertyCount, newPropertiesCount, db) {
+async function checkTrialPropertyLimit(userId, subscriptionId, currentPropertyCount, newPropertiesCount) {
     try {
         if (!subscriptionId) {
             // Pas d'abonnement = pas de limite
@@ -419,17 +383,16 @@ function calculateDistance(lat1, lon1, lat2, lon2) {
  * @param {Object} db - Instance Firestore
  * @returns {Promise<boolean>} - true si la sync est activée, false sinon
  */
-async function isPMSSyncEnabled(userId, db) {
+async function isPMSSyncEnabled(userId) {
     try {
-        const userDoc = await db.collection('users').doc(userId).get();
-        if (!userDoc.exists) {
+        const userData = await db.getUser(userId);
+        if (!userData) {
             return false;
         }
-        const userData = userDoc.data();
         // Par défaut, la sync est activée si le flag n'existe pas (rétrocompatibilité)
-        return userData.pmsSyncEnabled !== false;
+        return userData.pms_sync_enabled !== false;
     } catch (error) {
-        console.error(`[PMS Sync] Erreur lors de la vérification de pmsSyncEnabled pour ${userId}:`, error);
+        console.error(`[PMS Sync] Erreur lors de la vérification de pms_sync_enabled pour ${userId}:`, error);
         // En cas d'erreur, on autorise (fail-safe)
         return true;
     }
@@ -438,10 +401,9 @@ async function isPMSSyncEnabled(userId, db) {
 /**
  * Récupère toutes les propriétés et groupes d'un utilisateur et met à jour Stripe
  * @param {string} userId - ID de l'utilisateur
- * @param {Object} db - Instance Firestore
  * @returns {Promise<void>}
  */
-async function recalculateAndUpdateBilling(userId, db) {
+async function recalculateAndUpdateBilling(userId) {
     try {
         // Récupérer le profil utilisateur pour vérifier l'abonnement Stripe
         const userProfileRef = db.collection('users').doc(userId);
@@ -583,70 +545,89 @@ app.post('/api/auth/register', async (req, res) => {
   }
 
   try {
-    const userRecord = await admin.auth().createUser({
+    // Créer l'utilisateur dans Supabase Auth
+    const { data: authData, error: authError } = await supabase.auth.admin.createUser({
       email: email,
       password: password,
+      email_confirm: true // Auto-confirmer l'email pour simplifier
     });
 
-    const db = admin.firestore();
-    await db.collection('users').doc(userRecord.uid).set({
+    if (authError) {
+      if (authError.message.includes('already registered') || authError.message.includes('already exists')) {
+        return res.status(409).send({ error: 'Cette adresse e-mail est déjà utilisée.' });
+      }
+      if (authError.message.includes('Password')) {
+        return res.status(400).send({ error: 'Le mot de passe doit contenir au moins 6 caractères.' });
+      }
+      throw authError;
+    }
+
+    if (!authData.user) {
+      throw new Error('Utilisateur non créé');
+    }
+
+    // Créer le profil utilisateur dans la table users
+    await db.setUser(authData.user.id, {
       email: email,
       name: name || 'Nouvel Utilisateur',
       currency: currency || 'EUR',
       language: language || 'fr',
       timezone: timezone || 'Europe/Paris',
-      theme: 'auto', // Thème par défaut
-      createdAt: admin.firestore.FieldValue.serverTimestamp(),
-      notificationPreferences: {
+      theme: 'auto',
+      notification_preferences: {
           notifyOnBooking: true,
           notifyOnApiError: true,
       },
-      reportFrequency: 'hebdomadaire',
-      teamId: userRecord.uid,
+      report_frequency: 'hebdomadaire',
+      team_id: authData.user.id,
       role: 'admin'
     });
 
     res.status(201).send({
       message: 'Utilisateur créé et profil enregistré avec succès',
-      uid: userRecord.uid
+      uid: authData.user.id
     });
   } catch (error) {
     console.error('Erreur lors de la création de l\'utilisateur ou du profil:', error);
-    if (error.code === 'auth/email-already-exists') {
+    if (error.message && error.message.includes('already')) {
       return res.status(409).send({ error: 'Cette adresse e-mail est déjà utilisée.' });
-    }
-    if (error.code === 'auth/invalid-password') {
-      return res.status(400).send({ error: 'Le mot de passe doit contenir au moins 6 caractères.' });
     }
     res.status(500).send({ error: 'Erreur interne du serveur lors de la création de l\'utilisateur.' });
   }
 });
 
+// Note: Avec Supabase, l'authentification se fait généralement côté client
+// Cette route est conservée pour compatibilité, mais l'authentification devrait être gérée côté client
 app.post('/api/auth/login', async (req, res) => {
     const { email, password } = req.body;
     if (!email || !password) {
         return res.status(400).send({ error: 'Email et mot de passe sont requis.' });
     }
-    const url = `https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${firebaseConfig.apiKey}`;
+    
     try {
-        const response = await fetch(url, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ email: email, password: password, returnSecureToken: true })
+        // Utiliser Supabase pour authentifier l'utilisateur
+        const { data, error } = await supabase.auth.signInWithPassword({
+            email: email,
+            password: password
         });
-        const data = await response.json();
-        if (!response.ok) {
-            const errorMessage = data.error?.message || 'Erreur inconnue de Firebase.';
-            switch (errorMessage) {
-                case 'INVALID_LOGIN_CREDENTIALS':
-                    return res.status(401).send({ error: 'Email ou mot de passe invalide.' });
-                case 'EMAIL_NOT_FOUND':
-                    return res.status(404).send({ error: 'Aucun compte trouvé pour cet e-mail.' });
-                default:
-                    return res.status(400).send({ error: `Erreur d'authentification: ${errorMessage}` });
+
+        if (error) {
+            console.error('Erreur de connexion Supabase:', error.message);
+            if (error.message.includes('Invalid login credentials') || error.message.includes('Email not confirmed')) {
+                return res.status(401).send({ error: 'Email ou mot de passe invalide.' });
             }
+            return res.status(400).send({ error: `Erreur d'authentification: ${error.message}` });
         }
-        res.status(200).send({ message: 'Connexion réussie', idToken: data.idToken });
+
+        if (!data.session) {
+            return res.status(500).send({ error: 'Aucune session créée.' });
+        }
+
+        // Retourner l'access_token comme idToken pour compatibilité
+        res.status(200).send({ 
+            message: 'Connexion réussie', 
+            idToken: data.session.access_token 
+        });
     } catch (error) {
         console.error('Erreur lors de la connexion:', error);
         res.status(500).send({ error: 'Erreur interne du serveur lors de la connexion.' });
@@ -657,26 +638,36 @@ app.post('/api/auth/login', async (req, res) => {
 // --- ROUTES DE GESTION DU PROFIL UTILISATEUR (SÉCURISÉES) ---
 app.get('/api/users/profile', authenticateToken, async (req, res) => {
     try {
-        const db = admin.firestore();
         const userId = req.user.uid;
-        const userRef = db.collection('users').doc(userId);
-        const doc = await userRef.get();
-        if (!doc.exists) {
-             console.warn(`Profil Firestore manquant pour l'utilisateur ${userId}. Tentative de création.`);
-             await userRef.set({
+        let userData = await db.getUser(userId);
+        
+        if (!userData) {
+            console.warn(`Profil manquant pour l'utilisateur ${userId}. Tentative de création.`);
+            userData = await db.setUser(userId, {
                 email: req.user.email,
                 name: 'Utilisateur existant',
-                currency: 'EUR', language: 'fr', timezone: 'Europe/Paris',
+                currency: 'EUR',
+                language: 'fr',
+                timezone: 'Europe/Paris',
                 theme: 'auto',
-                createdAt: admin.firestore.FieldValue.serverTimestamp(),
-                notificationPreferences: { notifyOnBooking: true, notifyOnApiError: true },
-                reportFrequency: 'hebdomadaire',
-                teamId: userId, role: 'admin'
-             });
-             const newDoc = await userRef.get();
-             return res.status(200).json(newDoc.data());
+                notification_preferences: { notifyOnBooking: true, notifyOnApiError: true },
+                report_frequency: 'hebdomadaire',
+                team_id: userId,
+                role: 'admin'
+            });
+            return res.status(200).json(userData);
         }
-        res.status(200).json(doc.data());
+        
+        // Adapter le format pour compatibilité avec le frontend
+        const formattedData = {
+            ...userData,
+            notificationPreferences: userData.notification_preferences,
+            reportFrequency: userData.report_frequency,
+            teamId: userData.team_id,
+            createdAt: userData.created_at
+        };
+        
+        res.status(200).json(formattedData);
     } catch (error) {
         console.error('Erreur lors de la récupération du profil:', error);
         res.status(500).send({ error: 'Erreur lors de la récupération du profil.' });
@@ -685,7 +676,6 @@ app.get('/api/users/profile', authenticateToken, async (req, res) => {
 
 app.put('/api/users/profile', authenticateToken, async (req, res) => {
     try {
-        const db = admin.firestore();
         const userId = req.user.uid;
         const incomingData = req.body;
         
@@ -710,7 +700,8 @@ app.put('/api/users/profile', authenticateToken, async (req, res) => {
                 }
                 else if (key === 'notificationPreferences') {
                     if (typeof incomingData[key] === 'object' && incomingData[key] !== null) {
-                        dataToUpdate[key] = {
+                        // Convertir en snake_case pour PostgreSQL
+                        dataToUpdate.notification_preferences = {
                             notifyOnBooking: typeof incomingData[key].notifyOnBooking === 'boolean' ? incomingData[key].notifyOnBooking : true,
                             notifyOnApiError: typeof incomingData[key].notifyOnApiError === 'boolean' ? incomingData[key].notifyOnApiError : true
                         };
@@ -718,7 +709,8 @@ app.put('/api/users/profile', authenticateToken, async (req, res) => {
                 } else if (key === 'reportFrequency') {
                      const allowedFrequencies = ['jamais', 'quotidien', 'hebdomadaire', 'mensuel'];
                      if (allowedFrequencies.includes(incomingData[key])) {
-                         dataToUpdate[key] = incomingData[key];
+                         // Convertir en snake_case pour PostgreSQL
+                         dataToUpdate.report_frequency = incomingData[key];
                      }
                 } else {
                     dataToUpdate[key] = incomingData[key];
@@ -730,8 +722,7 @@ app.put('/api/users/profile', authenticateToken, async (req, res) => {
             return res.status(400).send({ error: 'Aucun champ valide à mettre à jour.' });
         }
 
-        const userRef = db.collection('users').doc(userId);
-        await userRef.update(dataToUpdate);
+        await db.updateUser(userId, dataToUpdate);
         res.status(200).send({ message: 'Profil mis à jour avec succès' });
     } catch (error) {
         console.error('Erreur lors de la mise à jour du profil:', error);
@@ -2148,22 +2139,17 @@ app.delete('/api/integrations/:type', authenticateToken, async (req, res) => {
 // --- ROUTES DE L'API POUR LES PROPRIÉTÉS (SÉCURISÉES) ---
 app.get('/api/properties', authenticateToken, async (req, res) => {
     try {
-        const db = admin.firestore();
         const userId = req.user.uid;
         
-        const userProfileRef = db.collection('users').doc(userId);
-        const userProfileDoc = await userProfileRef.get();
-        if (!userProfileDoc.exists || !userProfileDoc.data().teamId) {
-             console.warn(`Utilisateur ${userId} n'a pas de teamId, fallback sur ownerId.`);
-             const propertiesSnapshot = await db.collection('properties').where('ownerId', '==', userId).get();
-             const properties = propertiesSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        const userProfile = await db.getUser(userId);
+        if (!userProfile || !userProfile.team_id) {
+             console.warn(`Utilisateur ${userId} n'a pas de team_id, fallback sur owner_id.`);
+             const properties = await db.getPropertiesByOwner(userId);
              return res.status(200).json(properties);
         }
-        const teamId = userProfileDoc.data().teamId;
+        const teamId = userProfile.team_id;
         
-        const propertiesSnapshot = await db.collection('properties').where('teamId', '==', teamId).get();
-        
-        const properties = propertiesSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        const properties = await db.getPropertiesByTeam(teamId);
         res.status(200).json(properties);
     } catch (error) {
         console.error('Erreur lors de la récupération des propriétés:', error);

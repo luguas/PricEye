@@ -227,8 +227,11 @@
   "propertyModal": {
     "title": "Ajouter une propriété",
     "editTitle": "Modifier la propriété",
+    "name": "Nom de la propriété",
     "address": "Adresse",
     "location": "Localisation",
+    "description": "Description",
+    "propertyType": "Type de propriété",
     "surface": "Surface (m²)",
     "capacity": "Capacité (personnes)",
     "dailyRevenue": "Revenu journalier",
@@ -363,6 +366,14 @@
     "loading": "Chargement des réservations...",
     "noBookings": "Aucune réservation trouvée pour les filtres sélectionnés.",
     "unknownProperty": "Propriété inconnue",
+    "viewTable": "Tableau",
+    "viewCalendar": "Calendrier",
+    "calendar": {
+      "today": "Aujourd'hui",
+      "previousMonth": "Mois précédent",
+      "nextMonth": "Mois suivant",
+      "more": "autres"
+    },
     "errors": {
       "loadError": "Erreur de chargement: {{message}}"
     }

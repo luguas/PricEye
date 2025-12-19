@@ -1,42 +1,8 @@
 // L'URL de base de notre serveur backend
 const API_BASE_URL = 'https://priceye.onrender.com';
 
-// Importer Firebase (client) pour l'authentification
-import { initializeApp } from "firebase/app";
-import { 
-    getAuth, 
-    EmailAuthProvider, 
-    reauthenticateWithCredential, 
-    updatePassword,
-    signInWithEmailAndPassword 
-} from "firebase/auth";
-
-// Configuration Firebase (côté client)
-const firebaseConfig = {
-    apiKey: "AIzaSyCqdbT96st3gc9bQ9A4Yk7uxU-Dfuzyiuc",
-    authDomain: "priceye-6f81a.firebaseapp.com",
-    databaseURL: "https://priceye-6f81a-default-rtdb.europe-west1.firebasedatabase.app",
-    projectId: "priceye-6f81a",
-    storageBucket: "priceye-6f81a.appspot.com",
-    messagingSenderId: "244431363759",
-    appId: "1:244431363759:web:c2f600581f341fbca63e5a",
-    measurementId: "G-QC6JW8HXBE"
-};
-
-// Initialiser l'Auth de Firebase (côté client)
-let auth;
-try {
-    const app = initializeApp(firebaseConfig);
-    auth = getAuth(app);
-} catch (error) {
-    console.error("Erreur d'initialisation Firebase (client) dans api.js:", error);
-    if (error.code === 'duplicate-app') {
-         const existingApp = initializeApp(firebaseConfig, "default"); 
-         auth = getAuth(existingApp);
-    } else {
-         console.error("Firebase n'a pas pu s'initialiser. L'authentification client échouera.");
-    }
-}
+// Importer Supabase (client) pour l'authentification
+import { supabase } from '../config/supabase.js';
 
 
 /**
@@ -115,19 +81,28 @@ async function apiRequest(endpoint, options = {}) {
  * Fonctions d'authentification
  */
 export async function login(email, password) {
-  if (!auth) {
-    throw new Error("Service d'authentification Firebase non initialisé.");
-  }
   try {
-    const userCredential = await signInWithEmailAndPassword(auth, email, password);
-    const idToken = await userCredential.user.getIdToken();
-    return { idToken: idToken, message: "Connexion réussie" };
-  } catch (error) {
-    console.error("Erreur de connexion (SDK client):", error.code);
-    if (error.code === 'auth/user-not-found' || error.code === 'auth/wrong-password' || error.code === 'auth/invalid-credential') {
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email: email,
+      password: password
+    });
+
+    if (error) {
+      console.error("Erreur de connexion Supabase:", error.message);
+      if (error.message.includes('Invalid login credentials') || error.message.includes('Email not confirmed')) {
         throw new Error("Email ou mot de passe invalide.");
+      }
+      throw new Error(error.message);
     }
-    throw new Error(error.message);
+
+    if (!data.session) {
+      throw new Error("Aucune session créée.");
+    }
+
+    // Retourner l'access_token comme idToken pour compatibilité avec le backend
+    return { idToken: data.session.access_token, message: "Connexion réussie" };
+  } catch (error) {
+    throw error;
   }
 }
 
@@ -139,26 +114,40 @@ export function register(userData) {
 }
 
 export async function changeUserPassword(oldPassword, newPassword) {
-    if (!auth || !auth.currentUser) {
-        console.error("changeUserPassword: auth.currentUser est nul.");
-        throw new Error("Utilisateur non connecté ou session invalide. Veuillez vous reconnecter.");
-    }
-    
-    const user = auth.currentUser;
-    const credential = EmailAuthProvider.credential(user.email, oldPassword);
-    
     try {
-        await reauthenticateWithCredential(user, credential);
-        await updatePassword(user, newPassword);
-        
-    } catch (error) {
-        console.error("Erreur lors du changement de mot de passe:", error.code);
-        if (error.code === 'auth/wrong-password' || error.code === 'auth/invalid-credential') {
-            throw new Error("L'ancien mot de passe est incorrect.");
-        } else if (error.code === 'auth/weak-password') {
-             throw new Error("Le nouveau mot de passe est trop faible (6 caractères min).");
+        // Vérifier que l'utilisateur est connecté
+        const { data: { user } } = await supabase.auth.getUser();
+        if (!user) {
+            throw new Error("Utilisateur non connecté ou session invalide. Veuillez vous reconnecter.");
         }
-        throw new Error(error.message);
+
+        // Vérifier l'ancien mot de passe en se reconnectant
+        const { error: signInError } = await supabase.auth.signInWithPassword({
+            email: user.email,
+            password: oldPassword
+        });
+
+        if (signInError) {
+            if (signInError.message.includes('Invalid login credentials')) {
+                throw new Error("L'ancien mot de passe est incorrect.");
+            }
+            throw new Error(signInError.message);
+        }
+
+        // Mettre à jour le mot de passe
+        const { error: updateError } = await supabase.auth.updateUser({
+            password: newPassword
+        });
+
+        if (updateError) {
+            if (updateError.message.includes('Password should be at least')) {
+                throw new Error("Le nouveau mot de passe est trop faible (6 caractères min).");
+            }
+            throw new Error(updateError.message);
+        }
+    } catch (error) {
+        console.error("Erreur lors du changement de mot de passe:", error);
+        throw error;
     }
 }
 

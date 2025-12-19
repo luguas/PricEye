@@ -160,7 +160,7 @@ function PropertyModal({ token, onClose, onSave, property }) {
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-90 flex items-center justify-center p-4 z-50">
-        <div className="bg-global-bg-box border border-global-stroke-box rounded-[14px] shadow-xl w-full max-w-lg p-6 max-h-[90vh] flex flex-col">
+        <div className="bg-global-bg-box border border-global-stroke-box rounded-[14px] shadow-xl w-full max-w-4xl p-6 max-h-[90vh] flex flex-col">
             <h3 className="text-xl font-bold mb-6 text-global-blanc shrink-0">{isEditing ? t('propertyModal.editTitle') : t('propertyModal.title')}</h3>
             
             {/* Bouton de Synchronisation (uniquement en mode édition) */}
@@ -188,8 +188,8 @@ function PropertyModal({ token, onClose, onSave, property }) {
             <CustomScrollbar className="flex-1 min-h-0">
               <form onSubmit={handleSubmit} className="space-y-4 pr-2">
                 <div>
-                  <label htmlFor="name" className="block text-sm font-medium text-global-inactive">{t('propertyModal.name') || 'Nom de la propriété'}</label>
-                  <input name="name" id="name" type="text" placeholder={t('propertyModal.name') || 'Nom de la propriété'} value={formData.name} onChange={handleChange} className="w-full bg-global-bg-small-box border border-global-stroke-box text-global-blanc p-2.5 rounded-[8px] mt-1 focus:outline-none focus:border-global-content-highlight-2nd transition-colors" />
+                  <label htmlFor="name" className="block text-sm font-medium text-global-inactive">{t('propertyModal.name')}</label>
+                  <input name="name" id="name" type="text" placeholder={t('propertyModal.name')} value={formData.name} onChange={handleChange} className="w-full bg-global-bg-small-box border border-global-stroke-box text-global-blanc p-2.5 rounded-[8px] mt-1 focus:outline-none focus:border-global-content-highlight-2nd transition-colors" />
                 </div>
                 <div>
                   <label htmlFor="address" className="block text-sm font-medium text-global-inactive">{t('propertyModal.address')}</label>
@@ -200,11 +200,11 @@ function PropertyModal({ token, onClose, onSave, property }) {
                   <input name="location" id="location" type="text" placeholder={t('propertyModal.location')} value={formData.location} onChange={handleChange} className="w-full bg-global-bg-small-box border border-global-stroke-box text-global-blanc p-2.5 rounded-[8px] mt-1 focus:outline-none focus:border-global-content-highlight-2nd transition-colors" required />
                 </div>
                 <div>
-                  <label htmlFor="description" className="block text-sm font-medium text-global-inactive">{t('propertyModal.description') || 'Description'}</label>
-                  <textarea name="description" id="description" rows="4" placeholder={t('propertyModal.description') || 'Description de la propriété'} value={formData.description} onChange={handleChange} className="w-full bg-global-bg-small-box border border-global-stroke-box text-global-blanc p-2.5 rounded-[8px] mt-1 focus:outline-none focus:border-global-content-highlight-2nd transition-colors resize-none" />
+                  <label htmlFor="description" className="block text-sm font-medium text-global-inactive">{t('propertyModal.description')}</label>
+                  <textarea name="description" id="description" rows="4" placeholder={t('propertyModal.description')} value={formData.description} onChange={handleChange} className="w-full bg-global-bg-small-box border border-global-stroke-box text-global-blanc p-2.5 rounded-[8px] mt-1 focus:outline-none focus:border-global-content-highlight-2nd transition-colors resize-none" />
                 </div>
                 <div>
-                  <label htmlFor="property_type" className="block text-sm font-medium text-global-inactive">{t('propertyModal.propertyType') || 'Type de propriété'}</label>
+                  <label htmlFor="property_type" className="block text-sm font-medium text-global-inactive">{t('propertyModal.propertyType')}</label>
                   <select name="property_type" id="property_type" value={formData.property_type} onChange={handleChange} className="w-full bg-global-bg-small-box border border-global-stroke-box text-global-blanc p-2.5 rounded-[8px] mt-1 focus:outline-none focus:border-global-content-highlight-2nd transition-colors [&>option]:bg-global-bg-box [&>option]:text-global-blanc">
                     <option value="appartement">Appartement</option>
                     <option value="villa">Villa</option>

@@ -227,8 +227,11 @@
   "propertyModal": {
     "title": "Add property",
     "editTitle": "Edit property",
+    "name": "Property name",
     "address": "Address",
     "location": "Location",
+    "description": "Description",
+    "propertyType": "Property type",
     "surface": "Surface (m²)",
     "capacity": "Capacity (people)",
     "dailyRevenue": "Daily revenue",
@@ -363,6 +366,14 @@
     "loading": "Loading bookings...",
     "noBookings": "No bookings found for the selected filters.",
     "unknownProperty": "Unknown property",
+    "viewTable": "Table",
+    "viewCalendar": "Calendar",
+    "calendar": {
+      "today": "Today",
+      "previousMonth": "Previous month",
+      "nextMonth": "Next month",
+      "more": "more"
+    },
     "errors": {
       "loadError": "Loading error: {{message}}"
     }

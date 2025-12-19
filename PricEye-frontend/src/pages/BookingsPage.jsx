@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { getProperties, getTeamBookings } from '../services/api.js';
 import Pastille from '../components/Pastille.jsx';
 import RechercheRSa from '../components/RechercheRSa.jsx';
+import BookingsCalendar from '../components/BookingsCalendar.jsx';
 import { useLanguage } from '../contexts/LanguageContext.jsx';
 // import { getDatesFromRange } from '../utils/dateUtils.js'; // Remplacé par une logique locale
 
@@ -115,6 +116,10 @@ function BookingsPage({ token, userProfile }) {
   const [selectedPricingMethod, setSelectedPricingMethod] = useState(''); // NOUVEAU
   const [searchQuery, setSearchQuery] = useState(''); // Recherche de propriété
   const [showFilters, setShowFilters] = useState(false); // Afficher/masquer les filtres
+  const [activeView, setActiveView] = useState('table'); // 'table' ou 'calendar'
+  const [selectedDateBookings, setSelectedDateBookings] = useState([]); // Réservations pour la date sélectionnée dans le calendrier
+  const [selectedDate, setSelectedDate] = useState(null); // Date sélectionnée dans le calendrier
+  const [showBookingDetails, setShowBookingDetails] = useState(false); // Afficher le modal de détails
 
   // Créer un map pour un accès rapide aux noms des propriétés
   const propertyMap = useMemo(() => {
@@ -315,7 +320,12 @@ function BookingsPage({ token, userProfile }) {
       return <Pastille text={channel} className="!bg-global-bg-small-box !border-global-stroke-box" />;
   };
   
-
+  // Gestion du clic sur une date du calendrier
+  const handleBookingClick = (bookings, date) => {
+    setSelectedDateBookings(bookings);
+    setSelectedDate(date);
+    setShowBookingDetails(true);
+  };
 
   return (
     <div className="relative min-h-screen">
@@ -443,7 +453,33 @@ function BookingsPage({ token, userProfile }) {
       
       {error && <p className="text-red-400 text-center">{error}</p>}
 
-      {/* Tableau des réservations */}
+      {/* Onglets pour basculer entre Tableau et Calendrier */}
+      <div className="flex gap-2 border-b border-global-stroke-box">
+        <button
+          onClick={() => setActiveView('table')}
+          className={`px-6 py-3 font-h4-font-family text-h4-font-size transition-colors ${
+            activeView === 'table'
+              ? 'text-global-content-highlight-2nd border-b-2 border-global-content-highlight-2nd'
+              : 'text-global-inactive hover:text-global-blanc'
+          }`}
+        >
+          {t('bookings.viewTable')}
+        </button>
+        <button
+          onClick={() => setActiveView('calendar')}
+          className={`px-6 py-3 font-h4-font-family text-h4-font-size transition-colors ${
+            activeView === 'calendar'
+              ? 'text-global-content-highlight-2nd border-b-2 border-global-content-highlight-2nd'
+              : 'text-global-inactive hover:text-global-blanc'
+          }`}
+        >
+          {t('bookings.viewCalendar')}
+        </button>
+      </div>
+
+      {/* Vue Tableau ou Calendrier */}
+      {activeView === 'table' ? (
+        /* Tableau des réservations */
       <div className="bg-global-bg-box rounded-[14px] border border-solid border-global-stroke-box flex flex-col gap-0 items-start justify-start self-stretch shrink-0 relative overflow-hidden">
         {/* En-têtes */}
         <div className="border border-solid border-global-stroke-box border-b pt-4 pr-6 pb-4 pl-6 flex flex-row items-center justify-between self-stretch shrink-0 relative">
@@ -532,6 +568,84 @@ function BookingsPage({ token, userProfile }) {
           })
         )}
       </div>
+      ) : (
+        /* Vue Calendrier */
+        <div>
+          {isLoading ? (
+            <div className="bg-global-bg-box rounded-[14px] border border-global-stroke-box p-8 flex items-center justify-center">
+              <div className="text-center text-global-inactive">
+                <div className="w-8 h-8 border-2 border-global-content-highlight-2nd border-t-transparent rounded-full animate-spin mx-auto mb-2"></div>
+                {t('bookings.loading')}
+              </div>
+            </div>
+          ) : (
+            <BookingsCalendar
+              bookings={filteredBookings}
+              propertyMap={propertyMap}
+              formatCurrency={formatCurrency}
+              formatDate={formatDate}
+              onBookingClick={handleBookingClick}
+            />
+          )}
+        </div>
+      )}
+
+      {/* Modal de détails des réservations */}
+      {showBookingDetails && selectedDateBookings.length > 0 && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50" onClick={() => setShowBookingDetails(false)}>
+          <div className="bg-global-bg-box border border-global-stroke-box rounded-[14px] p-6 max-w-2xl w-full mx-4 max-h-[80vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-xl font-bold text-global-blanc font-h3-font-family">
+                {t('bookings.property')} - {formatDate(selectedDate.toISOString().split('T')[0])}
+              </h3>
+              <button
+                onClick={() => setShowBookingDetails(false)}
+                className="text-global-inactive hover:text-global-blanc text-2xl"
+              >
+                ×
+              </button>
+            </div>
+            <div className="space-y-4">
+              {selectedDateBookings.map((booking, index) => {
+                const propertyName = propertyMap.get(booking.propertyId) || t('bookings.unknownProperty');
+                return (
+                  <div
+                    key={index}
+                    className="border border-global-stroke-box rounded-[10px] p-4 bg-global-bg-small-box"
+                  >
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <div className="text-global-inactive text-sm font-p1-font-family mb-1">{t('bookings.property')}</div>
+                        <div className="text-global-blanc font-h4-font-family">{propertyName}</div>
+                      </div>
+                      <div>
+                        <div className="text-global-inactive text-sm font-p1-font-family mb-1">{t('bookings.totalPrice')}</div>
+                        <div className="text-global-blanc font-h4-font-family">{formatCurrency(booking.totalPrice)}</div>
+                      </div>
+                      <div>
+                        <div className="text-global-inactive text-sm font-p1-font-family mb-1">{t('bookings.arrivalDate')}</div>
+                        <div className="text-global-blanc font-h4-font-family">{formatDate(booking.startDate)}</div>
+                      </div>
+                      <div>
+                        <div className="text-global-inactive text-sm font-p1-font-family mb-1">{t('bookings.departureDate')}</div>
+                        <div className="text-global-blanc font-h4-font-family">{formatDate(booking.endDate)}</div>
+                      </div>
+                      <div>
+                        <div className="text-global-inactive text-sm font-p1-font-family mb-1">{t('bookings.channel')}</div>
+                        <div className="mt-1">{getChannelBadge(booking.channel)}</div>
+                      </div>
+                      <div>
+                        <div className="text-global-inactive text-sm font-p1-font-family mb-1">{t('bookings.status')}</div>
+                        <div className="mt-1">{getStatusBadge(booking.status)}</div>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
       </div>
     </div>
   );
