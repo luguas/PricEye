@@ -2215,6 +2215,9 @@ app.post('/api/properties', authenticateToken, async (req, res) => {
             }
         } 
 
+        // Les champs acceptés incluent : name, address, location, description, property_type,
+        // surface, capacity, daily_revenue, min_stay, amenities, etc.
+        // Tous les champs de newPropertyData sont conservés via le spread operator
         const propertyWithOwner = { 
             ...newPropertyData, 
             ownerId: userId, 

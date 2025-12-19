@@ -13,12 +13,14 @@ const availableAmenities = [
 function PropertyModal({ token, onClose, onSave, property }) {
   const { t } = useLanguage();
   const [formData, setFormData] = useState({
+    name: '',
     address: '',
     location: '',
+    description: '',
     surface: '',
     capacity: '',
     daily_revenue: '',
-    occupancy: '',
+    property_type: 'villa',
     min_stay: '',
     amenities: [], 
   });
@@ -32,19 +34,21 @@ function PropertyModal({ token, onClose, onSave, property }) {
   useEffect(() => {
     if (isEditing) {
       setFormData({
+        name: property.name || '',
         address: property.address || '',
         location: property.location || '',
+        description: property.description || '',
         surface: property.surface || '',
         capacity: property.capacity || '',
         daily_revenue: property.daily_revenue || '',
-        occupancy: (property.occupancy || 0) * 100, 
+        property_type: property.property_type || property.type || 'villa',
         min_stay: property.min_stay || '',
         amenities: property.amenities || [], 
       });
     } else {
        setFormData({
-            address: '', location: '', surface: '', capacity: '',
-            daily_revenue: '100', occupancy: '75', min_stay: '2',
+            name: '', address: '', location: '', description: '', surface: '', capacity: '',
+            daily_revenue: '100', property_type: 'villa', min_stay: '2',
             amenities: [],
        });
     }
@@ -80,12 +84,14 @@ function PropertyModal({ token, onClose, onSave, property }) {
     setIsLoading(true);
     try {
       const propertyData = {
+        name: formData.name || formData.address,
         address: formData.address,
         location: formData.location,
+        description: formData.description || '',
         surface: parseInt(formData.surface, 10) || 0,
         capacity: parseInt(formData.capacity, 10) || 0,
         daily_revenue: parseInt(formData.daily_revenue, 10) || 100,
-        occupancy: parseFloat(formData.occupancy) / 100 || 0.7, 
+        property_type: formData.property_type,
         min_stay: parseInt(formData.min_stay, 10) || 1, 
         amenities: formData.amenities, 
       };
@@ -154,17 +160,17 @@ function PropertyModal({ token, onClose, onSave, property }) {
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-90 flex items-center justify-center p-4 z-50">
-        <div className="bg-bg-secondary rounded-lg shadow-xl w-full max-w-lg p-6 max-h-[90vh] flex flex-col">
-            <h3 className="text-xl font-bold mb-6 text-text-primary shrink-0">{isEditing ? t('propertyModal.editTitle') : t('propertyModal.title')}</h3>
+        <div className="bg-global-bg-box border border-global-stroke-box rounded-[14px] shadow-xl w-full max-w-lg p-6 max-h-[90vh] flex flex-col">
+            <h3 className="text-xl font-bold mb-6 text-global-blanc shrink-0">{isEditing ? t('propertyModal.editTitle') : t('propertyModal.title')}</h3>
             
             {/* Bouton de Synchronisation (uniquement en mode édition) */}
             {isEditing && (
-              <div className="border-b border-border-primary pb-4 mb-4 shrink-0">
+              <div className="border-b border-global-stroke-box pb-4 mb-4 shrink-0">
                 <button
                     type="button"
                     onClick={handleSyncData}
                     disabled={isSyncing}
-                    className="w-full flex justify-center items-center gap-2 px-4 py-2 font-semibold text-white bg-teal-600 rounded-md hover:bg-teal-700 disabled:bg-gray-500"
+                    className="w-full flex justify-center items-center gap-2 px-4 py-2 font-semibold text-white bg-teal-600 rounded-[8px] hover:bg-teal-700 disabled:bg-gray-500 transition-colors"
                 >
                     {isSyncing ? (
                         <>
@@ -182,50 +188,65 @@ function PropertyModal({ token, onClose, onSave, property }) {
             <CustomScrollbar className="flex-1 min-h-0">
               <form onSubmit={handleSubmit} className="space-y-4 pr-2">
                 <div>
-                  <label htmlFor="address" className="block text-sm font-medium text-text-secondary">{t('propertyModal.address')}</label>
-                  <input name="address" id="address" type="text" placeholder={t('propertyModal.address')} value={formData.address} onChange={handleChange} className="w-full bg-bg-muted border-border-primary text-text-primary p-2 rounded-md mt-1" required />
+                  <label htmlFor="name" className="block text-sm font-medium text-global-inactive">{t('propertyModal.name') || 'Nom de la propriété'}</label>
+                  <input name="name" id="name" type="text" placeholder={t('propertyModal.name') || 'Nom de la propriété'} value={formData.name} onChange={handleChange} className="w-full bg-global-bg-small-box border border-global-stroke-box text-global-blanc p-2.5 rounded-[8px] mt-1 focus:outline-none focus:border-global-content-highlight-2nd transition-colors" />
                 </div>
                 <div>
-                  <label htmlFor="location" className="block text-sm font-medium text-text-secondary">{t('propertyModal.location')}</label>
-                  <input name="location" id="location" type="text" placeholder={t('propertyModal.location')} value={formData.location} onChange={handleChange} className="w-full bg-bg-muted border-border-primary text-text-primary p-2 rounded-md mt-1" required />
+                  <label htmlFor="address" className="block text-sm font-medium text-global-inactive">{t('propertyModal.address')}</label>
+                  <input name="address" id="address" type="text" placeholder={t('propertyModal.address')} value={formData.address} onChange={handleChange} className="w-full bg-global-bg-small-box border border-global-stroke-box text-global-blanc p-2.5 rounded-[8px] mt-1 focus:outline-none focus:border-global-content-highlight-2nd transition-colors" required />
+                </div>
+                <div>
+                  <label htmlFor="location" className="block text-sm font-medium text-global-inactive">{t('propertyModal.location')}</label>
+                  <input name="location" id="location" type="text" placeholder={t('propertyModal.location')} value={formData.location} onChange={handleChange} className="w-full bg-global-bg-small-box border border-global-stroke-box text-global-blanc p-2.5 rounded-[8px] mt-1 focus:outline-none focus:border-global-content-highlight-2nd transition-colors" required />
+                </div>
+                <div>
+                  <label htmlFor="description" className="block text-sm font-medium text-global-inactive">{t('propertyModal.description') || 'Description'}</label>
+                  <textarea name="description" id="description" rows="4" placeholder={t('propertyModal.description') || 'Description de la propriété'} value={formData.description} onChange={handleChange} className="w-full bg-global-bg-small-box border border-global-stroke-box text-global-blanc p-2.5 rounded-[8px] mt-1 focus:outline-none focus:border-global-content-highlight-2nd transition-colors resize-none" />
+                </div>
+                <div>
+                  <label htmlFor="property_type" className="block text-sm font-medium text-global-inactive">{t('propertyModal.propertyType') || 'Type de propriété'}</label>
+                  <select name="property_type" id="property_type" value={formData.property_type} onChange={handleChange} className="w-full bg-global-bg-small-box border border-global-stroke-box text-global-blanc p-2.5 rounded-[8px] mt-1 focus:outline-none focus:border-global-content-highlight-2nd transition-colors [&>option]:bg-global-bg-box [&>option]:text-global-blanc">
+                    <option value="appartement">Appartement</option>
+                    <option value="villa">Villa</option>
+                    <option value="studio">Studio</option>
+                    <option value="loft">Loft</option>
+                    <option value="maison">Maison</option>
+                  </select>
                 </div>
                 
                 <div className="grid grid-cols-2 gap-4">
                     <div>
-                        <label htmlFor="surface" className="block text-sm font-medium text-text-secondary">{t('propertyModal.surface')}</label>
-                        <input name="surface" id="surface" type="number" placeholder={t('propertyModal.surface')} value={formData.surface} onChange={handleChange} className="w-full bg-bg-muted border-border-primary text-text-primary p-2 rounded-md mt-1" required />
+                        <label htmlFor="surface" className="block text-sm font-medium text-global-inactive">{t('propertyModal.surface')}</label>
+                        <input name="surface" id="surface" type="number" placeholder={t('propertyModal.surface')} value={formData.surface} onChange={handleChange} className="w-full bg-global-bg-small-box border border-global-stroke-box text-global-blanc p-2.5 rounded-[8px] mt-1 focus:outline-none focus:border-global-content-highlight-2nd transition-colors" required />
                     </div>
                     <div>
-                        <label htmlFor="capacity" className="block text-sm font-medium text-text-secondary">{t('propertyModal.capacity')}</label>
-                        <input name="capacity" id="capacity" type="number" placeholder={t('propertyModal.capacity')} value={formData.capacity} onChange={handleChange} className="w-full bg-bg-muted border-border-primary text-text-primary p-2 rounded-md mt-1" required />
+                        <label htmlFor="capacity" className="block text-sm font-medium text-global-inactive">{t('propertyModal.capacity')}</label>
+                        <input name="capacity" id="capacity" type="number" placeholder={t('propertyModal.capacity')} value={formData.capacity} onChange={handleChange} className="w-full bg-global-bg-small-box border border-global-stroke-box text-global-blanc p-2.5 rounded-[8px] mt-1 focus:outline-none focus:border-global-content-highlight-2nd transition-colors" required />
                     </div>
                 </div>
-                 <div className="grid grid-cols-3 gap-4">
+                 <div className="grid grid-cols-2 gap-4">
                      <div>
-                        <label htmlFor="daily_revenue" className="block text-sm font-medium text-text-secondary">{t('propertyModal.dailyRevenue')}</label>
-                        <input name="daily_revenue" id="daily_revenue" type="number" placeholder={t('propertyModal.dailyRevenue')} value={formData.daily_revenue} onChange={handleChange} className="w-full bg-bg-muted border-border-primary text-text-primary p-2 rounded-md mt-1" required />
+                        <label htmlFor="daily_revenue" className="block text-sm font-medium text-global-inactive">{t('propertyModal.dailyRevenue')}</label>
+                        <input name="daily_revenue" id="daily_revenue" type="number" placeholder={t('propertyModal.dailyRevenue')} value={formData.daily_revenue} onChange={handleChange} className="w-full bg-global-bg-small-box border border-global-stroke-box text-global-blanc p-2.5 rounded-[8px] mt-1 focus:outline-none focus:border-global-content-highlight-2nd transition-colors" required />
                     </div>
                      <div>
-                        <label htmlFor="occupancy" className="block text-sm font-medium text-text-secondary">{t('propertyModal.occupancy')}</label>
-                        <input name="occupancy" id="occupancy" type="number" placeholder={t('propertyModal.occupancy')} value={formData.occupancy} onChange={handleChange} className="w-full bg-bg-muted border-border-primary text-text-primary p-2 rounded-md mt-1" required />
-                    </div>
-                     <div>
-                        <label htmlFor="min_stay" className="block text-sm font-medium text-text-secondary">{t('propertyModal.minStay')}</label>
-                        <input name="min_stay" id="min_stay" type="number" placeholder={t('propertyModal.minStay')} value={formData.min_stay} onChange={handleChange} className="w-full bg-bg-muted border-border-primary text-text-primary p-2 rounded-md mt-1" required />
+                        <label htmlFor="min_stay" className="block text-sm font-medium text-global-inactive">{t('propertyModal.minStay')}</label>
+                        <input name="min_stay" id="min_stay" type="number" placeholder={t('propertyModal.minStay')} value={formData.min_stay} onChange={handleChange} className="w-full bg-global-bg-small-box border border-global-stroke-box text-global-blanc p-2.5 rounded-[8px] mt-1 focus:outline-none focus:border-global-content-highlight-2nd transition-colors" required />
                     </div>
                  </div>
                 
-                <fieldset className="border border-border-secondary p-4 rounded-md">
-                  <legend className="text-lg font-semibold px-2 text-text-primary">{t('propertyModal.amenities')}</legend>
+                <fieldset className="border border-global-stroke-box p-4 rounded-[8px]">
+                  <legend className="text-lg font-semibold px-2 text-global-blanc">{t('propertyModal.amenities')}</legend>
                   <div className="grid grid-cols-2 md:grid-cols-3 gap-2 mt-2 max-h-48 overflow-y-auto">
                     {availableAmenities.map(amenity => (
-                      <label key={amenity} className="flex items-center gap-2 text-sm text-text-secondary">
+                      <label key={amenity} className="flex items-center gap-2 text-sm text-global-inactive cursor-pointer hover:text-global-blanc transition-colors">
                         <input
                           type="checkbox"
                           name="amenities"
                           value={amenity}
                           checked={formData.amenities.includes(amenity)}
                           onChange={handleAmenityChange}
+                          className="cursor-pointer"
                         />
                         {amenity.charAt(0).toUpperCase() + amenity.slice(1)}
                       </label>
@@ -233,13 +254,13 @@ function PropertyModal({ token, onClose, onSave, property }) {
                   </div>
                 </fieldset>
                 
-                {error && <p className="text-sm text-red-400 bg-red-900/50 p-3 rounded-md">{error}</p>}
+                {error && <p className="text-sm text-red-400 bg-red-900/50 p-3 rounded-[8px] border border-red-500/20">{error}</p>}
                 
                 <div className="flex justify-end gap-4 pt-4">
-                    <button type="button" onClick={onClose} className="px-4 py-2 font-semibold text-text-secondary bg-bg-muted rounded-md hover:bg-border-primary">
+                    <button type="button" onClick={onClose} className="px-4 py-2 font-semibold text-global-inactive bg-global-bg-small-box border border-global-stroke-box rounded-[8px] hover:border-global-content-highlight-2nd hover:text-global-blanc transition-colors">
                         {t('propertyModal.cancel')}
                     </button>
-                    <button type="submit" disabled={isLoading || isSyncing} className="px-4 py-2 font-semibold text-white bg-blue-600 rounded-md hover:bg-blue-700 disabled:bg-gray-500">
+                    <button type="submit" disabled={isLoading || isSyncing} className="px-4 py-2 font-semibold text-white bg-gradient-to-r from-[#155dfc] to-[#12a1d5] rounded-[8px] hover:opacity-90 disabled:bg-gray-500 disabled:opacity-50 transition-opacity">
                         {isLoading ? t('common.saving') : t('propertyModal.save')}
                     </button>
                 </div>
@@ -251,4 +272,5 @@ function PropertyModal({ token, onClose, onSave, property }) {
 }
 
 export default PropertyModal;
+
 

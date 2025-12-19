@@ -511,7 +511,8 @@ function DashboardPage({ token, userProfile }) {
       const group = getGroupForProperty(prop.id);
       const isSynced = group && group.syncPrices;
       const coverImage = prop.coverImage || prop.imageUrl || prop.photoUrl || fallbackPropertyImages[index % fallbackPropertyImages.length];
-      const propertyType = prop.property_type || prop.type || 'Villa';
+      const propertyTypeRaw = prop.property_type || prop.type || 'villa';
+      const propertyType = propertyTypeRaw.charAt(0).toUpperCase() + propertyTypeRaw.slice(1);
       const capacityLabel = prop.capacity ? `${prop.capacity} ${t('dashboard.property.capacity')}` : t('dashboard.property.capacityNA');
       const monthlyRevenue = Number(prop.monthly_revenue ?? prop.monthlyRevenue ?? prop.metrics?.monthlyRevenue ?? (prop.daily_revenue ? prop.daily_revenue * 30 : 0));
       const targetRevenueRaw = Number(prop.target_revenue ?? prop.targetRevenue ?? prop.metrics?.targetRevenue ?? (monthlyRevenue ? monthlyRevenue * 1.15 : 0));
@@ -552,7 +553,7 @@ function DashboardPage({ token, userProfile }) {
             
             <div className="absolute bottom-3 left-4 right-4">
                <h3 className="text-white font-bold text-lg truncate shadow-black drop-shadow-md">
-                  {prop.address || t('dashboard.property.propertyNoName')}
+                  {prop.name || prop.address || t('dashboard.property.propertyNoName')}
                 </h3>
                  <div className="flex items-center gap-2 text-gray-300 text-xs mt-0.5 truncate">
                   <LocationIcon className="w-3 h-3" />
