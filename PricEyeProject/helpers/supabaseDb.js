@@ -367,11 +367,23 @@ async function getAllIntegrations() {
  */
 async function logPropertyChange(propertyId, userId, userEmail, action, changes) {
   try {
+    // Vérifier si userId est un UUID valide ou une chaîne système
+    // Si c'est "system" ou une autre chaîne non-UUID, mettre user_id à NULL
+    let validUserId = userId;
+    
+    // Expression régulière pour valider un UUID v4
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+    
+    if (!userId || !uuidRegex.test(userId)) {
+      // Si userId n'est pas un UUID valide (ex: "system", "auto-update", etc.), mettre à NULL
+      validUserId = null;
+    }
+    
     const { error } = await supabase
       .from('property_logs')
       .insert({
         property_id: propertyId,
-        user_id: userId,
+        user_id: validUserId,
         user_email: userEmail || 'Inconnu',
         action: action,
         changes: changes || {},
