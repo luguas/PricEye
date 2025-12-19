@@ -5072,26 +5072,24 @@ RAPPEL CRITIQUE : La réponse finale doit être UNIQUEMENT ce JSON, sans texte a
 // GET /api/news - Récupérer les actualités du marché (depuis le cache)
 app.get('/api/news', authenticateToken, async (req, res) => {
     try {
-        const db = admin.firestore();
         const userId = req.user.uid;
         
         // Récupérer la langue : query param > profil utilisateur > français par défaut
-        const userProfileRef = db.collection('users').doc(userId);
-        const userProfileDoc = await userProfileRef.get();
-        const language = req.query.language || userProfileDoc.data()?.language || 'fr';
+        const userProfile = await db.getUser(userId);
+        const language = req.query.language || userProfile?.language || 'fr';
         const forceRefresh = req.query.forceRefresh === 'true';
         
-        const newsRef = db.collection('system').doc(`marketNews_${language}`);
-        const newsDoc = await newsRef.get();
+        const cacheKey = `marketNews_${language}`;
+        const newsDoc = await db.getSystemCache(cacheKey);
         
         // Si forceRefresh est activé, régénérer le cache immédiatement
         if (forceRefresh) {
             console.log(`Régénération forcée du cache des actualités pour la langue ${language}...`);
             try {
                 await updateMarketNewsCache(language);
-                const refreshedNewsDoc = await newsRef.get();
-                if (refreshedNewsDoc.exists && refreshedNewsDoc.data() && refreshedNewsDoc.data().data) {
-                    return res.status(200).json(refreshedNewsDoc.data().data);
+                const refreshedNewsDoc = await db.getSystemCache(cacheKey);
+                if (refreshedNewsDoc && refreshedNewsDoc.data) {
+                    return res.status(200).json(refreshedNewsDoc.data);
                 }
             } catch (refreshError) {
                 console.error(`Erreur lors de la régénération forcée pour ${language}:`, refreshError);
@@ -5100,13 +5098,12 @@ app.get('/api/news', authenticateToken, async (req, res) => {
         }
 
         // Si le cache n'existe pas pour cette langue, vérifier l'ancien format puis générer
-        if (!newsDoc.exists || !newsDoc.data()) {
+        if (!newsDoc || !newsDoc.data) {
             // Essayer d'abord l'ancien format de cache (marketNews sans suffixe) comme fallback temporaire
             if (language === 'fr') {
-                const oldCacheRef = db.collection('system').doc('marketNews');
-                const oldCacheDoc = await oldCacheRef.get();
-                if (oldCacheDoc.exists && oldCacheDoc.data()) {
-                    const oldData = oldCacheDoc.data().data || oldCacheDoc.data();
+                const oldCacheDoc = await db.getSystemCache('marketNews');
+                if (oldCacheDoc && oldCacheDoc.data) {
+                    const oldData = Array.isArray(oldCacheDoc.data) ? oldCacheDoc.data : oldCacheDoc.data;
                     if (Array.isArray(oldData)) {
                         console.log(`Utilisation de l'ancien format de cache pour migration...`);
                         // Migrer vers le nouveau format en arrière-plan (ne bloque pas la réponse)
@@ -5121,25 +5118,23 @@ app.get('/api/news', authenticateToken, async (req, res) => {
             try {
                 await updateMarketNewsCache(language);
                 // Réessayer après génération
-                const newNewsDoc = await newsRef.get();
-                if (newNewsDoc.exists && newNewsDoc.data() && newNewsDoc.data().data) {
-                    return res.status(200).json(newNewsDoc.data().data);
+                const newNewsDoc = await db.getSystemCache(cacheKey);
+                if (newNewsDoc && newNewsDoc.data) {
+                    return res.status(200).json(newNewsDoc.data);
                 }
             } catch (genError) {
                 console.error(`Erreur lors de la génération des actualités pour ${language}:`, genError);
-                // Fallback sur le français si disponible (nouveau format)
+                // Fallback sur le français si disponible
                 if (language !== 'fr') {
-                    const fallbackRef = db.collection('system').doc('marketNews_fr');
-                    const fallbackDoc = await fallbackRef.get();
-                    if (fallbackDoc.exists && fallbackDoc.data() && fallbackDoc.data().data) {
-                        return res.status(200).json(fallbackDoc.data().data);
+                    const fallbackDoc = await db.getSystemCache('marketNews_fr');
+                    if (fallbackDoc && fallbackDoc.data) {
+                        return res.status(200).json(fallbackDoc.data);
                     }
                 }
-                // Fallback sur l'ancien format de cache (marketNews sans suffixe)
-                const oldCacheRef = db.collection('system').doc('marketNews');
-                const oldCacheDoc = await oldCacheRef.get();
-                if (oldCacheDoc.exists && oldCacheDoc.data()) {
-                    const oldData = oldCacheDoc.data().data || oldCacheDoc.data();
+                // Fallback sur l'ancien format de cache
+                const oldCacheDoc = await db.getSystemCache('marketNews');
+                if (oldCacheDoc && oldCacheDoc.data) {
+                    const oldData = Array.isArray(oldCacheDoc.data) ? oldCacheDoc.data : oldCacheDoc.data;
                     if (Array.isArray(oldData)) {
                         return res.status(200).json(oldData);
                     }
@@ -5149,13 +5144,12 @@ app.get('/api/news', authenticateToken, async (req, res) => {
         }
         
         // Vérifier que le document a bien des données
-        const docData = newsDoc.data();
-        if (!docData) {
+        const docData = newsDoc;
+        if (!docData || !docData.data) {
             // Fallback sur l'ancien format de cache
-            const oldCacheRef = db.collection('system').doc('marketNews');
-            const oldCacheDoc = await oldCacheRef.get();
-            if (oldCacheDoc.exists && oldCacheDoc.data()) {
-                const oldData = oldCacheDoc.data().data || oldCacheDoc.data();
+            const oldCacheDoc = await db.getSystemCache('marketNews');
+            if (oldCacheDoc && oldCacheDoc.data) {
+                const oldData = Array.isArray(oldCacheDoc.data) ? oldCacheDoc.data : oldCacheDoc.data;
                 if (Array.isArray(oldData)) {
                     return res.status(200).json(oldData);
                 }
@@ -5169,9 +5163,9 @@ app.get('/api/news', authenticateToken, async (req, res) => {
             console.log(`Cache trouvé pour une autre langue (${cacheLanguage} au lieu de ${language}), régénération...`);
             try {
                 await updateMarketNewsCache(language);
-                const newNewsDoc = await newsRef.get();
-                if (newNewsDoc.exists && newNewsDoc.data() && newNewsDoc.data().data) {
-                    return res.status(200).json(newNewsDoc.data().data);
+                const newNewsDoc = await db.getSystemCache(cacheKey);
+                if (newNewsDoc && newNewsDoc.data) {
+                    return res.status(200).json(newNewsDoc.data);
                 }
             } catch (genError) {
                 console.error(`Erreur lors de la régénération pour ${language}:`, genError);
@@ -5181,8 +5175,8 @@ app.get('/api/news', authenticateToken, async (req, res) => {
         
         // Vérifier l'âge du cache (régénérer si > 24h)
         const oneDay = 24 * 60 * 60 * 1000;
-        if (docData.updatedAt) {
-            const cacheAge = Date.now() - docData.updatedAt.toDate().getTime();
+        if (docData.updated_at) {
+            const cacheAge = Date.now() - new Date(docData.updated_at).getTime();
             if (cacheAge > oneDay) {
                 console.log(`Cache expiré pour ${language} (${Math.round(cacheAge / (60 * 60 * 1000))}h), régénération en arrière-plan...`);
                 // Régénérer en arrière-plan sans bloquer la réponse
@@ -5192,8 +5186,8 @@ app.get('/api/news', authenticateToken, async (req, res) => {
             }
         }
 
-        // Récupérer les actualités (gérer les deux formats : avec .data ou directement)
-        const newsData = docData.data || docData;
+        // Récupérer les actualités
+        const newsData = docData.data;
         if (!Array.isArray(newsData)) {
             console.error(`Format de cache invalide pour marketNews_${language}:`, docData);
             return res.status(500).send({ error: 'Format de cache invalide. Veuillez réessayer plus tard.' });
@@ -5408,11 +5402,8 @@ async function updateMarketNewsCache(language = 'fr') {
              throw new Error("Données d'actualités invalides reçues de l'API de recherche.");
         }
 
-        const db = admin.firestore();
-        const newsRef = db.collection('system').doc(`marketNews_${language}`);
-        await newsRef.set({
-            data: newsData,
-            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        const cacheKey = `marketNews_${language}`;
+        await db.setSystemCache(cacheKey, newsData, {
             language: language
         });
         console.log(`Mise à jour du cache des actualités (${language}) terminée avec succès.`);

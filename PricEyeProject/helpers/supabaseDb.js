@@ -409,6 +409,44 @@ async function upsertPriceOverrides(propertyId, overrides) {
   return data || [];
 }
 
+/**
+ * Récupère le cache système (ex: marketNews)
+ */
+async function getSystemCache(key) {
+  const { data, error } = await supabase
+    .from('system_cache')
+    .select('*')
+    .eq('key', key)
+    .single();
+  
+  if (error && error.code !== 'PGRST116') {
+    throw error;
+  }
+  
+  return data || null;
+}
+
+/**
+ * Met à jour ou crée un cache système
+ */
+async function setSystemCache(key, data, metadata = {}) {
+  const { data: result, error } = await supabase
+    .from('system_cache')
+    .upsert({
+      key: key,
+      data: data,
+      ...metadata,
+      updated_at: new Date().toISOString()
+    }, {
+      onConflict: 'key'
+    })
+    .select()
+    .single();
+  
+  if (error) throw error;
+  return result;
+}
+
 module.exports = {
   getUser,
   setUser,
@@ -434,6 +472,8 @@ module.exports = {
   updateBooking,
   deleteBooking,
   getPriceOverrides,
-  upsertPriceOverrides
+  upsertPriceOverrides,
+  getSystemCache,
+  setSystemCache
 };
 
