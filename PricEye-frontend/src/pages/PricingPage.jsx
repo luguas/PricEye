@@ -477,7 +477,9 @@ function PricingPage({ token, userProfile }) {
       const year = currentCalendarDate.getFullYear();
       const month = currentCalendarDate.getMonth();
       const startOfMonth = `${year}-${String(month + 1).padStart(2, '0')}-01`;
-      const endOfMonth = `${year}-${String(month + 1).padStart(2, '0')}-31`;
+      // Calculer le dernier jour réel du mois (gère les années bissextiles)
+      const lastDayOfMonth = new Date(year, month + 1, 0).getDate();
+      const endOfMonth = `${year}-${String(month + 1).padStart(2, '0')}-${String(lastDayOfMonth).padStart(2, '0')}`;
       
       // Fetch Overrides via API backend
       const overridesData = await getPriceOverrides(propertyIdToFetch, token, startOfMonth, endOfMonth);
