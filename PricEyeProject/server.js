@@ -35,7 +35,8 @@ console.log('✅ Configuration Stripe chargée avec succès');
 // CORRECTION: Configuration CORS explicite pour la production
 const allowedOrigins = [
     'https://priceye.onrender.com',    // L'API elle-même
-    'http://localhost:5173',           // Votre app React en local (Vite)
+    'http://localhost:5173',           // Votre app React en local (Vite dev)
+    'http://localhost:4173',           // Votre app React en local (Vite preview)
     'http://localhost:3000',
     'https://priceye.vercel.app',
     'https://pric-eye.vercel.app'           // Votre app React en local (CRA)
