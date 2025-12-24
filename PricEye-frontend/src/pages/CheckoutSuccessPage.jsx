@@ -1,14 +1,15 @@
 import React, { useEffect, useState } from 'react';
 import { getUserProfile } from '../services/api.js';
 
-function CheckoutSuccessPage({ token, onProfileUpdate }) {
+function CheckoutSuccessPage({ token, sessionId, onProfileUpdate }) {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState('');
 
   useEffect(() => {
-    const sessionId = new URLSearchParams(window.location.search).get('session_id');
+    // Utiliser le sessionId passé en prop, ou essayer de le récupérer depuis l'URL en fallback
+    const finalSessionId = sessionId || new URLSearchParams(window.location.search).get('session_id');
     
-    if (!sessionId) {
+    if (!finalSessionId) {
       setError('Session ID manquant');
       setIsLoading(false);
       return;
@@ -58,7 +59,7 @@ function CheckoutSuccessPage({ token, onProfileUpdate }) {
     };
 
     checkSubscription();
-  }, [onProfileUpdate]);
+  }, [onProfileUpdate, sessionId]);
 
   if (isLoading) {
     return (

@@ -41,6 +41,7 @@ function AppContent() {
   const [isLoadingNotifications, setIsLoadingNotifications] = useState(false);
   const [propertyCount, setPropertyCount] = useState(null);
   const [isInitialLoad, setIsInitialLoad] = useState(true);
+  const [checkoutSessionId, setCheckoutSessionId] = useState(null);
 
   // Gérer le changement de thème
   const handleThemeChange = (newTheme) => {
@@ -142,7 +143,8 @@ function AppContent() {
     const canceled = urlParams.get('canceled');
     
     if (sessionId) {
-      // Succès - rediriger vers la page de succès
+      // Succès - stocker le session_id et rediriger vers la page de succès
+      setCheckoutSessionId(sessionId);
       // Charger le token si disponible pour permettre la mise à jour du profil
       const storedToken = localStorage.getItem('authToken');
       if (storedToken) {
@@ -285,6 +287,7 @@ function AppContent() {
       case 'checkout-success':
         return <CheckoutSuccessPage 
           token={token}
+          sessionId={checkoutSessionId}
           onProfileUpdate={async () => {
             const profile = await getUserProfile(token);
             setUserProfile(profile);
