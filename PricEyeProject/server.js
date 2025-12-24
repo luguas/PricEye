@@ -2795,15 +2795,21 @@ app.post('/api/properties/:id/bookings', authenticateToken, async (req, res) => 
         // Déterminer la méthode de tarification
         let pricingMethod = 'ia'; // Par défaut 'ia' (inclut le prix de base)
         try {
+            // Vérifier s'il y a un price override pour cette date
             const priceOverrides = await db.getPriceOverrides(propertyId, startDate, startDate);
-            if (priceOverrides && priceOverrides.length > 0) {
+            if (priceOverrides && Array.isArray(priceOverrides) && priceOverrides.length > 0) {
                 const override = priceOverrides[0];
-                if (override.reason === 'Manuel') {
+                if (override && override.reason === 'Manuel') {
                     pricingMethod = 'manuelle';
                 }
             }
         } catch (e) {
+            // Si l'erreur est liée à db.collection, c'est qu'il y a un problème de migration
+            if (e.message && e.message.includes('collection')) {
+                console.error("Erreur: Code Firestore détecté. Vérifiez que toutes les références Firestore ont été migrées vers Supabase.");
+            }
             console.error("Erreur lors de la vérification de la méthode de prix:", e);
+            // Continuer avec la méthode par défaut
         }
 
         // Utiliser la propriété récupérée (pas propertyDoc qui n'existe pas)
