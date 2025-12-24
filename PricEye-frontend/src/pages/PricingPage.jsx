@@ -1,9 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { getProperties, generatePricingStrategy, addBooking, getBookingsForMonth, getGroups, updateGroup, getUserProfile, getPropertySpecificNews, getAutoPricingStatus, enableAutoPricing, getPriceOverrides, updatePriceOverrides } from '../services/api.js';
+import { getProperties, generatePricingStrategy, addBooking, getBookingsForMonth, getGroups, updateGroup, getUserProfile, getAutoPricingStatus, enableAutoPricing, getPriceOverrides, updatePriceOverrides } from '../services/api.js';
 import { jwtDecode } from 'jwt-decode'; 
 // Firebase n'est plus utilisé directement 
-import PropertyNewsFeed from '../components/PropertyNewsFeed.jsx';
-import DateAnalysis from '../components/DateAnalysis.jsx';
 import Bouton from '../components/Bouton.jsx';
 import AlertModal from '../components/AlertModal.jsx';
 import { useLanguage } from '../contexts/LanguageContext.jsx'; 
@@ -43,11 +41,6 @@ function PricingPage({ token, userProfile }) {
   const [bookingChannel, setBookingChannel] = useState('Direct');
   const [manualPrice, setManualPrice] = useState('');
   const [isPriceLocked, setIsPriceLocked] = useState(true); 
-
-  // State pour les actualités spécifiques
-  const [propertyNews, setPropertyNews] = useState([]);
-  const [isNewsLoading, setIsNewsLoading] = useState(false);
-  const [newsError, setNewsError] = useState('');
 
   const [selectedDateForAnalysis, setSelectedDateForAnalysis] = useState(null);
 
@@ -470,9 +463,6 @@ function PricingPage({ token, userProfile }) {
          return; 
     }
 
-    // Lancer le fetch des actualités spécifiques en parallèle
-    fetchSpecificNews(propertyIdToFetch);
-
     try {
       const year = currentCalendarDate.getFullYear();
       const month = currentCalendarDate.getMonth();
@@ -511,12 +501,26 @@ function PricingPage({ token, userProfile }) {
       const bookingsData = await getBookingsForMonth(propertyIdToFetch, year, month, token);
       const newBookings = {};
       bookingsData.forEach(booking => {
-          let currentDate = new Date(booking.startDate);
-          const endDate = new Date(booking.endDate);
+          if (!booking.startDate || !booking.endDate) return;
+          
+          // Valider et parser les dates de manière sécurisée
+          let currentDate = new Date(booking.startDate + 'T00:00:00Z');
+          const endDate = new Date(booking.endDate + 'T00:00:00Z');
+          
+          // Vérifier que les dates sont valides
+          if (isNaN(currentDate.getTime()) || isNaN(endDate.getTime())) {
+              console.warn('Date invalide dans la réservation:', booking);
+              return;
+          }
+          
           while (currentDate < endDate) { 
               const dateStr = currentDate.toISOString().split('T')[0];
-              newBookings[dateStr] = booking;
-              currentDate.setDate(currentDate.getDate() + 1);
+              // Vérifier que la date générée est valide (évite les dates comme 2026-02-31)
+              const dateCheck = new Date(dateStr + 'T00:00:00Z');
+              if (!isNaN(dateCheck.getTime()) && dateCheck.toISOString().split('T')[0] === dateStr) {
+                  newBookings[dateStr] = booking;
+              }
+              currentDate.setUTCDate(currentDate.getUTCDate() + 1);
           }
       });
       setBookings(newBookings);
@@ -531,25 +535,7 @@ function PricingPage({ token, userProfile }) {
 
    useEffect(() => {
       fetchCalendarData();
-  }, [fetchCalendarData]); 
-
-  // Nouvelle fonction pour charger les actualités spécifiques
-  const fetchSpecificNews = useCallback(async (propertyId) => {
-    if (!propertyId || !token) {
-        setPropertyNews([]); // Vider si pas d'ID
-        return;
-    }
-    setIsNewsLoading(true);
-    setNewsError('');
-    try {
-        const data = await getPropertySpecificNews(propertyId, token);
-        setPropertyNews(data);
-    } catch (err) {
-        setNewsError(t('pricing.errors.news', { message: err.message }));
-    } finally {
-        setIsNewsLoading(false);
-    }
-  }, [token, t]);
+  }, [fetchCalendarData]);
 
 
   const handleGenerateStrategy = async () => {
@@ -617,20 +603,30 @@ function PricingPage({ token, userProfile }) {
 
   const handleMouseOver = (dateStr) => {
     if (isSelecting) {
-        const startDate = new Date(selectionStart);
-        const hoverDate = new Date(dateStr);
-        let currentDateCheck = new Date(Math.min(startDate, hoverDate));
-        const endDateCheck = new Date(Math.max(startDate, hoverDate));
+        const startDate = new Date(selectionStart + 'T00:00:00Z');
+        const hoverDate = new Date(dateStr + 'T00:00:00Z');
+        
+        // Vérifier que les dates sont valides
+        if (isNaN(startDate.getTime()) || isNaN(hoverDate.getTime())) {
+            return;
+        }
+        
+        let currentDateCheck = new Date(Math.min(startDate.getTime(), hoverDate.getTime()));
+        const endDateCheck = new Date(Math.max(startDate.getTime(), hoverDate.getTime()));
         
         if (selectionMode === 'booking') {
             let hasBookingInRange = false;
             while(currentDateCheck <= endDateCheck){
                 const checkDateStr = currentDateCheck.toISOString().split('T')[0];
-                if(bookings[checkDateStr]){
-                    hasBookingInRange = true;
-                    break;
+                // Vérifier que la date générée est valide
+                const dateCheck = new Date(checkDateStr + 'T00:00:00Z');
+                if (!isNaN(dateCheck.getTime()) && dateCheck.toISOString().split('T')[0] === checkDateStr) {
+                    if(bookings[checkDateStr]){
+                        hasBookingInRange = true;
+                        break;
+                    }
                 }
-                currentDateCheck.setDate(currentDateCheck.getDate() + 1);
+                currentDateCheck.setUTCDate(currentDateCheck.getUTCDate() + 1);
             }
             if(hasBookingInRange){
                  console.warn("La sélection traverse une date réservée.");
@@ -689,21 +685,38 @@ function PricingPage({ token, userProfile }) {
           return;
       }
       
-       const start = new Date(selectionStart);
-       const end = new Date(selectionEnd);
+       // Valider et parser les dates de manière sécurisée
+       const start = new Date(selectionStart + 'T00:00:00Z');
+       const end = new Date(selectionEnd + 'T00:00:00Z');
+       
+       // Vérifier que les dates sont valides
+       if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+           setError(t('pricing.errors.invalidDate'));
+           return;
+       }
        
        let currentDateCheck = new Date(start);
        while(currentDateCheck <= end) {
            const dateStr = currentDateCheck.toISOString().split('T')[0];
-           if (bookings[dateStr]) {
-               setError(t('pricing.errors.bookingDateError', { date: dateStr }));
-               return;
+           // Vérifier que la date générée est valide
+           const dateCheck = new Date(dateStr + 'T00:00:00Z');
+           if (!isNaN(dateCheck.getTime()) && dateCheck.toISOString().split('T')[0] === dateStr) {
+               if (bookings[dateStr]) {
+                   setError(t('pricing.errors.bookingDateError', { date: dateStr }));
+                   return;
+               }
            }
-           currentDateCheck.setDate(currentDateCheck.getDate() + 1);
+           currentDateCheck.setUTCDate(currentDateCheck.getUTCDate() + 1);
        }
        
        const endDateForCalc = new Date(end);
-       endDateForCalc.setDate(endDateForCalc.getDate() + 1); 
+       endDateForCalc.setUTCDate(endDateForCalc.getUTCDate() + 1);
+       
+       // Vérifier que la date calculée est valide
+       if (isNaN(endDateForCalc.getTime())) {
+           setError(t('pricing.errors.invalidEndDate'));
+           return;
+       } 
        const nights = Math.round((endDateForCalc - start) / (1000 * 60 * 60 * 24));
        if (nights <= 0) {
             setError(t('pricing.errors.bookingEndDateError'));
@@ -770,23 +783,35 @@ function PricingPage({ token, userProfile }) {
       setError('');
       try {
           // Préparer les overrides pour chaque propriété
-          let currentDate = new Date(selectionStart);
-          const endDate = new Date(selectionEnd);
+          // Valider et parser les dates de manière sécurisée
+          const startDate = new Date(selectionStart + 'T00:00:00Z');
+          const endDate = new Date(selectionEnd + 'T00:00:00Z');
+          
+          // Vérifier que les dates sont valides
+          if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
+              setError(t('pricing.errors.invalidDate'));
+              setIsLoading(false);
+              return;
+          }
           
           // Mettre à jour chaque propriété via l'API backend
           for (const propId of propertyIdsToUpdate) {
               const overridesToUpdate = [];
-              let dateIterator = new Date(selectionStart);
+              let dateIterator = new Date(startDate);
               
               while(dateIterator <= endDate) {
                   const dateStr = dateIterator.toISOString().split('T')[0];
-                  overridesToUpdate.push({
-                      date: dateStr,
-                      price: priceNum,
-                      isLocked: isPriceLocked,
-                      reason: "Manuel"
-                  });
-                  dateIterator.setDate(dateIterator.getDate() + 1);
+                  // Vérifier que la date générée est valide (évite les dates comme 2026-02-31)
+                  const dateCheck = new Date(dateStr + 'T00:00:00Z');
+                  if (!isNaN(dateCheck.getTime()) && dateCheck.toISOString().split('T')[0] === dateStr) {
+                      overridesToUpdate.push({
+                          date: dateStr,
+                          price: priceNum,
+                          isLocked: isPriceLocked,
+                          reason: "Manuel"
+                      });
+                  }
+                  dateIterator.setUTCDate(dateIterator.getUTCDate() + 1);
               }
               
               if (overridesToUpdate.length > 0) {
@@ -936,6 +961,11 @@ function PricingPage({ token, userProfile }) {
     for (let i = dayOffset - 1; i >= 0; i--) {
       const day = daysInPrevMonth - i;
       const dateStr = `${prevMonth.getFullYear()}-${String(prevMonth.getMonth() + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+      // Vérifier que la date générée est valide
+      const dateCheck = new Date(dateStr + 'T00:00:00Z');
+      if (isNaN(dateCheck.getTime()) || dateCheck.toISOString().split('T')[0] !== dateStr) {
+        continue; // Ignorer les dates invalides
+      }
       grid.push(
         <div 
           key={`prev-${day}`}
@@ -951,6 +981,11 @@ function PricingPage({ token, userProfile }) {
 
     for (let day = 1; day <= daysInMonth; day++) {
         const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+        // Vérifier que la date générée est valide (évite les dates comme 2026-02-31)
+        const dateCheck = new Date(dateStr + 'T00:00:00Z');
+        if (isNaN(dateCheck.getTime()) || dateCheck.toISOString().split('T')[0] !== dateStr) {
+          continue; // Ignorer les dates invalides (ex: 31 février)
+        }
         const isBooked = !!bookings[dateStr];
         const price = isBooked ? bookings[dateStr].pricePerNight : (priceOverrides[dateStr] ?? currentProperty.daily_revenue);
         const currency = userProfile?.currency || 'EUR';
@@ -1292,16 +1327,7 @@ function PricingPage({ token, userProfile }) {
         
         {/* Zone Outils - Layout Figma */}
         <div id="edit-panel" className="flex flex-col gap-1 items-start justify-start self-stretch shrink-0 relative w-full md:w-[394px]">
-          {/* 1. Analyse du Marché */}
-          <DateAnalysis
-            token={token}
-            date={selectedDateForAnalysis}
-            propertyId={propertyIdForAnalysis}
-            currentPrice={currentPriceForAnalysis}
-            userProfile={userProfile}
-          />
-
-          {/* 2. Stratégie IA (Prix) */}
+          {/* Stratégie IA (Prix) */}
           <div className="bg-global-bg-box rounded-[14px] border border-solid border-global-stroke-box p-6 flex flex-col gap-3 items-start justify-start shrink-0 w-full relative">
             <div className="text-global-blanc text-left font-h2-font-family text-h2-font-size font-h2-font-weight relative">
               {t('pricing.strategy.title')}
@@ -1429,12 +1455,6 @@ function PricingPage({ token, userProfile }) {
               )}
             </div>
           </div>
-
-          {/* 3. Actualité du marché */}
-          <PropertyNewsFeed 
-            token={token} 
-            propertyId={propertyIdForAnalysis} 
-          />
         </div>
       </div>
       </div>

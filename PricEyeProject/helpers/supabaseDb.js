@@ -402,8 +402,12 @@ async function logPropertyChange(propertyId, userId, userEmail, action, changes)
  * Récupère les réservations d'une propriété pour un mois
  */
 async function getBookingsForMonth(propertyId, year, month) {
+  // Calculer le dernier jour réel du mois (gère les années bissextiles)
+  // month est 1-indexé (1-12) dans cette fonction
+  const lastDayOfMonth = new Date(year, month, 0).getDate();
+  
   const startDate = `${year}-${String(month).padStart(2, '0')}-01`;
-  const endDate = `${year}-${String(month).padStart(2, '0')}-31`;
+  const endDate = `${year}-${String(month).padStart(2, '0')}-${String(lastDayOfMonth).padStart(2, '0')}`;
   
   const { data, error } = await supabase
     .from('bookings')
