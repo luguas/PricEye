@@ -29,8 +29,26 @@ async function apiRequest(endpoint, options = {}) {
   const contentType = response.headers.get('content-type');
 
   if (!response.ok) {
+    let errorData = { error: `Erreur ${response.status} sur l'endpoint ${endpoint}`};
+    if (contentType && contentType.includes('application/json')) {
+      try {
+        errorData = await response.json();
+      } catch (e) { /* Ignorer */ }
+    } else {
+        const textError = await response.text();
+        if (textError) {
+             errorData.error = textError;
+        }
+    }
+    
+    // Vérifier si c'est une erreur de limite d'essai (ne pas déconnecter dans ce cas)
+    const isLimitExceeded = errorData.error === 'LIMIT_EXCEEDED' || 
+                            errorData.message?.includes('limite') ||
+                            errorData.message?.includes('LIMIT_EXCEEDED');
+    
     // Si le token est expiré ou invalide (401 ou 403), déclencher la déconnexion
-    if (response.status === 401 || response.status === 403) {
+    // SAUF si c'est une erreur de limite d'essai (403 avec LIMIT_EXCEEDED)
+    if (response.status === 401 || (response.status === 403 && !isLimitExceeded)) {
       // Nettoyer le token du localStorage
       localStorage.removeItem('authToken');
       // Déclencher un événement personnalisé pour notifier App.jsx
@@ -43,18 +61,7 @@ async function apiRequest(endpoint, options = {}) {
       }
     }
     
-    let errorData = { error: `Erreur ${response.status} sur l'endpoint ${endpoint}`};
-    if (contentType && contentType.includes('application/json')) {
-      try {
-        errorData = await response.json();
-      } catch (e) { /* Ignorer */ }
-    } else {
-        const textError = await response.text();
-        if (textError) {
-             errorData.error = textError;
-        }
-    }
-    console.error(`Erreur API (${response.status}):`, errorData.error); 
+    console.error(`Erreur API (${response.status}):`, errorData.error || errorData.message); 
     
     // Créer une erreur avec toutes les données accessibles
     const error = new Error(errorData.error || errorData.message || `Erreur ${response.status}`);
