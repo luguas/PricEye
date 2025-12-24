@@ -17,22 +17,41 @@ function CheckoutSuccessPage({ token, onProfileUpdate }) {
     // Attendre quelques secondes pour que le webhook soit traité
     const checkSubscription = async () => {
       try {
-        // Attendre 2 secondes pour que le webhook soit traité
-        await new Promise(resolve => setTimeout(resolve, 2000));
+        // Essayer plusieurs fois de récupérer le profil mis à jour (le webhook peut prendre du temps)
+        let profileUpdated = false;
+        const maxRetries = 5;
+        const retryDelay = 2000; // 2 secondes entre chaque tentative
         
-        // Rafraîchir le profil
-        if (onProfileUpdate) {
-          await onProfileUpdate();
+        for (let attempt = 0; attempt < maxRetries; attempt++) {
+          // Attendre avant chaque tentative (sauf la première)
+          if (attempt > 0) {
+            await new Promise(resolve => setTimeout(resolve, retryDelay));
+          }
+          
+          // Rafraîchir le profil
+          if (onProfileUpdate) {
+            const updatedProfile = await onProfileUpdate();
+            
+            // Vérifier si l'abonnement a été activé
+            if (updatedProfile && (updatedProfile.subscriptionStatus === 'active' || updatedProfile.subscriptionStatus === 'trialing')) {
+              profileUpdated = true;
+              console.log('Abonnement activé avec succès:', updatedProfile.subscriptionStatus);
+              break;
+            }
+          }
         }
         
-        // Rediriger vers les paramètres après 3 secondes
+        if (!profileUpdated) {
+          console.warn('Le statut de l\'abonnement n\'a pas été mis à jour après plusieurs tentatives. Le webhook peut être en cours de traitement.');
+        }
+        
+        // Rediriger vers les paramètres après un court délai
         setTimeout(() => {
           window.location.href = '/#settings';
-          // Si vous utilisez un système de routing différent, ajustez ici
-        }, 3000);
+        }, 2000);
       } catch (err) {
         console.error('Erreur lors de la vérification de l\'abonnement:', err);
-        setError('Une erreur est survenue. Votre abonnement devrait être activé sous peu.');
+        setError('Une erreur est survenue. Votre abonnement devrait être activé sous peu. Vous pouvez vérifier dans les paramètres.');
       } finally {
         setIsLoading(false);
       }

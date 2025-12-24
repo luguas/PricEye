@@ -685,7 +685,10 @@ app.get('/api/users/profile', authenticateToken, async (req, res) => {
             notificationPreferences: userData.notification_preferences,
             reportFrequency: userData.report_frequency,
             teamId: userData.team_id,
-            createdAt: userData.created_at
+            createdAt: userData.created_at,
+            subscriptionStatus: userData.subscription_status || userData.subscriptionStatus || 'none',
+            stripeCustomerId: userData.stripe_customer_id || userData.stripeCustomerId,
+            stripeSubscriptionId: userData.stripe_subscription_id || userData.stripeSubscriptionId
         };
         
         res.status(200).json(formattedData);
@@ -1500,8 +1503,8 @@ app.post('/api/checkout/create-session', authenticateToken, async (req, res) => 
                     userId: userId
                 }
             },
-            success_url: `${frontendUrl}/dashboard?success=true&session_id={CHECKOUT_SESSION_ID}`,
-            cancel_url: `${frontendUrl}/billing?canceled=true`
+            success_url: `${frontendUrl}/?session_id={CHECKOUT_SESSION_ID}`,
+            cancel_url: `${frontendUrl}/?canceled=true`
         };
         
         // Ajouter customer ou customer_email (mais pas les deux)

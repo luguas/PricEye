@@ -135,7 +135,7 @@ function AppContent() {
     };
   }, [handleLogout]);
 
-  // Effet pour vérifier le retour depuis Stripe Checkout
+  // Effet pour vérifier le retour depuis Stripe Checkout (doit être exécuté en premier)
   useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search);
     const sessionId = urlParams.get('session_id');
@@ -143,20 +143,38 @@ function AppContent() {
     
     if (sessionId) {
       // Succès - rediriger vers la page de succès
+      // Charger le token si disponible pour permettre la mise à jour du profil
+      const storedToken = localStorage.getItem('authToken');
+      if (storedToken) {
+        try {
+          jwtDecode(storedToken);
+          setToken(storedToken);
+        } catch (e) {
+          console.error('Token invalide:', e);
+        }
+      }
       setCurrentView('checkout-success');
-      // Nettoyer l'URL
-      window.history.replaceState({}, '', window.location.pathname);
+      // Nettoyer l'URL en gardant le pathname mais en supprimant les query params
+      const cleanUrl = window.location.pathname || '/';
+      window.history.replaceState({}, '', cleanUrl);
     } else if (canceled) {
       // Annulation - rediriger vers la page d'annulation
       setCurrentView('checkout-cancel');
       // Nettoyer l'URL
-      window.history.replaceState({}, '', window.location.pathname);
+      const cleanUrl = window.location.pathname || '/';
+      window.history.replaceState({}, '', cleanUrl);
     }
   }, []);
 
   // Effet pour le chargement initial (une seule fois)
   useEffect(() => {
     if (!isInitialLoad) return;
+    
+    // Ne pas écraser la vue si on vient de Stripe (checkout-success ou checkout-cancel)
+    if (currentView === 'checkout-success' || currentView === 'checkout-cancel') {
+      setIsInitialLoad(false);
+      return;
+    }
     
     const storedToken = localStorage.getItem('authToken');
     if (storedToken) {
@@ -270,6 +288,7 @@ function AppContent() {
           onProfileUpdate={async () => {
             const profile = await getUserProfile(token);
             setUserProfile(profile);
+            return profile; // Retourner le profil pour permettre la vérification
           }}
         />;
       case 'checkout-cancel':

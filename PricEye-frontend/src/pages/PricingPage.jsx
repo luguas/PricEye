@@ -48,6 +48,28 @@ function PricingPage({ token, userProfile }) {
   // État pour la modale d'alerte
   const [alertModal, setAlertModal] = useState({ isOpen: false, message: '', title: 'Information' });
 
+  // Mémoïser les propriétés valides pour éviter de recalculer à chaque render
+  const validProperties = useMemo(() => {
+    return properties.filter(p => {
+      if (!p.id || typeof p.id !== 'string') return false;
+      const uuidLength = p.id.replace(/-/g, '').length;
+      return uuidLength >= 32;
+    });
+  }, [properties]);
+  
+  // Mémoïser les groupes valides
+  const validGroups = useMemo(() => {
+    return allGroups.filter(g => {
+      if (!g.id || typeof g.id !== 'string') return false;
+      const groupUuidLength = g.id.replace(/-/g, '').length;
+      if (groupUuidLength < 32) return false;
+      const mainPropId = g.mainPropertyId || g.properties?.[0];
+      if (!mainPropId || typeof mainPropId !== 'string') return false;
+      const propUuidLength = mainPropId.replace(/-/g, '').length;
+      return propUuidLength >= 32;
+    });
+  }, [allGroups]);
+
 
   // Plus besoin de vérifier l'initialisation Firebase
 
@@ -474,12 +496,38 @@ function PricingPage({ token, userProfile }) {
           console.error('[fetchCalendarData] UUID invalide pour la propriété:', {
             propertyIdToFetch,
             length: propertyIdToFetch?.length,
-            uuidLength
+            uuidLength,
+            selectedId,
+            allProperties: properties.map(p => ({ id: p.id, idLength: p.id?.replace(/-/g, '').length, address: p.address }))
           });
-          setError(t('pricing.errors.invalidPropertyId') || 'ID de propriété invalide');
+          setError(t('pricing.errors.invalidPropertyId') || 'ID de propriété invalide. Veuillez sélectionner une autre propriété.');
           setIsCalendarLoading(false);
           setPriceOverrides({});
           setBookings({});
+          
+          // Réinitialiser la sélection vers une propriété valide si disponible
+          const validProperty = properties.find(p => {
+            if (!p.id || typeof p.id !== 'string') return false;
+            const propUuidLength = p.id.replace(/-/g, '').length;
+            return propUuidLength >= 32;
+          });
+          if (validProperty) {
+            console.log('[fetchCalendarData] Réinitialisation vers une propriété valide:', validProperty.id);
+            setSelectedId(validProperty.id);
+          } else if (allGroups.length > 0) {
+            // Si pas de propriété valide, essayer un groupe
+            const validGroup = allGroups.find(g => {
+              const mainPropId = g.mainPropertyId || g.properties?.[0];
+              if (!mainPropId || typeof mainPropId !== 'string') return false;
+              const propUuidLength = mainPropId.replace(/-/g, '').length;
+              return propUuidLength >= 32;
+            });
+            if (validGroup) {
+              console.log('[fetchCalendarData] Réinitialisation vers un groupe valide:', validGroup.id);
+              setSelectedView('group');
+              setSelectedId(validGroup.id);
+            }
+          }
           return;
         }
         currentProperty = properties.find(p => p.id === selectedId);
@@ -1294,9 +1342,11 @@ function PricingPage({ token, userProfile }) {
    
    const handleViewChange = (e) => {
        console.log('[handleViewChange] Début - value:', e.target.value);
-       const [type, id] = e.target.value.split('-');
-       if (!type || !id) {
-           console.log('[handleViewChange] Valeur invalide, réinitialisation');
+       // Parser correctement : "property-UUID" ou "group-UUID"
+       // Les UUIDs contiennent des tirets, donc on ne peut pas utiliser split('-')
+       const match = e.target.value.match(/^(property|group)-(.+)$/);
+       if (!match || !match[1] || !match[2]) {
+           console.log('[handleViewChange] Valeur invalide, réinitialisation. Value:', e.target.value);
            setSelectedView('property'); // Fallback
            setSelectedId('');
            setIsCalendarLoading(false);
@@ -1304,6 +1354,48 @@ function PricingPage({ token, userProfile }) {
            setBookings({});
            return;
        }
+       const type = match[1];
+       const id = match[2];
+       
+       // Valider que l'ID est un UUID valide avant de le sélectionner
+       const uuidLength = id.replace(/-/g, '').length;
+       if (uuidLength < 32) {
+           console.error('[handleViewChange] UUID invalide détecté:', {
+               id,
+               length: id.length,
+               uuidLength,
+               type,
+               allProperties: properties.map(p => ({ id: p.id, idLength: p.id?.replace(/-/g, '').length, address: p.address })),
+               allGroups: allGroups.map(g => ({ id: g.id, idLength: g.id?.replace(/-/g, '').length, name: g.name, mainPropertyId: g.mainPropertyId }))
+           });
+           setError(t('pricing.errors.invalidPropertyId') || 'ID invalide. Veuillez sélectionner une autre option.');
+           
+           // Trouver une option valide à sélectionner à la place
+           if (type === 'property') {
+               if (validProperties.length > 0) {
+                   console.log('[handleViewChange] Sélection automatique d\'une propriété valide:', validProperties[0].id);
+                   setSelectedView('property');
+                   setSelectedId(validProperties[0].id);
+                   return;
+               }
+           } else if (type === 'group') {
+               if (validGroups.length > 0) {
+                   console.log('[handleViewChange] Sélection automatique d\'un groupe valide:', validGroups[0].id);
+                   setSelectedView('group');
+                   setSelectedId(validGroups[0].id);
+                   return;
+               }
+           }
+           
+           // Si aucune option valide trouvée, réinitialiser
+           setSelectedView('property');
+           setSelectedId('');
+           setIsCalendarLoading(false);
+           setPriceOverrides({});
+           setBookings({});
+           return;
+       }
+       
        console.log('[handleViewChange] Changement vers - type:', type, 'id:', id);
        // Réinitialiser l'état de chargement et les données avant de changer
        setIsCalendarLoading(true);
@@ -1362,10 +1454,10 @@ function PricingPage({ token, userProfile }) {
             >
               <option value="">{t('pricing.select')}</option>
               <optgroup label={t('pricing.groups')}>
-                {allGroups.map(g => <option key={g.id} value={`group-${g.id}`}>{g.name}</option>)}
+                {validGroups.map(g => <option key={g.id} value={`group-${g.id}`}>{g.name}</option>)}
               </optgroup>
               <optgroup label={t('pricing.individualProperties')}>
-                {properties.map(p => <option key={p.id} value={`property-${p.id}`}>{p.address}</option>)}
+                {validProperties.map(p => <option key={p.id} value={`property-${p.id}`}>{p.address}</option>)}
               </optgroup>
             </select>
             

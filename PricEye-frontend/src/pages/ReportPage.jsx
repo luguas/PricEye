@@ -1929,7 +1929,18 @@ function ReportPage({ token, userProfile }) {
       setAlertModal({ isOpen: true, message: "No data to export.", title: 'Information' });
       return;
     }
-    exportToExcel(filteredProperties, `Rapport_Proprietes_${dateRange}`, (errorMessage) => {
+    // Retirer toutes les propriétés id des objets avant l'export
+    const dataWithoutIds = filteredProperties.map(property => {
+      const cleanedProperty = { ...property };
+      // Retirer toutes les clés qui contiennent "id" (insensible à la casse)
+      Object.keys(cleanedProperty).forEach(key => {
+        if (key.toLowerCase().includes('id')) {
+          delete cleanedProperty[key];
+        }
+      });
+      return cleanedProperty;
+    });
+    exportToExcel(dataWithoutIds, `Rapport_Proprietes_${dateRange}`, (errorMessage) => {
       setAlertModal({ isOpen: true, message: errorMessage, title: 'Error' });
     });
   };
