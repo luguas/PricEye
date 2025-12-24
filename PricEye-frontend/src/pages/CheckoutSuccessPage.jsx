@@ -32,22 +32,53 @@ function CheckoutSuccessPage({ token, sessionId, onProfileUpdate }) {
         for (let attempt = 0; attempt < maxRetries; attempt++) {
           try {
             // Vérifier la session Stripe directement
+            console.log(`[CheckoutSuccess] Tentative ${attempt + 1} de vérification de la session ${finalSessionId}`);
             const verificationResult = await verifyCheckoutSession(finalSessionId, token);
+            
+            console.log('[CheckoutSuccess] Résultat de la vérification:', verificationResult);
             
             if (verificationResult.success && verificationResult.subscriptionStatus) {
               // La session est complétée et le profil a été mis à jour
               subscriptionActivated = true;
-              console.log('Abonnement activé avec succès via vérification directe:', verificationResult.subscriptionStatus);
+              console.log('✅ Abonnement activé avec succès via vérification directe:', verificationResult.subscriptionStatus);
+              console.log('✅ Profil retourné:', verificationResult.profile);
               
-              // Rafraîchir le profil local
-              if (onProfileUpdate) {
-                await onProfileUpdate();
+              // Utiliser le profil retourné directement pour mettre à jour le state
+              if (verificationResult.profile && onProfileUpdate) {
+                // Le profil est déjà formaté et contient subscriptionStatus
+                // On doit mettre à jour le state parent via onProfileUpdate
+                // Mais d'abord, on force la mise à jour avec le profil retourné
+                try {
+                  // Appeler onProfileUpdate qui va récupérer le profil depuis l'API
+                  // (qui devrait maintenant contenir les bonnes valeurs)
+                  const updatedProfile = await onProfileUpdate();
+                  console.log('✅ Profil mis à jour via onProfileUpdate:', updatedProfile);
+                  
+                  // Vérifier que le statut est bien mis à jour
+                  if (updatedProfile && (updatedProfile.subscriptionStatus === 'active' || updatedProfile.subscriptionStatus === 'trialing')) {
+                    console.log('✅ Statut confirmé dans le profil:', updatedProfile.subscriptionStatus);
+                  } else {
+                    console.warn('⚠️ Le statut n\'est pas encore mis à jour dans le profil. Attente supplémentaire...');
+                    // Attendre un peu plus et réessayer
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                    const retryProfile = await getUserProfile(token);
+                    console.log('✅ Profil après nouvelle tentative:', retryProfile);
+                  }
+                } catch (updateError) {
+                  console.error('❌ Erreur lors de la mise à jour du profil:', updateError);
+                }
+              } else if (onProfileUpdate) {
+                // Fallback : rafraîchir le profil depuis l'API
+                const updatedProfile = await onProfileUpdate();
+                console.log('✅ Profil mis à jour via API (fallback):', updatedProfile);
               }
               
               break;
+            } else {
+              console.log(`[CheckoutSuccess] Session pas encore complétée. Status: ${verificationResult.sessionStatus}, Payment: ${verificationResult.paymentStatus}`);
             }
           } catch (verifyError) {
-            console.warn(`Tentative ${attempt + 1} de vérification échouée:`, verifyError);
+            console.error(`❌ Tentative ${attempt + 1} de vérification échouée:`, verifyError);
           }
           
           // Attendre avant la prochaine tentative (sauf si c'est la dernière)

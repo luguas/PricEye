@@ -1548,26 +1548,76 @@ app.get('/api/checkout/verify-session', authenticateToken, async (req, res) => {
         // Récupérer la session depuis Stripe
         const session = await stripe.checkout.sessions.retrieve(session_id);
         
-        // Vérifier si la session est complétée
-        if (session.payment_status === 'paid' && session.status === 'complete') {
+        console.log(`[Checkout Verify] Session ${session_id}: status=${session.status}, payment_status=${session.payment_status}, subscription=${session.subscription}`);
+        
+        // Vérifier si la session est complétée (pour les essais gratuits, payment_status peut être 'no_payment_required')
+        const isSessionComplete = session.status === 'complete' && 
+                                  (session.payment_status === 'paid' || session.payment_status === 'no_payment_required');
+        
+        if (isSessionComplete) {
             const subscriptionId = session.subscription;
             
             if (subscriptionId) {
+                console.log(`[Checkout Verify] Session complétée, récupération de l'abonnement ${subscriptionId}`);
+                
                 // Récupérer l'abonnement pour obtenir le statut
                 const subscription = await stripe.subscriptions.retrieve(subscriptionId);
+                console.log(`[Checkout Verify] Statut de l'abonnement: ${subscription.status}`);
                 
                 // Mettre à jour le profil utilisateur directement (au cas où le webhook n'aurait pas encore été traité)
-                await db.updateUser(userId, {
+                console.log(`[Checkout Verify] Mise à jour du profil utilisateur ${userId} avec subscription ${subscriptionId}`);
+                console.log(`[Checkout Verify] Données à mettre à jour:`, {
                     stripe_customer_id: session.customer,
                     stripe_subscription_id: subscriptionId,
-                    subscription_status: subscription.status, // 'trialing' ou 'active'
+                    subscription_status: subscription.status,
                     subscription_created_at: new Date().toISOString(),
                     access_disabled: false,
                     pms_sync_enabled: true
                 });
                 
-                // Récupérer le profil mis à jour
+                try {
+                    const updateResult = await db.updateUser(userId, {
+                        stripe_customer_id: session.customer,
+                        stripe_subscription_id: subscriptionId,
+                        subscription_status: subscription.status, // 'trialing' ou 'active'
+                        subscription_created_at: new Date().toISOString(),
+                        access_disabled: false,
+                        pms_sync_enabled: true
+                    });
+                    console.log(`[Checkout Verify] ✅ Mise à jour réussie:`, updateResult);
+                } catch (updateError) {
+                    console.error(`[Checkout Verify] ❌ Erreur lors de la mise à jour:`, updateError);
+                    // Essayer avec setUser au cas où l'utilisateur n'existe pas encore
+                    try {
+                        const userProfile = await db.getUser(userId);
+                        if (userProfile) {
+                            // L'utilisateur existe, réessayer avec updateUser
+                            throw updateError; // Re-lancer l'erreur
+                        } else {
+                            // L'utilisateur n'existe pas, créer avec setUser
+                            console.log(`[Checkout Verify] Utilisateur non trouvé, création avec setUser`);
+                            await db.setUser(userId, {
+                                stripe_customer_id: session.customer,
+                                stripe_subscription_id: subscriptionId,
+                                subscription_status: subscription.status,
+                                subscription_created_at: new Date().toISOString(),
+                                access_disabled: false,
+                                pms_sync_enabled: true
+                            });
+                            console.log(`[Checkout Verify] ✅ Utilisateur créé avec succès`);
+                        }
+                    } catch (setUserError) {
+                        console.error(`[Checkout Verify] ❌ Erreur lors de la création:`, setUserError);
+                        throw setUserError;
+                    }
+                }
+                
+                // Récupérer le profil mis à jour pour vérification
                 const updatedProfile = await db.getUser(userId);
+                if (!updatedProfile) {
+                    throw new Error(`Impossible de récupérer le profil utilisateur ${userId} après la mise à jour`);
+                }
+                console.log(`[Checkout Verify] ✅ Profil récupéré. subscription_status: ${updatedProfile.subscription_status || updatedProfile.subscriptionStatus}, stripe_subscription_id: ${updatedProfile.stripe_subscription_id || updatedProfile.stripeSubscriptionId}`);
                 
                 // Formater le profil pour le frontend (comme dans /api/users/profile)
                 const formattedProfile = {
@@ -1581,6 +1631,8 @@ app.get('/api/checkout/verify-session', authenticateToken, async (req, res) => {
                     createdAt: updatedProfile.created_at
                 };
                 
+                console.log(`[Checkout Verify] Profil formaté. subscriptionStatus: ${formattedProfile.subscriptionStatus}`);
+                
                 return res.status(200).json({
                     success: true,
                     sessionStatus: session.status,
@@ -1589,7 +1641,11 @@ app.get('/api/checkout/verify-session', authenticateToken, async (req, res) => {
                     subscriptionStatus: subscription.status,
                     profile: formattedProfile
                 });
+            } else {
+                console.warn(`[Checkout Verify] Session complétée mais pas d'abonnement trouvé`);
             }
+        } else {
+            console.log(`[Checkout Verify] Session pas encore complétée. Status: ${session.status}, Payment: ${session.payment_status}`);
         }
         
         // Session pas encore complétée
@@ -1601,8 +1657,19 @@ app.get('/api/checkout/verify-session', authenticateToken, async (req, res) => {
         });
         
     } catch (error) {
-        console.error('[Checkout] Erreur lors de la vérification de la session:', error);
-        res.status(500).send({ error: `Erreur lors de la vérification: ${error.message}` });
+        console.error('[Checkout Verify] ❌ Erreur lors de la vérification de la session:', error);
+        console.error('[Checkout Verify] Stack:', error.stack);
+        
+        // Si c'est une erreur de mise à jour, essayer quand même de retourner les infos de la session
+        if (error.message && error.message.includes('update') || error.message.includes('column')) {
+            console.error('[Checkout Verify] ⚠️ Erreur de mise à jour détectée. Vérifiez que les colonnes existent dans la table users:');
+            console.error('[Checkout Verify] Colonnes requises: stripe_customer_id, stripe_subscription_id, subscription_status, subscription_created_at, access_disabled, pms_sync_enabled');
+        }
+        
+        res.status(500).json({ 
+            error: `Erreur lors de la vérification: ${error.message}`,
+            details: process.env.NODE_ENV === 'development' ? error.stack : undefined
+        });
     }
 });
 
