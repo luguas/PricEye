@@ -5088,10 +5088,10 @@ app.get('/api/news', authenticateToken, async (req, res) => {
             }
         }
         
-        // Si le cache n'existe pas ou est invalide, générer uniquement si forceRefresh ou si vraiment nécessaire
+        // Si le cache n'existe pas ou est invalide, régénérer automatiquement
         if (!cacheIsValid) {
             // Essayer d'abord l'ancien format de cache (marketNews sans suffixe) comme fallback temporaire
-            if (language === 'fr' && !forceRefresh) {
+            if (language === 'fr' && !forceRefresh && newsDoc && newsDoc.data) {
                 const oldCacheDoc = await db.getSystemCache('marketNews');
                 if (oldCacheDoc && oldCacheDoc.data) {
                     const oldData = Array.isArray(oldCacheDoc.data) ? oldCacheDoc.data : oldCacheDoc.data;
@@ -5106,38 +5106,43 @@ app.get('/api/news', authenticateToken, async (req, res) => {
                 }
             }
             
-            // Générer uniquement si forceRefresh est activé OU si le cache n'existe vraiment pas
-            if (forceRefresh || !newsDoc || !newsDoc.data) {
-                console.log(`Génération des actualités pour la langue ${language}${forceRefresh ? ' (force refresh)' : ' (cache manquant)'}...`);
-                try {
-                    await updateMarketNewsCache(language);
-                    // Réessayer après génération
-                    const newNewsDoc = await db.getSystemCache(cacheKey);
-                    if (newNewsDoc && newNewsDoc.data) {
-                        return res.status(200).json(newNewsDoc.data);
-                    }
-                } catch (genError) {
-                    console.error(`Erreur lors de la génération des actualités pour ${language}:`, genError);
-                    // Fallback sur le français si disponible
-                    if (language !== 'fr') {
-                        const fallbackDoc = await db.getSystemCache('marketNews_fr');
-                        if (fallbackDoc && fallbackDoc.data) {
-                            return res.status(200).json(fallbackDoc.data);
-                        }
-                    }
-                    // Fallback sur l'ancien format de cache
-                    const oldCacheDoc = await db.getSystemCache('marketNews');
-                    if (oldCacheDoc && oldCacheDoc.data) {
-                        const oldData = Array.isArray(oldCacheDoc.data) ? oldCacheDoc.data : oldCacheDoc.data;
-                        if (Array.isArray(oldData)) {
-                            return res.status(200).json(oldData);
-                        }
-                    }
-                    return res.status(404).send({ error: 'Cache d\'actualités non encore généré. Veuillez patienter.' });
-                }
+            // Si le cache est expiré, régénérer automatiquement
+            if (newsDoc && newsDoc.data && cacheAge) {
+                console.log(`Cache expiré pour ${language} (${Math.round(cacheAge / (60 * 60 * 1000))}h), régénération automatique...`);
             } else {
-                // Cache expiré mais pas de forceRefresh : utiliser le cache existant même s'il est vieux
-                console.log(`Cache expiré pour ${language} (${Math.round(cacheAge / (60 * 60 * 1000))}h), utilisation du cache existant. Utilisez forceRefresh=true pour régénérer.`);
+                console.log(`Génération des actualités pour la langue ${language}${forceRefresh ? ' (force refresh)' : ' (cache manquant)'}...`);
+            }
+            
+            try {
+                await updateMarketNewsCache(language);
+                // Réessayer après génération
+                const newNewsDoc = await db.getSystemCache(cacheKey);
+                if (newNewsDoc && newNewsDoc.data) {
+                    return res.status(200).json(newNewsDoc.data);
+                }
+            } catch (genError) {
+                console.error(`Erreur lors de la génération des actualités pour ${language}:`, genError);
+                // Si le cache existant est disponible même s'il est expiré, l'utiliser comme fallback
+                if (newsDoc && newsDoc.data) {
+                    console.log(`Utilisation du cache expiré comme fallback après erreur de régénération.`);
+                    return res.status(200).json(newsDoc.data);
+                }
+                // Fallback sur le français si disponible
+                if (language !== 'fr') {
+                    const fallbackDoc = await db.getSystemCache('marketNews_fr');
+                    if (fallbackDoc && fallbackDoc.data) {
+                        return res.status(200).json(fallbackDoc.data);
+                    }
+                }
+                // Fallback sur l'ancien format de cache
+                const oldCacheDoc = await db.getSystemCache('marketNews');
+                if (oldCacheDoc && oldCacheDoc.data) {
+                    const oldData = Array.isArray(oldCacheDoc.data) ? oldCacheDoc.data : oldCacheDoc.data;
+                    if (Array.isArray(oldData)) {
+                        return res.status(200).json(oldData);
+                    }
+                }
+                return res.status(404).send({ error: 'Cache d\'actualités non encore généré. Veuillez patienter.' });
             }
         }
         
