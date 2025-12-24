@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { getUserProfile } from '../services/api.js';
+import { getUserProfile, verifyCheckoutSession } from '../services/api.js';
 
 function CheckoutSuccessPage({ token, sessionId, onProfileUpdate }) {
   const [isLoading, setIsLoading] = useState(true);
@@ -15,41 +15,65 @@ function CheckoutSuccessPage({ token, sessionId, onProfileUpdate }) {
       return;
     }
 
-    // Attendre quelques secondes pour que le webhook soit traité
+    if (!token) {
+      setError('Token d\'authentification manquant');
+      setIsLoading(false);
+      return;
+    }
+
+    // Vérifier directement la session Stripe et mettre à jour le profil
     const checkSubscription = async () => {
       try {
-        // Essayer plusieurs fois de récupérer le profil mis à jour (le webhook peut prendre du temps)
-        let profileUpdated = false;
-        const maxRetries = 5;
-        const retryDelay = 2000; // 2 secondes entre chaque tentative
+        // D'abord, vérifier directement la session Stripe (plus rapide que d'attendre le webhook)
+        let subscriptionActivated = false;
+        const maxRetries = 3; // Réduire à 3 tentatives
+        const retryDelay = 1000; // Réduire à 1 seconde entre chaque tentative
         
         for (let attempt = 0; attempt < maxRetries; attempt++) {
-          // Attendre avant chaque tentative (sauf la première)
-          if (attempt > 0) {
-            await new Promise(resolve => setTimeout(resolve, retryDelay));
-          }
-          
-          // Rafraîchir le profil
-          if (onProfileUpdate) {
-            const updatedProfile = await onProfileUpdate();
+          try {
+            // Vérifier la session Stripe directement
+            const verificationResult = await verifyCheckoutSession(finalSessionId, token);
             
-            // Vérifier si l'abonnement a été activé
-            if (updatedProfile && (updatedProfile.subscriptionStatus === 'active' || updatedProfile.subscriptionStatus === 'trialing')) {
-              profileUpdated = true;
-              console.log('Abonnement activé avec succès:', updatedProfile.subscriptionStatus);
+            if (verificationResult.success && verificationResult.subscriptionStatus) {
+              // La session est complétée et le profil a été mis à jour
+              subscriptionActivated = true;
+              console.log('Abonnement activé avec succès via vérification directe:', verificationResult.subscriptionStatus);
+              
+              // Rafraîchir le profil local
+              if (onProfileUpdate) {
+                await onProfileUpdate();
+              }
+              
               break;
             }
+          } catch (verifyError) {
+            console.warn(`Tentative ${attempt + 1} de vérification échouée:`, verifyError);
+          }
+          
+          // Attendre avant la prochaine tentative (sauf si c'est la dernière)
+          if (attempt < maxRetries - 1) {
+            await new Promise(resolve => setTimeout(resolve, retryDelay));
           }
         }
         
-        if (!profileUpdated) {
-          console.warn('Le statut de l\'abonnement n\'a pas été mis à jour après plusieurs tentatives. Le webhook peut être en cours de traitement.');
+        // Si la vérification directe n'a pas fonctionné, essayer de récupérer le profil
+        if (!subscriptionActivated && onProfileUpdate) {
+          const updatedProfile = await onProfileUpdate();
+          if (updatedProfile && (updatedProfile.subscriptionStatus === 'active' || updatedProfile.subscriptionStatus === 'trialing')) {
+            subscriptionActivated = true;
+            console.log('Abonnement trouvé dans le profil:', updatedProfile.subscriptionStatus);
+          }
+        }
+        
+        if (!subscriptionActivated) {
+          console.warn('Le statut de l\'abonnement n\'a pas été confirmé. Le webhook peut être en cours de traitement.');
+          // Ne pas afficher d'erreur, juste un avertissement dans la console
         }
         
         // Rediriger vers les paramètres après un court délai
         setTimeout(() => {
           window.location.href = '/#settings';
-        }, 2000);
+        }, 1500); // Réduire le délai à 1.5 secondes
       } catch (err) {
         console.error('Erreur lors de la vérification de l\'abonnement:', err);
         setError('Une erreur est survenue. Votre abonnement devrait être activé sous peu. Vous pouvez vérifier dans les paramètres.');
@@ -59,7 +83,7 @@ function CheckoutSuccessPage({ token, sessionId, onProfileUpdate }) {
     };
 
     checkSubscription();
-  }, [onProfileUpdate, sessionId]);
+  }, [onProfileUpdate, sessionId, token]);
 
   if (isLoading) {
     return (

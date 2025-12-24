@@ -1531,6 +1531,82 @@ app.post('/api/checkout/create-session', authenticateToken, async (req, res) => 
 });
 
 /**
+ * GET /api/checkout/verify-session - Vérifie le statut d'une session Stripe Checkout
+ * Permet de vérifier rapidement si une session a été complétée et mettre à jour le profil
+ */
+app.get('/api/checkout/verify-session', authenticateToken, async (req, res) => {
+    try {
+        const { session_id } = req.query;
+        
+        if (!session_id) {
+            return res.status(400).send({ error: 'session_id est requis' });
+        }
+        
+        const userId = req.user.uid;
+        const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
+        
+        // Récupérer la session depuis Stripe
+        const session = await stripe.checkout.sessions.retrieve(session_id);
+        
+        // Vérifier si la session est complétée
+        if (session.payment_status === 'paid' && session.status === 'complete') {
+            const subscriptionId = session.subscription;
+            
+            if (subscriptionId) {
+                // Récupérer l'abonnement pour obtenir le statut
+                const subscription = await stripe.subscriptions.retrieve(subscriptionId);
+                
+                // Mettre à jour le profil utilisateur directement (au cas où le webhook n'aurait pas encore été traité)
+                await db.updateUser(userId, {
+                    stripe_customer_id: session.customer,
+                    stripe_subscription_id: subscriptionId,
+                    subscription_status: subscription.status, // 'trialing' ou 'active'
+                    subscription_created_at: new Date().toISOString(),
+                    access_disabled: false,
+                    pms_sync_enabled: true
+                });
+                
+                // Récupérer le profil mis à jour
+                const updatedProfile = await db.getUser(userId);
+                
+                // Formater le profil pour le frontend (comme dans /api/users/profile)
+                const formattedProfile = {
+                    ...updatedProfile,
+                    subscriptionStatus: updatedProfile.subscription_status || updatedProfile.subscriptionStatus || subscription.status,
+                    stripeCustomerId: updatedProfile.stripe_customer_id || updatedProfile.stripeCustomerId,
+                    stripeSubscriptionId: updatedProfile.stripe_subscription_id || updatedProfile.stripeSubscriptionId,
+                    notificationPreferences: updatedProfile.notification_preferences,
+                    reportFrequency: updatedProfile.report_frequency,
+                    teamId: updatedProfile.team_id,
+                    createdAt: updatedProfile.created_at
+                };
+                
+                return res.status(200).json({
+                    success: true,
+                    sessionStatus: session.status,
+                    paymentStatus: session.payment_status,
+                    subscriptionId: subscriptionId,
+                    subscriptionStatus: subscription.status,
+                    profile: formattedProfile
+                });
+            }
+        }
+        
+        // Session pas encore complétée
+        return res.status(200).json({
+            success: false,
+            sessionStatus: session.status,
+            paymentStatus: session.payment_status,
+            message: 'La session n\'est pas encore complétée'
+        });
+        
+    } catch (error) {
+        console.error('[Checkout] Erreur lors de la vérification de la session:', error);
+        res.status(500).send({ error: `Erreur lors de la vérification: ${error.message}` });
+    }
+});
+
+/**
  * Fonction helper : Vérifie si des listing IDs ont déjà été utilisés (anti-abus essai gratuit)
  * @param {Array<string>} listingIds - Liste des listing IDs à vérifier
  * @param {Object} db - Instance Firestore

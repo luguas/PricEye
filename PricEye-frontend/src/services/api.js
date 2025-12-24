@@ -621,6 +621,19 @@ export async function createCheckoutSession(token) {
 }
 
 /**
+ * Vérifie le statut d'une session Stripe Checkout et met à jour le profil si nécessaire
+ * @param {string} sessionId - ID de la session Stripe Checkout
+ * @param {string} token - Jeton d'authentification Priceye
+ * @returns {Promise<{success: boolean, subscriptionStatus?: string, profile?: object}>}
+ */
+export async function verifyCheckoutSession(sessionId, token) {
+  return apiRequest(`/api/checkout/verify-session?session_id=${encodeURIComponent(sessionId)}`, {
+    method: 'GET',
+    token: token,
+  });
+}
+
+/**
  * Termine l'essai gratuit et facture immédiatement
  * @param {string} token - Jeton d'authentification Priceye
  * @returns {Promise<{message: string, subscriptionId: string, invoiceId: string, status: string}>}
