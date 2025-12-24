@@ -39,13 +39,13 @@
     "noFilteredPropertiesMessage": "Essayez de changer votre sélection de groupe ou de statut.",
     "kpi": {
       "revenue": "Revenus totaux (30j réel)",
-      "revenueHelper": "Toutes propriétés confondues sur les 30 derniers jours",
+      "revenueHelper": "Toutes propriétés confondues",
       "occupancy": "Taux d'occupation (Réel)",
-      "occupancyHelper": "Moyenne d'occupation sur les 30 derniers jours",
+      "occupancyHelper": "30 derniers jours",
       "adr": "ADR (Réel)",
-      "adrHelper": "Tarif moyen par nuit sur les jours occupés",
+      "adrHelper": "Jours occupés / libres",
       "iaGain": "Gains par l'IA",
-      "iaGainHelper": "Revenus supplémentaires générés grâce à l'optimisation IA",
+      "iaGainHelper": "Revenus supplémentaires estimés",
       "iaScore": "Score IA (Réel)"
     },
     "groupsTitle": "Gestion des Groupes",
@@ -160,50 +160,7 @@
       "integrationLoadError": "Impossible de charger le statut de l'intégration PMS."
     },
     "integration": {
-      "loading": "Chargement de l'intégration...",
-      "title": "Intégration PMS",
-      "notConnected": "Statut : ❌ Non connecté",
-      "connected": "Statut : ✅ Connecté à",
-      "choosePMS": "Choisir un PMS",
-      "test": "Tester",
-      "connect": "Connecter",
-      "disconnect": "Se déconnecter",
-      "synchronizeProperties": "Synchroniser les propriétés",
-      "testInProgress": "Test en cours...",
-      "connectionSuccess": "Connexion réussie ✅",
-      "testFailed": "Échec du test",
-      "saving": "Sauvegarde en cours...",
-      "connectionFailed": "Échec de la connexion",
-      "disconnecting": "Déconnexion...",
-      "disconnectSuccess": "Déconnexion réussie.",
-      "disconnectFailed": "Échec",
-      "oauthNotImplemented": "OAuth n'est pas encore implémenté.",
-      "connectWith": "Se connecter avec",
-      "disconnectConfirm": "Êtes-vous sûr de vouloir déconnecter",
-      "fields": {
-        "smoobuToken": "Clé API Smoobu (Token)",
-        "beds24ApiKey": "Clé API (apiKey)",
-        "beds24PropKey": "Clé Propriété (propKey)"
-      },
-      "syncModal": {
-        "title": "Synchroniser les Propriétés",
-        "analyzing": "Analyse de votre connexion PMS...",
-        "newProperties": "Nouvelles propriétés trouvées",
-        "syncedProperties": "Propriétés déjà synchronisées",
-        "noNewProperties": "Aucune nouvelle propriété à importer.",
-        "alreadySynced": "Ces propriétés sont déjà liées à votre compte Priceye.",
-        "noneSynced": "Aucune propriété n'est encore liée.",
-        "close": "Fermer",
-        "importing": "Importation en cours...",
-        "import": "Importer",
-        "newPropertiesCount": "nouvelle(s) propriété(s)",
-        "noPropertiesToImport": "Aucune nouvelle propriété à importer ou type de PMS manquant.",
-        "importError": "Une erreur est survenue lors de l'import des propriétés.",
-        "success": "Succès",
-        "importSuccess": "Importation réussie !",
-        "reservationsImported": "nouvelle(s) réservation(s) importée(s).",
-        "reservationsUpdated": "réservation(s) mise(s) à jour."
-      }
+      "loading": "Chargement de l'intégration..."
     }
   },
   "login": {
@@ -227,11 +184,8 @@
   "propertyModal": {
     "title": "Ajouter une propriété",
     "editTitle": "Modifier la propriété",
-    "name": "Nom de la propriété",
     "address": "Adresse",
     "location": "Localisation",
-    "description": "Description",
-    "propertyType": "Type de propriété",
     "surface": "Surface (m²)",
     "capacity": "Capacité (personnes)",
     "dailyRevenue": "Revenu journalier",
@@ -366,14 +320,6 @@
     "loading": "Chargement des réservations...",
     "noBookings": "Aucune réservation trouvée pour les filtres sélectionnés.",
     "unknownProperty": "Propriété inconnue",
-    "viewTable": "Tableau",
-    "viewCalendar": "Calendrier",
-    "calendar": {
-      "today": "Aujourd'hui",
-      "previousMonth": "Mois précédent",
-      "nextMonth": "Mois suivant",
-      "more": "autres"
-    },
     "errors": {
       "loadError": "Erreur de chargement: {{message}}"
     }

@@ -35,8 +35,7 @@ console.log('✅ Configuration Stripe chargée avec succès');
 // CORRECTION: Configuration CORS explicite pour la production
 const allowedOrigins = [
     'https://priceye.onrender.com',    // L'API elle-même
-    'http://localhost:5173',           // Votre app React en local (Vite dev)
-    'http://localhost:4173',           // Votre app React en local (Vite preview)
+    'http://localhost:5173',           // Votre app React en local (Vite)
     'http://localhost:3000',
     'https://priceye.vercel.app',
     'https://pric-eye.vercel.app'           // Votre app React en local (CRA)
@@ -136,8 +135,8 @@ const db = require('./helpers/supabaseDb.js');
  * @param {object} changes - Objet décrivant les changements
  */
 async function logPropertyChange(propertyId, userId, userEmail, action, changes) {
-    // Nettoyer les 'undefined' potentiels
-    const cleanChanges = JSON.parse(JSON.stringify(changes || {}));
+  // Nettoyer les 'undefined' potentiels
+  const cleanChanges = JSON.parse(JSON.stringify(changes || {}));
   await db.logPropertyChange(propertyId, userId, userEmail, action, cleanChanges);
 }
 
@@ -316,7 +315,7 @@ function calculateBillingQuantities(userProperties, userGroups) {
             groupProperties.forEach(prop => {
                 const propId = typeof prop === 'string' ? prop : (prop.id || prop.property_id);
                 if (propId) {
-                propertiesInGroups.add(propId);
+                    propertiesInGroups.add(propId);
                 }
             });
             
@@ -635,7 +634,7 @@ app.post('/api/auth/login', async (req, res) => {
         if (error) {
             console.error('Erreur de connexion Supabase:', error.message);
             if (error.message.includes('Invalid login credentials') || error.message.includes('Email not confirmed')) {
-                    return res.status(401).send({ error: 'Email ou mot de passe invalide.' });
+                return res.status(401).send({ error: 'Email ou mot de passe invalide.' });
             }
             return res.status(400).send({ error: `Erreur d'authentification: ${error.message}` });
         }
@@ -1892,7 +1891,7 @@ app.post('/api/integrations/import-properties', authenticateToken, async (req, r
                 console.warn('[Import] Propriété ignorée, pmsId or name manquant:', prop);
                 continue;
             }
-            
+
             const newPropertyData = {
                 // PMS Info
                 pms_id: prop.pmsId,
@@ -2779,7 +2778,7 @@ app.get('/api/bookings', authenticateToken, async (req, res) => {
 
         // 2. Interroger toutes les réservations de l'équipe qui chevauchent la période
         const bookings = await db.getBookingsByTeamAndDateRange(teamId, startDate, endDate);
-            
+
         if (!bookings || bookings.length === 0) {
              return res.status(200).json([]); // Renvoyer un tableau vide
         }
@@ -3212,7 +3211,7 @@ app.put('/api/groups/:id', authenticateToken, async (req, res) => {
         if (syncPrices != null && typeof syncPrices === 'boolean') {
             dataToUpdate.sync_prices = syncPrices;
         }
-         if (mainPropertyId) {
+        if (mainPropertyId) {
             // Vérifier que la propriété est dans le groupe
             const propertyIds = (group.properties || []).map(p => p.id || p);
             if (propertyIds.includes(mainPropertyId)) {
@@ -3591,9 +3590,9 @@ app.post('/api/teams/invites', authenticateToken, async (req, res) => {
             if (inviteeUser) {
                 const inviteeProfile = await db.getUser(inviteeUser.id);
                 if (inviteeProfile && inviteeProfile.team_id) {
-                  return res.status(409).send({ error: 'Cet utilisateur fait déjà partie d\'une équipe.' });
+                    return res.status(409).send({ error: 'Cet utilisateur fait déjà partie d\'une équipe.' });
                 }
-             }
+            }
         } catch (error) {
             // Si l'utilisateur n'existe pas, on continue (il pourra être créé lors de l'acceptation de l'invitation)
         }
@@ -3618,7 +3617,7 @@ app.post('/api/teams/invites', authenticateToken, async (req, res) => {
                 team_id: teamId,
                 invitee_email: inviteeEmail,
                 inviter_id: inviterId,
-            role: role,
+                role: role,
                 status: 'pending'
             })
             .select()
@@ -3780,7 +3779,7 @@ app.get('/api/reports/kpis', authenticateToken, async (req, res) => {
 
         // 4. Interroger toutes les réservations de l'équipe qui chevauchent la période
         const bookings = await db.getBookingsByTeamAndDateRange(teamId, startDate, endDate);
-            
+
         if (!bookings || bookings.length === 0) {
              return res.status(200).json({ totalRevenue: 0, totalNightsBooked: 0, adr: 0, occupancy: 0, totalNightsAvailable: totalNightsAvailable, iaGain: 0, iaScore: 0, revPar: 0 });
         }
@@ -3925,8 +3924,8 @@ app.get('/api/reports/market-demand-snapshot', authenticateToken, async (req, re
 
         // 2. Déterminer la fenêtre temporelle (24h glissantes)
         const now = new Date();
-        const end = now;
-        const start = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+        const end = now.toISOString();
+        const start = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString();
 
         // 3. Pour une première version, on s'appuie sur les réservations récentes
         //    comme proxy de la demande (faute de logs de recherches/visites détaillées).
@@ -3948,14 +3947,12 @@ app.get('/api/reports/market-demand-snapshot', authenticateToken, async (req, re
         
         // Récupérer les réservations créées dans les dernières 24h
         // Note: Si la table bookings n'a pas de created_at, on utilise start_date comme approximation
-        const startDateStr = start.toISOString().split('T')[0];
-        const endDateStr = end.toISOString().split('T')[0];
         const { data: bookings, error: bookingsError } = await supabase
             .from('bookings')
             .select('id')
             .in('property_id', propertyIds)
-            .gte('start_date', startDateStr)
-            .lte('start_date', endDateStr);
+            .gte('start_date', start.split('T')[0])
+            .lte('start_date', end.split('T')[0]);
         
         if (bookingsError) throw bookingsError;
 
@@ -4075,7 +4072,7 @@ app.get('/api/reports/positioning', authenticateToken, async (req, res) => {
 
         // 3. Construire le prompt IA pour obtenir ADR marché + distribution prix concurrents
         const today = new Date().toISOString().split('T')[0];
-        const isFrench = (req.query.language || userProfile?.language || 'fr') === 'fr' || (req.query.language || userProfile?.language || 'fr') === 'fr-FR';
+        const isFrench = (req.query.language || userProfileDoc.data()?.language || 'fr') === 'fr' || (req.query.language || userProfileDoc.data()?.language || 'fr') === 'fr-FR';
         const positioningPrompt = isFrench ? `
 Tu es un moteur de benchmarking tarifaire pour la location courte durée.
 
@@ -4142,8 +4139,8 @@ Constraints:
 
 CRITICAL REMINDER: Respond ONLY with this JSON, no comments, no text around, no markdown.`;
 
-        // Récupérer la langue de l'utilisateur (userProfile déjà récupéré plus haut)
-        const language = req.query.language || userProfile?.language || 'fr';
+        // Récupérer la langue de l'utilisateur (userProfileDoc déjà récupéré plus haut)
+        const language = req.query.language || userProfileDoc.data()?.language || 'fr';
         
         let iaResult = null;
         try {
@@ -4983,10 +4980,10 @@ RAPPEL CRITIQUE : La réponse finale doit être UNIQUEMENT ce JSON, sans texte a
         const overridesToSave = [];
         for (const day of strategyResult.daily_prices) {
             const priceNum = Number(day.price);
-             if (isNaN(priceNum)) {
-                 console.warn(`Prix invalide reçu pour ${day.date}: ${day.price}. Utilisation du prix plancher.`);
-                 continue;
-             }
+            if (isNaN(priceNum)) {
+                console.warn(`Prix invalide reçu pour ${day.date}: ${day.price}. Utilisation du prix plancher.`);
+                continue;
+            }
              
             if (lockedPrices.has(day.date)) {
                 console.log(`Ignoré ${day.date}: prix verrouillé manuellement.`);
@@ -4995,12 +4992,12 @@ RAPPEL CRITIQUE : La réponse finale doit être UNIQUEMENT ce JSON, sans texte a
 
             let finalPrice = priceNum;
             if (priceNum < floor) {
-                 console.warn(`Prix ${priceNum}€ pour ${day.date} inférieur au plancher ${floor}€. Ajustement.`);
-                 finalPrice = floor;
+                console.warn(`Prix ${priceNum}€ pour ${day.date} inférieur au plancher ${floor}€. Ajustement.`);
+                finalPrice = floor;
             }
             if (ceiling != null && priceNum > ceiling) {
-                 console.warn(`Prix ${priceNum}€ pour ${day.date} supérieur au plafond ${ceiling}€. Ajustement.`);
-                 finalPrice = ceiling;
+                console.warn(`Prix ${priceNum}€ pour ${day.date} supérieur au plafond ${ceiling}€. Ajustement.`);
+                finalPrice = ceiling;
             }
             
             overridesToSave.push({
@@ -5108,17 +5105,17 @@ app.get('/api/news', authenticateToken, async (req, res) => {
             // Générer uniquement si forceRefresh est activé OU si le cache n'existe vraiment pas
             if (forceRefresh || !newsDoc || !newsDoc.data) {
                 console.log(`Génération des actualités pour la langue ${language}${forceRefresh ? ' (force refresh)' : ' (cache manquant)'}...`);
-            try {
-                await updateMarketNewsCache(language);
-                // Réessayer après génération
+                try {
+                    await updateMarketNewsCache(language);
+                    // Réessayer après génération
                     const newNewsDoc = await db.getSystemCache(cacheKey);
                     if (newNewsDoc && newNewsDoc.data) {
                         return res.status(200).json(newNewsDoc.data);
-                }
-            } catch (genError) {
-                console.error(`Erreur lors de la génération des actualités pour ${language}:`, genError);
+                    }
+                } catch (genError) {
+                    console.error(`Erreur lors de la génération des actualités pour ${language}:`, genError);
                     // Fallback sur le français si disponible
-                if (language !== 'fr') {
+                    if (language !== 'fr') {
                         const fallbackDoc = await db.getSystemCache('marketNews_fr');
                         if (fallbackDoc && fallbackDoc.data) {
                             return res.status(200).json(fallbackDoc.data);
@@ -5128,11 +5125,11 @@ app.get('/api/news', authenticateToken, async (req, res) => {
                     const oldCacheDoc = await db.getSystemCache('marketNews');
                     if (oldCacheDoc && oldCacheDoc.data) {
                         const oldData = Array.isArray(oldCacheDoc.data) ? oldCacheDoc.data : oldCacheDoc.data;
-                    if (Array.isArray(oldData)) {
-                        return res.status(200).json(oldData);
+                        if (Array.isArray(oldData)) {
+                            return res.status(200).json(oldData);
+                        }
                     }
-                }
-                return res.status(404).send({ error: 'Cache d\'actualités non encore généré. Veuillez patienter.' });
+                    return res.status(404).send({ error: 'Cache d\'actualités non encore généré. Veuillez patienter.' });
                 }
             } else {
                 // Cache expiré mais pas de forceRefresh : utiliser le cache existant même s'il est vieux

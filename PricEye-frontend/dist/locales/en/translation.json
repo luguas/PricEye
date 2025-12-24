@@ -160,50 +160,7 @@
       "integrationLoadError": "Unable to load PMS integration status."
     },
     "integration": {
-      "loading": "Loading integration...",
-      "title": "PMS Integration",
-      "notConnected": "Status: ❌ Not connected",
-      "connected": "Status: ✅ Connected to",
-      "choosePMS": "Choose a PMS",
-      "test": "Test",
-      "connect": "Connect",
-      "disconnect": "Disconnect",
-      "synchronizeProperties": "Synchronize Properties",
-      "testInProgress": "Test in progress...",
-      "connectionSuccess": "Connection successful ✅",
-      "testFailed": "Test failed",
-      "saving": "Saving...",
-      "connectionFailed": "Connection failed",
-      "disconnecting": "Disconnecting...",
-      "disconnectSuccess": "Disconnected successfully.",
-      "disconnectFailed": "Failed",
-      "oauthNotImplemented": "OAuth is not yet implemented.",
-      "connectWith": "Connect with",
-      "disconnectConfirm": "Are you sure you want to disconnect",
-      "fields": {
-        "smoobuToken": "Smoobu API Key (Token)",
-        "beds24ApiKey": "API Key (apiKey)",
-        "beds24PropKey": "Property Key (propKey)"
-      },
-      "syncModal": {
-        "title": "Synchronize Properties",
-        "analyzing": "Analyzing your PMS connection...",
-        "newProperties": "New properties found",
-        "syncedProperties": "Already synchronized properties",
-        "noNewProperties": "No new properties to import.",
-        "alreadySynced": "These properties are already linked to your Priceye account.",
-        "noneSynced": "No properties are linked yet.",
-        "close": "Close",
-        "importing": "Importing...",
-        "import": "Import",
-        "newPropertiesCount": "new property(ies)",
-        "noPropertiesToImport": "No new properties to import or PMS type missing.",
-        "importError": "An error occurred while importing properties.",
-        "success": "Success",
-        "importSuccess": "Import successful!",
-        "reservationsImported": "new reservation(s) imported.",
-        "reservationsUpdated": "reservation(s) updated."
-      }
+      "loading": "Loading integration..."
     }
   },
   "login": {
@@ -227,11 +184,8 @@
   "propertyModal": {
     "title": "Add property",
     "editTitle": "Edit property",
-    "name": "Property name",
     "address": "Address",
     "location": "Location",
-    "description": "Description",
-    "propertyType": "Property type",
     "surface": "Surface (m²)",
     "capacity": "Capacity (people)",
     "dailyRevenue": "Daily revenue",
@@ -366,14 +320,6 @@
     "loading": "Loading bookings...",
     "noBookings": "No bookings found for the selected filters.",
     "unknownProperty": "Unknown property",
-    "viewTable": "Table",
-    "viewCalendar": "Calendar",
-    "calendar": {
-      "today": "Today",
-      "previousMonth": "Previous month",
-      "nextMonth": "Next month",
-      "more": "more"
-    },
     "errors": {
       "loadError": "Loading error: {{message}}"
     }

@@ -187,8 +187,3 @@ export default StripePaymentForm;
 
 
 
-
-
-
-
-
