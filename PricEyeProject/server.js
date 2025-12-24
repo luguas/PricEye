@@ -2795,12 +2795,10 @@ app.post('/api/properties/:id/bookings', authenticateToken, async (req, res) => 
         // Déterminer la méthode de tarification
         let pricingMethod = 'ia'; // Par défaut 'ia' (inclut le prix de base)
         try {
-            const overrideRef = db.collection('properties').doc(propertyId).collection('price_overrides').doc(startDate);
-            const overrideDoc = await overrideRef.get();
-            
-            if (overrideDoc.exists) {
-                const reason = overrideDoc.data().reason;
-                if (reason === 'Manuel') {
+            const priceOverrides = await db.getPriceOverrides(propertyId, startDate, startDate);
+            if (priceOverrides && priceOverrides.length > 0) {
+                const override = priceOverrides[0];
+                if (override.reason === 'Manuel') {
                     pricingMethod = 'manuelle';
                 }
             }
@@ -2808,13 +2806,13 @@ app.post('/api/properties/:id/bookings', authenticateToken, async (req, res) => 
             console.error("Erreur lors de la vérification de la méthode de prix:", e);
         }
 
-        const propertyData = propertyDoc.data();
+        // Utiliser la propriété récupérée (pas propertyDoc qui n'existe pas)
         let pmsReservationId = null;
 
         // Synchronisation avec PMS si la propriété est liée
-        if (propertyData.pmsId && propertyData.pmsType) {
+        if (property.pms_id && property.pms_type) {
             try {
-                console.log(`[PMS Sync] Propriété ${propertyId} (PMS ID: ${propertyData.pmsId}) est liée. Création de la réservation...`);
+                console.log(`[PMS Sync] Propriété ${propertyId} (PMS ID: ${property.pms_id}) est liée. Création de la réservation...`);
                 const client = await getUserPMSClient(userId);
                 
                 const reservationData = {
@@ -2827,31 +2825,31 @@ app.post('/api/properties/:id/bookings', authenticateToken, async (req, res) => 
                     status: 'confirmed'
                 };
 
-                const pmsReservation = await client.createReservation(propertyData.pmsId, reservationData);
+                const pmsReservation = await client.createReservation(property.pms_id, reservationData);
                 pmsReservationId = pmsReservation.pmsId;
-                console.log(`[PMS Sync] Réservation créée dans ${propertyData.pmsType} avec l'ID: ${pmsReservationId}`);
+                console.log(`[PMS Sync] Réservation créée dans ${property.pms_type} avec l'ID: ${pmsReservationId}`);
             } catch (pmsError) {
                 console.error(`[PMS Sync] ERREUR lors de la création de la réservation pour ${propertyId}:`, pmsError.message);
-                // On continue quand même avec la sauvegarde Firestore
+                // On continue quand même avec la sauvegarde Supabase
             }
         }
 
         const newBooking = {
-            startDate,
-            endDate,
-            pricePerNight,
-            totalPrice: totalPrice || pricePerNight * nights,
+            property_id: propertyId,
+            start_date: startDate,
+            end_date: endDate,
+            price_per_night: pricePerNight,
+            total_price: totalPrice || pricePerNight * nights,
             channel: channel || 'Direct',
             status: 'confirmé', // Statut par défaut
-            pricingMethod: pricingMethod, // Méthode de prix
-            bookedAt: admin.firestore.FieldValue.serverTimestamp(),
-            teamId: propertyTeamId,
-            ...(guestName && { guestName }),
-            ...(numberOfGuests && typeof numberOfGuests === 'number' && { numberOfGuests }),
-            ...(pmsReservationId && { pmsId: pmsReservationId }), // Stocker l'ID PMS si disponible
+            pricing_method: pricingMethod, // Méthode de prix
+            team_id: propertyTeamId,
+            ...(guestName && { guest_name: guestName }),
+            ...(numberOfGuests && typeof numberOfGuests === 'number' && { number_of_guests: numberOfGuests }),
+            ...(pmsReservationId && { pms_id: pmsReservationId }), // Stocker l'ID PMS si disponible
         };
 
-        const bookingRef = await propertyRef.collection('reservations').add(newBooking);
+        const createdBooking = await db.createBooking(propertyId, newBooking);
 
         res.status(201).send({ 
             message: 'Réservation ajoutée avec succès.', 
