@@ -79,12 +79,12 @@ export default {
         ],
       },
       fontSize: {
-        'h2-font-size': '20px',
-        'h3-font-size': '16px',
-        'h4-font-size': '14px',
-        'p1-font-size': '16px',
-        'p2-font-size': '11px',
-        'h1-font-size': '30px',
+        'h2-font-size': '16px',      /* 80% de 20px */
+        'h3-font-size': '12.8px',     /* 80% de 16px */
+        'h4-font-size': '11.2px',     /* 80% de 14px */
+        'p1-font-size': '12.8px',    /* 80% de 16px */
+        'p2-font-size': '8.8px',     /* 80% de 11px */
+        'h1-font-size': '24px',      /* 80% de 30px */
       },
       fontWeight: {
         'h2-font-weight': '400',
@@ -97,7 +97,7 @@ export default {
       lineHeight: {
         'h2-line-height': 'normal',
         'h3-line-height': 'normal',
-        'h4-line-height': '20px',
+        'h4-line-height': '16px',   /* 80% de 20px */
         'p1-line-height': 'normal',
         'p2-line-height': 'normal',
         'h1-line-height': 'normal',
