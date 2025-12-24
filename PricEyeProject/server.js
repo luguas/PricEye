@@ -3925,8 +3925,8 @@ app.get('/api/reports/market-demand-snapshot', authenticateToken, async (req, re
 
         // 2. Déterminer la fenêtre temporelle (24h glissantes)
         const now = new Date();
-        const end = now.toISOString();
-        const start = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString();
+        const end = new Date(now);
+        const start = new Date(now.getTime() - 24 * 60 * 60 * 1000);
 
         // 3. Pour une première version, on s'appuie sur les réservations récentes
         //    comme proxy de la demande (faute de logs de recherches/visites détaillées).
@@ -3938,8 +3938,8 @@ app.get('/api/reports/market-demand-snapshot', authenticateToken, async (req, re
                 activeSearches: 0,
                 listingViews: 0,
                 conversionRate: 0,
-                windowStart: start,
-                windowEnd: end,
+                windowStart: start.toISOString(),
+                windowEnd: end.toISOString(),
                 timezone: timezone || 'UTC'
             });
         }
@@ -3948,12 +3948,15 @@ app.get('/api/reports/market-demand-snapshot', authenticateToken, async (req, re
         
         // Récupérer les réservations créées dans les dernières 24h
         // Note: Si la table bookings n'a pas de created_at, on utilise start_date comme approximation
+        const startDateStr = start.toISOString().split('T')[0];
+        const endDateStr = end.toISOString().split('T')[0];
+        
         const { data: bookings, error: bookingsError } = await supabase
             .from('bookings')
             .select('id')
             .in('property_id', propertyIds)
-            .gte('start_date', start.split('T')[0])
-            .lte('start_date', end.split('T')[0]);
+            .gte('start_date', startDateStr)
+            .lte('start_date', endDateStr);
         
         if (bookingsError) throw bookingsError;
 

@@ -26,7 +26,15 @@
     "logout": "Logout"
   },
   "topBar": {
-    "user": "User"
+    "user": "User",
+    "subscriptionStatus": {
+      "active": "Active",
+      "trialing": "Trial",
+      "past_due": "Payment Due",
+      "unpaid": "Unpaid",
+      "canceled": "Canceled",
+      "none": "No Subscription"
+    }
   },
   "dashboard": {
     "title": "Dashboard",
@@ -281,6 +289,16 @@
     "nights": "night(s)",
     "longStayDiscount": "Long stay discount",
     "markups": "Markups"
+  },
+  "groupEditModal": {
+    "title": "Edit Group",
+    "general": "General",
+    "strategy": "Strategy",
+    "rules": "Rules",
+    "properties": "Properties",
+    "groupName": "Group name",
+    "groupNamePlaceholder": "Group name",
+    "selectMultipleHint": "Hold Ctrl (or Cmd on Mac) to select multiple properties"
   },
   "strategyModal": {
     "title": "AI Strategy (Pricing)",

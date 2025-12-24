@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { jwtDecode } from 'jwt-decode';
 import LoginPage from './pages/LoginPage.jsx';
 import RegisterPage from './pages/RegisterPage.jsx';
 import DashboardPage from './pages/DashboardPage.jsx';
@@ -161,7 +162,6 @@ function AppContent() {
     if (storedToken) {
       // Vérifier que le token est valide avant de l'utiliser
       try {
-        const { jwtDecode } = require('jwt-decode');
         jwtDecode(storedToken); // Vérifier que le token est valide
         setToken(storedToken);
         // Définir dashboard seulement au premier chargement
@@ -307,6 +307,7 @@ function AppContent() {
               token={token}
               onNotificationsUpdate={handleNotificationsUpdate}
               onLogout={handleLogout}
+              userProfile={userProfile}
             />
           </div>
           <nav className="bg-bg-sidebar md:hidden p-4 flex-shrink-0 flex flex-col rounded-b-3xl border border-border-primary">

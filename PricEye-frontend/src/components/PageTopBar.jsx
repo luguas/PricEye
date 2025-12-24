@@ -1,6 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
 import NotificationsMenu from './NotificationsMenu.jsx';
-import logoPriceye from '../../Images/logo priceye.png';
 import { useLanguage } from '../contexts/LanguageContext.jsx';
 
 const BellIcon = ({ className = '' }) => (
@@ -18,21 +17,6 @@ const BellIcon = ({ className = '' }) => (
   </svg>
 );
 
-const UserIcon = ({ className = '' }) => (
-  <svg
-    viewBox="0 0 24 24"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth="1.8"
-    strokeLinecap="round"
-    strokeLinejoin="round"
-    className={`w-5 h-5 ${className}`}
-  >
-    <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
-    <circle cx="12" cy="7" r="4" />
-  </svg>
-);
-
 function PageTopBar({
   className = '',
   userName = 'Utilisateur',
@@ -41,6 +25,7 @@ function PageTopBar({
   token = null,
   onNotificationsUpdate,
   onLogout = null,
+  userProfile = null,
   ...props
 }) {
   const { t } = useLanguage();
@@ -54,6 +39,58 @@ function PageTopBar({
 
   // Vérifier s'il y a des notifications
   const hasNotifications = notifications && notifications.length > 0;
+
+  // Fonction pour obtenir les informations du statut d'abonnement
+  const getSubscriptionStatusInfo = () => {
+    const status = userProfile?.subscriptionStatus || 'none';
+    const statusConfig = {
+      active: {
+        label: t('topBar.subscriptionStatus.active'),
+        color: 'text-green-400',
+        bgColor: 'bg-green-900/20',
+        borderColor: 'border-green-700/50',
+        dotColor: 'bg-green-400'
+      },
+      trialing: {
+        label: t('topBar.subscriptionStatus.trialing'),
+        color: 'text-blue-400',
+        bgColor: 'bg-blue-900/20',
+        borderColor: 'border-blue-700/50',
+        dotColor: 'bg-blue-400'
+      },
+      past_due: {
+        label: t('topBar.subscriptionStatus.past_due'),
+        color: 'text-orange-400',
+        bgColor: 'bg-orange-900/20',
+        borderColor: 'border-orange-700/50',
+        dotColor: 'bg-orange-400'
+      },
+      unpaid: {
+        label: t('topBar.subscriptionStatus.unpaid'),
+        color: 'text-red-400',
+        bgColor: 'bg-red-900/20',
+        borderColor: 'border-red-700/50',
+        dotColor: 'bg-red-400'
+      },
+      canceled: {
+        label: t('topBar.subscriptionStatus.canceled'),
+        color: 'text-gray-400',
+        bgColor: 'bg-gray-900/20',
+        borderColor: 'border-gray-700/50',
+        dotColor: 'bg-gray-400'
+      },
+      none: {
+        label: t('topBar.subscriptionStatus.none'),
+        color: 'text-gray-400',
+        bgColor: 'bg-gray-900/20',
+        borderColor: 'border-gray-700/50',
+        dotColor: 'bg-gray-400'
+      }
+    };
+    return statusConfig[status] || statusConfig.none;
+  };
+
+  const subscriptionStatusInfo = getSubscriptionStatusInfo();
 
   const handleNotificationsClick = () => {
     setIsNotificationsMenuOpen(!isNotificationsMenuOpen);
@@ -109,6 +146,16 @@ function PageTopBar({
       {...props}
     >
       <div className="flex items-center gap-4">
+        {/* Indicateur de statut d'abonnement */}
+        {userProfile && (
+          <div className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border ${subscriptionStatusInfo.bgColor} ${subscriptionStatusInfo.borderColor}`}>
+            <span className={`w-2 h-2 rounded-full ${subscriptionStatusInfo.dotColor}`}></span>
+            <span className={`text-xs font-medium ${subscriptionStatusInfo.color}`}>
+              {subscriptionStatusInfo.label}
+            </span>
+          </div>
+        )}
+
         <button
           ref={buttonRef}
           type="button"
@@ -144,35 +191,9 @@ function PageTopBar({
             {formattedPropertyCount}
           </span>
         </div>
-
-        {/* Menu utilisateur avec déconnexion */}
-        <div className="relative group">
-          <div
-            className="rounded-full w-11 h-11 flex items-center justify-center bg-white p-1 cursor-pointer"
-          >
-            <img 
-              src={logoPriceye} 
-              alt="PricEye Logo" 
-              className="w-full h-full object-contain rounded-full"
-            />
-          </div>
-          
-          {/* Menu déroulant */}
-          {onLogout && (
-            <div className="absolute right-0 top-full mt-2 w-48 bg-global-bg-box border border-global-stroke-box rounded-lg shadow-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-50">
-              <button
-                onClick={onLogout}
-                className="w-full text-left px-4 py-2 text-global-blanc hover:bg-global-stroke-box transition-colors rounded-lg"
-              >
-                {t('settings.disconnect')}
-              </button>
-            </div>
-          )}
-        </div>
       </div>
     </div>
   );
 }
 
 export default PageTopBar;
-

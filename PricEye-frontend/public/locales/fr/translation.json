@@ -26,7 +26,15 @@
     "logout": "Déconnexion"
   },
   "topBar": {
-    "user": "Utilisateur"
+    "user": "Utilisateur",
+    "subscriptionStatus": {
+      "active": "Actif",
+      "trialing": "Essai",
+      "past_due": "Paiement en attente",
+      "unpaid": "Impayé",
+      "canceled": "Annulé",
+      "none": "Aucun abonnement"
+    }
   },
   "dashboard": {
     "title": "Tableau de Bord",
@@ -281,6 +289,16 @@
     "nights": "nuit(s)",
     "longStayDiscount": "Réduction longue durée",
     "markups": "Majorations"
+  },
+  "groupEditModal": {
+    "title": "Modifier le groupe",
+    "general": "Général",
+    "strategy": "Stratégie",
+    "rules": "Règles",
+    "properties": "Propriétés",
+    "groupName": "Nom du groupe",
+    "groupNamePlaceholder": "Nom du groupe",
+    "selectMultipleHint": "Maintenez Ctrl (ou Cmd sur Mac) pour sélectionner plusieurs propriétés"
   },
   "strategyModal": {
     "title": "Stratégie IA (Prix)",
