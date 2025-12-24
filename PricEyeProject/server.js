@@ -2840,22 +2840,47 @@ app.post('/api/properties/:id/bookings', authenticateToken, async (req, res) => 
             }
         }
 
+        // Construire l'objet de réservation avec seulement les champs qui existent dans le schéma Supabase
+        // Note: Les colonnes 'channel' et 'pricing_method' doivent être ajoutées au schéma Supabase si nécessaire
         const newBooking = {
             property_id: propertyId,
             start_date: startDate,
             end_date: endDate,
             price_per_night: pricePerNight,
             total_price: totalPrice || pricePerNight * nights,
-            channel: channel || 'Direct',
             status: 'confirmé', // Statut par défaut
-            pricing_method: pricingMethod, // Méthode de prix
             team_id: propertyTeamId,
+            // Champs optionnels (vérifier qu'ils existent dans le schéma)
             ...(guestName && { guest_name: guestName }),
             ...(numberOfGuests && typeof numberOfGuests === 'number' && { number_of_guests: numberOfGuests }),
-            ...(pmsReservationId && { pms_id: pmsReservationId }), // Stocker l'ID PMS si disponible
+            ...(pmsReservationId && { pms_id: pmsReservationId }),
         };
-
-        const createdBooking = await db.createBooking(propertyId, newBooking);
+        
+        // Essayer d'insérer avec les champs optionnels, si ça échoue, réessayer sans
+        let createdBooking;
+        try {
+            // Première tentative avec tous les champs
+            if (channel) {
+                newBooking.channel = channel;
+            }
+            if (pricingMethod) {
+                newBooking.pricing_method = pricingMethod;
+            }
+            createdBooking = await db.createBooking(propertyId, newBooking);
+        } catch (schemaError) {
+            // Si erreur de schéma (colonne manquante), réessayer sans les champs problématiques
+            if (schemaError.code === 'PGRST204' || schemaError.message?.includes('column') || schemaError.message?.includes('schema cache')) {
+                console.warn('Certaines colonnes n\'existent pas dans le schéma. Insertion sans channel et pricing_method.');
+                // Retirer les champs qui causent problème
+                delete newBooking.channel;
+                delete newBooking.pricing_method;
+                // Réessayer sans ces champs
+                createdBooking = await db.createBooking(propertyId, newBooking);
+            } else {
+                // Autre erreur, la propager
+                throw schemaError;
+            }
+        }
 
         res.status(201).send({ 
             message: 'Réservation ajoutée avec succès.', 
