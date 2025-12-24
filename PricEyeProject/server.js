@@ -2840,47 +2840,25 @@ app.post('/api/properties/:id/bookings', authenticateToken, async (req, res) => 
             }
         }
 
-        // Construire l'objet de réservation avec seulement les champs qui existent dans le schéma Supabase
-        // Note: Les colonnes 'channel' et 'pricing_method' doivent être ajoutées au schéma Supabase si nécessaire
+        // Construire l'objet de réservation selon le schéma Supabase
+        // Schéma: id, property_id, start_date, end_date, guest_name, guest_email, revenue, 
+        //         source, pms_booking_id, synced_at, created_at, updated_at, channel, 
+        //         pricing_method, price_per_night, status
         const newBooking = {
-            property_id: propertyId,
             start_date: startDate,
             end_date: endDate,
             price_per_night: pricePerNight,
-            total_price: totalPrice || pricePerNight * nights,
+            revenue: totalPrice || pricePerNight * nights, // 'revenue' au lieu de 'total_price'
             status: 'confirmé', // Statut par défaut
-            team_id: propertyTeamId,
-            // Champs optionnels (vérifier qu'ils existent dans le schéma)
+            // Champs optionnels selon le schéma
+            ...(channel && { channel: channel }),
+            ...(pricingMethod && { pricing_method: pricingMethod }),
             ...(guestName && { guest_name: guestName }),
-            ...(numberOfGuests && typeof numberOfGuests === 'number' && { number_of_guests: numberOfGuests }),
-            ...(pmsReservationId && { pms_id: pmsReservationId }),
+            ...(pmsReservationId && { pms_booking_id: pmsReservationId }), // 'pms_booking_id' au lieu de 'pms_id'
+            // Note: number_of_guests n'existe pas dans le schéma, donc on ne l'inclut pas
         };
-        
-        // Essayer d'insérer avec les champs optionnels, si ça échoue, réessayer sans
-        let createdBooking;
-        try {
-            // Première tentative avec tous les champs
-            if (channel) {
-                newBooking.channel = channel;
-            }
-            if (pricingMethod) {
-                newBooking.pricing_method = pricingMethod;
-            }
-            createdBooking = await db.createBooking(propertyId, newBooking);
-        } catch (schemaError) {
-            // Si erreur de schéma (colonne manquante), réessayer sans les champs problématiques
-            if (schemaError.code === 'PGRST204' || schemaError.message?.includes('column') || schemaError.message?.includes('schema cache')) {
-                console.warn('Certaines colonnes n\'existent pas dans le schéma. Insertion sans channel et pricing_method.');
-                // Retirer les champs qui causent problème
-                delete newBooking.channel;
-                delete newBooking.pricing_method;
-                // Réessayer sans ces champs
-                createdBooking = await db.createBooking(propertyId, newBooking);
-            } else {
-                // Autre erreur, la propager
-                throw schemaError;
-            }
-        }
+
+        const createdBooking = await db.createBooking(propertyId, newBooking);
 
         res.status(201).send({ 
             message: 'Réservation ajoutée avec succès.', 
@@ -2926,16 +2904,20 @@ app.get('/api/properties/:id/bookings', authenticateToken, async (req, res) => {
         const bookings = await db.getBookingsForMonth(propertyId, yearNum, monthNum);
         
         // Adapter le format pour compatibilité avec le frontend
+        // Schéma: id, property_id, start_date, end_date, guest_name, guest_email, revenue, 
+        //         source, pms_booking_id, synced_at, created_at, updated_at, channel, 
+        //         pricing_method, price_per_night, status
         const formattedBookings = bookings.map(booking => ({
             id: booking.id,
             startDate: booking.start_date,
             endDate: booking.end_date,
             pricePerNight: booking.price_per_night || (booking.revenue ? booking.revenue / Math.ceil((new Date(booking.end_date) - new Date(booking.start_date)) / (1000 * 60 * 60 * 24)) : 0),
-            totalPrice: booking.revenue,
-            channel: booking.source,
+            totalPrice: booking.revenue, // 'revenue' dans le schéma
+            channel: booking.channel || booking.source, // Utiliser 'channel' si disponible, sinon 'source' en fallback
             guestName: booking.guest_name,
-            numberOfGuests: booking.number_of_guests,
-            pmsId: booking.pms_booking_id
+            pmsId: booking.pms_booking_id, // 'pms_booking_id' dans le schéma
+            status: booking.status,
+            pricingMethod: booking.pricing_method
         }));
 
         res.status(200).json(formattedBookings);
@@ -2975,18 +2957,21 @@ app.get('/api/bookings', authenticateToken, async (req, res) => {
         }
         
         // 3. Mapper les résultats pour compatibilité avec le frontend
+        // Schéma: id, property_id, start_date, end_date, guest_name, guest_email, revenue, 
+        //         source, pms_booking_id, synced_at, created_at, updated_at, channel, 
+        //         pricing_method, price_per_night, status
         const formattedBookings = bookings.map(booking => ({
             id: booking.id,
             propertyId: booking.property_id,
             startDate: booking.start_date,
             endDate: booking.end_date,
             pricePerNight: booking.price_per_night || (booking.revenue ? booking.revenue / Math.ceil((new Date(booking.end_date) - new Date(booking.start_date)) / (1000 * 60 * 60 * 24)) : 0),
-            totalPrice: booking.revenue,
-            channel: booking.source,
+            totalPrice: booking.revenue, // 'revenue' dans le schéma
+            channel: booking.channel || booking.source, // Utiliser 'channel' si disponible, sinon 'source' en fallback
             guestName: booking.guest_name,
-            numberOfGuests: booking.number_of_guests,
-            pmsId: booking.pms_booking_id,
-            status: booking.status || 'confirmé'
+            pmsId: booking.pms_booking_id, // 'pms_booking_id' dans le schéma
+            status: booking.status || 'confirmé',
+            pricingMethod: booking.pricing_method
         }));
 
         res.status(200).json(formattedBookings);
@@ -3024,15 +3009,15 @@ app.put('/api/properties/:id/bookings/:bookingId', authenticateToken, async (req
             return res.status(404).send({ error: 'Réservation non trouvée.' });
         }
 
-        // Préparer les données de mise à jour
+        // Préparer les données de mise à jour selon le schéma Supabase
         const updateData = {};
         if (startDate) updateData.start_date = startDate;
         if (endDate) updateData.end_date = endDate;
         if (pricePerNight != null) updateData.price_per_night = pricePerNight;
-        if (totalPrice != null) updateData.revenue = totalPrice;
-        if (channel) updateData.source = channel;
+        if (totalPrice != null) updateData.revenue = totalPrice; // 'revenue' au lieu de 'total_price'
+        if (channel) updateData.channel = channel; // 'channel' au lieu de 'source'
         if (guestName) updateData.guest_name = guestName;
-        if (numberOfGuests != null) updateData.number_of_guests = numberOfGuests;
+        // Note: number_of_guests n'existe pas dans le schéma, donc on ne l'inclut pas
         if (status) updateData.status = status;
 
         // Synchronisation avec PMS si la propriété est liée et la réservation a un pmsId
