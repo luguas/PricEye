@@ -4076,7 +4076,7 @@ app.get('/api/reports/positioning', authenticateToken, async (req, res) => {
 
         // 3. Construire le prompt IA pour obtenir ADR marché + distribution prix concurrents
         const today = new Date().toISOString().split('T')[0];
-        const isFrench = (req.query.language || userProfileDoc.data()?.language || 'fr') === 'fr' || (req.query.language || userProfileDoc.data()?.language || 'fr') === 'fr-FR';
+        const isFrench = (req.query.language || userProfile?.language || 'fr') === 'fr' || (req.query.language || userProfile?.language || 'fr') === 'fr-FR';
         const positioningPrompt = isFrench ? `
 Tu es un moteur de benchmarking tarifaire pour la location courte durée.
 
@@ -4143,8 +4143,8 @@ Constraints:
 
 CRITICAL REMINDER: Respond ONLY with this JSON, no comments, no text around, no markdown.`;
 
-        // Récupérer la langue de l'utilisateur (userProfileDoc déjà récupéré plus haut)
-        const language = req.query.language || userProfileDoc.data()?.language || 'fr';
+        // Récupérer la langue de l'utilisateur
+        const language = req.query.language || userProfile?.language || 'fr';
         
         let iaResult = null;
         try {
