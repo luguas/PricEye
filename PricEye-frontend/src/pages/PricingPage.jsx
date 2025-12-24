@@ -62,12 +62,19 @@ function PricingPage({ token, userProfile }) {
           getGroups(token)
       ]);
       
-      setProperties(propertiesData);
+      // Filtrer les propriétés avec des IDs invalides côté client aussi (double sécurité)
+      const validProperties = propertiesData.filter(prop => {
+        if (!prop.id || typeof prop.id !== 'string') return false;
+        const uuidLength = prop.id.replace(/-/g, '').length;
+        return uuidLength >= 32;
+      });
+      
+      setProperties(validProperties);
       setAllGroups(groupsData);
       
-      if (propertiesData.length > 0) {
+      if (validProperties.length > 0) {
         setSelectedView('property');
-        setSelectedId(propertiesData[0].id);
+        setSelectedId(validProperties[0].id);
       } else if (groupsData.length > 0) {
            setSelectedView('group');
            setSelectedId(groupsData[0].id);

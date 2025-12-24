@@ -2143,15 +2143,30 @@ app.get('/api/properties', authenticateToken, async (req, res) => {
         const userId = req.user.uid;
         
         const userProfile = await db.getUser(userId);
+        let properties;
         if (!userProfile || !userProfile.team_id) {
              console.warn(`Utilisateur ${userId} n'a pas de team_id, fallback sur owner_id.`);
-             const properties = await db.getPropertiesByOwner(userId);
-             return res.status(200).json(properties);
+             properties = await db.getPropertiesByOwner(userId);
+        } else {
+            const teamId = userProfile.team_id;
+            properties = await db.getPropertiesByTeam(teamId);
         }
-        const teamId = userProfile.team_id;
         
-        const properties = await db.getPropertiesByTeam(teamId);
-        res.status(200).json(properties);
+        // Filtrer les propriétés avec des IDs invalides (UUIDs tronqués)
+        const validProperties = properties.filter(prop => {
+            if (!prop.id || typeof prop.id !== 'string') {
+                console.warn(`[getProperties] Propriété sans ID valide ignorée:`, prop);
+                return false;
+            }
+            const uuidLength = prop.id.replace(/-/g, '').length;
+            if (uuidLength < 32) {
+                console.warn(`[getProperties] Propriété avec UUID invalide ignorée: ID="${prop.id}" (${uuidLength} caractères), Adresse="${prop.address || 'N/A'}"`);
+                return false;
+            }
+            return true;
+        });
+        
+        res.status(200).json(validProperties);
     } catch (error) {
         console.error('Erreur lors de la récupération des propriétés:', error);
         res.status(500).send({ error: 'Erreur lors de la récupération des propriétés.' });
