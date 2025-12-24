@@ -55,7 +55,12 @@ async function apiRequest(endpoint, options = {}) {
         }
     }
     console.error(`Erreur API (${response.status}):`, errorData.error); 
-    throw new Error(errorData.error);
+    
+    // Créer une erreur avec toutes les données accessibles
+    const error = new Error(errorData.error || errorData.message || `Erreur ${response.status}`);
+    // Attacher les données complètes à l'erreur pour qu'elles soient accessibles
+    error.errorData = errorData;
+    throw error;
   }
 
   if (response.status === 204 || (response.status === 200 && (!contentType?.includes('application/json') || response.headers.get('content-length') === '0'))) {

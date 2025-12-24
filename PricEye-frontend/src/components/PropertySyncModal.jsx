@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { syncProperties, getProperties, importPmsProperties } from '../services/api.js';
 import CustomScrollbar from './CustomScrollbar.jsx';
 import AlertModal from './AlertModal.jsx';
+import TrialLimitModal from './TrialLimitModal.jsx';
 import { useLanguage } from '../contexts/LanguageContext.jsx';
 
 /**
@@ -23,6 +24,10 @@ function PropertySyncModal({ token, pmsType, onClose }) {
 
   // État pour la modale d'alerte
   const [alertModal, setAlertModal] = useState({ isOpen: false, message: '', title: 'Information' });
+  
+  // État pour la modale de limite d'essai
+  const [showTrialLimitModal, setShowTrialLimitModal] = useState(false);
+  const [trialLimitData, setTrialLimitData] = useState({ currentCount: 0, maxAllowed: 10 });
 
   // Étape 1: Récupérer les deux listes de propriétés au chargement
   useEffect(() => {
@@ -102,24 +107,36 @@ function PropertySyncModal({ token, pmsType, onClose }) {
       // Vérifier si c'est une erreur de limite
       const errorMessage = err.message || '';
       
-      if (errorMessage.includes('LIMIT_EXCEEDED')) {
-        // Afficher la modale de limite via la fonction globale
-        if (window.showLimitExceededModal) {
-          // Extraire les données de l'erreur si disponibles
-          try {
-            const errorData = JSON.parse(errorMessage.split('LIMIT_EXCEEDED')[1] || '{}');
-            window.showLimitExceededModal({
-              currentCount: errorData.currentCount || 10,
-              maxAllowed: errorData.maxAllowed || 10,
-            });
-          } catch {
-            window.showLimitExceededModal({
-              currentCount: 10,
-              maxAllowed: 10,
-            });
+      // Vérifier si c'est une erreur de limite d'essai
+      if (errorMessage.includes('LIMIT_EXCEEDED') || errorMessage.includes('limite')) {
+        try {
+          // Essayer d'extraire les données de l'erreur
+          // L'erreur peut être dans err.errorData ou dans le message
+          let errorData = {};
+          
+          // Si err a une propriété errorData (retournée par apiRequest)
+          if (err.errorData) {
+            errorData = err.errorData;
+          } else {
+            // Sinon, essayer de parser le message
+            try {
+              const jsonMatch = errorMessage.match(/\{.*\}/);
+              if (jsonMatch) {
+                errorData = JSON.parse(jsonMatch[0]);
+              }
+            } catch (parseError) {
+              console.warn('Impossible de parser les données d\'erreur:', parseError);
+            }
           }
-        } else {
-          // Fallback si la fonction n'est pas disponible
+          
+          // Afficher la modal de limite
+          setTrialLimitData({
+            currentCount: errorData.currentCount || 10,
+            maxAllowed: errorData.maxAllowed || 10
+          });
+          setShowTrialLimitModal(true);
+        } catch (modalError) {
+          console.error('Erreur lors de l\'affichage de la modal:', modalError);
           setError(t('billing.limitExceededMessage') + ' ' + t('billing.limitExceededAction'));
         }
       } else {
@@ -176,7 +193,15 @@ function PropertySyncModal({ token, pmsType, onClose }) {
   };
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-90 flex items-center justify-center p-4 z-50">
+    <>
+      <TrialLimitModal
+        isOpen={showTrialLimitModal}
+        onClose={() => setShowTrialLimitModal(false)}
+        currentCount={trialLimitData.currentCount}
+        maxAllowed={trialLimitData.maxAllowed}
+        token={token}
+      />
+      <div className="fixed inset-0 bg-black bg-opacity-90 flex items-center justify-center p-4 z-50">
       <div className="bg-bg-secondary rounded-lg shadow-xl w-full max-w-lg p-6 max-h-[90vh] flex flex-col">
         <h3 className="text-xl font-bold mb-6 text-text-primary shrink-0">{t('settings.integration.syncModal.title')}</h3>
         
@@ -212,6 +237,7 @@ function PropertySyncModal({ token, pmsType, onClose }) {
         buttonText="OK"
       />
     </div>
+    </>
   );
 }
 

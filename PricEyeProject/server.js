@@ -2334,7 +2334,7 @@ app.post('/api/properties', authenticateToken, async (req, res) => {
         const teamId = userProfile.team_id || userId;
         
         // Vérification de la limite de 10 propriétés pendant l'essai gratuit
-        const subscriptionId = userProfile.subscription_id;
+        const subscriptionId = userProfile.stripe_subscription_id || userProfile.subscription_id;
         if (subscriptionId) {
             // Compter les propriétés actuelles
             const currentProperties = await db.getPropertiesByTeam(teamId);

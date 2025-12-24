@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { addProperty, updateProperty, syncPropertyData } from '../services/api.js';
 import CustomScrollbar from './CustomScrollbar.jsx';
 import { useLanguage } from '../contexts/LanguageContext.jsx';
+import TrialLimitModal from './TrialLimitModal.jsx';
 
 // Liste des équipements disponibles
 const availableAmenities = [
@@ -28,6 +29,8 @@ function PropertyModal({ token, onClose, onSave, property }) {
   const [isLoading, setIsLoading] = useState(false); // Pour la sauvegarde
   const [isSyncing, setIsSyncing] = useState(false); // Pour le bouton Sync
   const [syncMessage, setSyncMessage] = useState(''); // "Toast" pour le sync
+  const [showTrialLimitModal, setShowTrialLimitModal] = useState(false);
+  const [trialLimitData, setTrialLimitData] = useState({ currentCount: 0, maxAllowed: 10 });
 
   const isEditing = !!property; 
 
@@ -108,25 +111,37 @@ function PropertyModal({ token, onClose, onSave, property }) {
       // Vérifier si c'est une erreur de limite
       const errorMessage = err.message || '';
       
-      if (errorMessage.includes('LIMIT_EXCEEDED')) {
-        // Afficher la modale de limite via la fonction globale
-        if (window.showLimitExceededModal) {
-          // Extraire les données de l'erreur si disponibles
-          try {
-            const errorData = JSON.parse(errorMessage.split('LIMIT_EXCEEDED')[1] || '{}');
-            window.showLimitExceededModal({
-              currentCount: errorData.currentCount || 10,
-              maxAllowed: errorData.maxAllowed || 10,
-            });
-          } catch {
-            window.showLimitExceededModal({
-              currentCount: 10,
-              maxAllowed: 10,
-            });
+      // Vérifier si c'est une erreur de limite d'essai
+      if (errorMessage.includes('LIMIT_EXCEEDED') || errorMessage.includes('limite')) {
+        try {
+          // Essayer d'extraire les données de l'erreur
+          // L'erreur peut être dans err.errorData ou dans le message
+          let errorData = {};
+          
+          // Si err a une propriété errorData (retournée par apiRequest)
+          if (err.errorData) {
+            errorData = err.errorData;
+          } else {
+            // Sinon, essayer de parser le message
+            try {
+              const jsonMatch = errorMessage.match(/\{.*\}/);
+              if (jsonMatch) {
+                errorData = JSON.parse(jsonMatch[0]);
+              }
+            } catch (parseError) {
+              console.warn('Impossible de parser les données d\'erreur:', parseError);
+            }
           }
-        } else {
-          // Fallback si la fonction n'est pas disponible
-          setError('Vous avez atteint la limite de 10 propriétés pendant votre essai gratuit. Veuillez terminer votre essai pour continuer.');
+          
+          // Afficher la modal de limite
+          setTrialLimitData({
+            currentCount: errorData.currentCount || 10,
+            maxAllowed: errorData.maxAllowed || 10
+          });
+          setShowTrialLimitModal(true);
+        } catch (modalError) {
+          console.error('Erreur lors de l\'affichage de la modal:', modalError);
+          setError('Vous avez atteint la limite de 10 propriétés pendant votre essai gratuit. Veuillez passer à l\'abonnement payant pour continuer.');
         }
       } else {
         setError(errorMessage || 'Une erreur est survenue lors de l\'ajout de la propriété.');
@@ -159,7 +174,15 @@ function PropertyModal({ token, onClose, onSave, property }) {
 
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-90 flex items-center justify-center p-4 z-50">
+    <>
+      <TrialLimitModal
+        isOpen={showTrialLimitModal}
+        onClose={() => setShowTrialLimitModal(false)}
+        currentCount={trialLimitData.currentCount}
+        maxAllowed={trialLimitData.maxAllowed}
+        token={token}
+      />
+      <div className="fixed inset-0 bg-black bg-opacity-90 flex items-center justify-center p-4 z-50">
         <div className="bg-global-bg-box border border-global-stroke-box rounded-[14px] shadow-xl w-full max-w-4xl p-6 max-h-[90vh] flex flex-col">
             <h3 className="text-xl font-bold mb-6 text-global-blanc shrink-0">{isEditing ? t('propertyModal.editTitle') : t('propertyModal.title')}</h3>
             
@@ -268,6 +291,7 @@ function PropertyModal({ token, onClose, onSave, property }) {
             </CustomScrollbar>
         </div>
     </div>
+    </>
   );
 }
 
