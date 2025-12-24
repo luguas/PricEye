@@ -443,7 +443,10 @@ function PricingPage({ token, userProfile }) {
 
 
   const fetchCalendarData = useCallback(async () => {
+    console.log('[fetchCalendarData] Début - selectedId:', selectedId, 'selectedView:', selectedView);
+    
     if (!selectedId) {
+      console.log('[fetchCalendarData] Pas de selectedId, réinitialisation');
       setIsCalendarLoading(false);
       setPriceOverrides({});
       setBookings({});
@@ -458,26 +461,58 @@ function PricingPage({ token, userProfile }) {
 
     if (selectedView === 'property') {
         propertyIdToFetch = selectedId;
+        // Valider que selectedId est un UUID valide
+        const uuidLength = propertyIdToFetch?.replace(/-/g, '').length || 0;
+        if (!propertyIdToFetch || typeof propertyIdToFetch !== 'string' || uuidLength < 32) {
+          console.error('[fetchCalendarData] UUID invalide pour la propriété:', {
+            propertyIdToFetch,
+            length: propertyIdToFetch?.length,
+            uuidLength
+          });
+          setError(t('pricing.errors.invalidPropertyId') || 'ID de propriété invalide');
+          setIsCalendarLoading(false);
+          setPriceOverrides({});
+          setBookings({});
+          return;
+        }
         currentProperty = properties.find(p => p.id === selectedId);
+        console.log('[fetchCalendarData] Mode property - propertyIdToFetch:', propertyIdToFetch, 'currentProperty:', currentProperty);
     } else { 
         const group = allGroups.find(g => g.id === selectedId);
         if (!group) {
+          console.log('[fetchCalendarData] Groupe non trouvé pour selectedId:', selectedId);
           setIsCalendarLoading(false);
           setPriceOverrides({});
           setBookings({});
           return;
         }
         propertyIdToFetch = group.mainPropertyId || group.properties?.[0];
+        console.log('[fetchCalendarData] Mode group - propertyIdToFetch:', propertyIdToFetch, 'mainPropertyId:', group.mainPropertyId, 'properties:', group.properties);
+        
         if (!propertyIdToFetch) {
+          console.log('[fetchCalendarData] Pas de propertyIdToFetch pour le groupe');
           setIsCalendarLoading(false);
           setPriceOverrides({});
           setBookings({});
           return;
         }
         
-        // Valider que propertyIdToFetch est un UUID valide
-        if (typeof propertyIdToFetch !== 'string' || propertyIdToFetch.length < 32) {
-          console.error('UUID invalide pour le groupe:', propertyIdToFetch, 'Groupe:', group);
+        // Valider que propertyIdToFetch est un UUID valide (au moins 32 caractères sans tirets, ou 36 avec tirets)
+        const uuidLength = propertyIdToFetch.replace(/-/g, '').length;
+        if (typeof propertyIdToFetch !== 'string' || uuidLength < 32) {
+          console.error('[fetchCalendarData] UUID invalide pour le groupe:', {
+            propertyIdToFetch,
+            length: propertyIdToFetch?.length,
+            uuidLength,
+            mainPropertyId: group.mainPropertyId,
+            mainPropertyIdLength: group.mainPropertyId?.replace(/-/g, '').length,
+            firstProperty: group.properties?.[0],
+            firstPropertyLength: group.properties?.[0]?.replace(/-/g, '').length,
+            allProperties: group.properties,
+            groupId: group.id,
+            groupName: group.name
+          });
+          setError(t('pricing.errors.invalidGroupPropertyId', { groupName: group.name || group.id }));
           setIsCalendarLoading(false);
           setPriceOverrides({});
           setBookings({});
@@ -487,6 +522,7 @@ function PricingPage({ token, userProfile }) {
     }
 
     if (!propertyIdToFetch) {
+         console.log('[fetchCalendarData] propertyIdToFetch est vide après traitement');
          setIsCalendarLoading(false);
          setPriceOverrides({});
          setBookings({});
@@ -495,6 +531,7 @@ function PricingPage({ token, userProfile }) {
     
     // Si currentProperty n'est pas trouvé, on continue quand même avec propertyIdToFetch
     // car on peut avoir besoin de charger les données même si la propriété n'est pas dans la liste
+    console.log('[fetchCalendarData] Chargement des données pour propertyId:', propertyIdToFetch);
 
     try {
       const year = currentCalendarDate.getFullYear();
@@ -575,20 +612,23 @@ function PricingPage({ token, userProfile }) {
         });
       }
       setBookings(newBookings);
+      console.log('[fetchCalendarData] Données chargées avec succès - overrides:', Object.keys(newOverrides).length, 'bookings:', Object.keys(newBookings).length);
       
     } catch (err) {
-      console.error("Erreur de chargement des données calendrier:", err);
+      console.error("[fetchCalendarData] Erreur de chargement des données calendrier:", err);
       setError(t('pricing.errors.calendar', { message: err.message }));
       setPriceOverrides({});
       setBookings({});
     } finally {
+      console.log('[fetchCalendarData] Fin - isCalendarLoading mis à false');
       setIsCalendarLoading(false);
     }
   }, [selectedId, selectedView, currentCalendarDate, token, properties, allGroups, t]); 
 
    useEffect(() => {
+      console.log('[useEffect] fetchCalendarData déclenché - selectedId:', selectedId, 'selectedView:', selectedView);
       fetchCalendarData();
-  }, [fetchCalendarData]);
+  }, [fetchCalendarData, selectedId, selectedView]);
 
 
   const handleGenerateStrategy = async () => {
@@ -1246,8 +1286,10 @@ function PricingPage({ token, userProfile }) {
 
    
    const handleViewChange = (e) => {
+       console.log('[handleViewChange] Début - value:', e.target.value);
        const [type, id] = e.target.value.split('-');
        if (!type || !id) {
+           console.log('[handleViewChange] Valeur invalide, réinitialisation');
            setSelectedView('property'); // Fallback
            setSelectedId('');
            setIsCalendarLoading(false);
@@ -1255,15 +1297,17 @@ function PricingPage({ token, userProfile }) {
            setBookings({});
            return;
        }
+       console.log('[handleViewChange] Changement vers - type:', type, 'id:', id);
        // Réinitialiser l'état de chargement et les données avant de changer
        setIsCalendarLoading(true);
        setPriceOverrides({});
        setBookings({});
        clearSelection();
        setSelectedDateForAnalysis(null);
-       // Changer la sélection
+       // Changer la sélection (cela déclenchera fetchCalendarData via useEffect)
        setSelectedView(type);
        setSelectedId(id);
+       console.log('[handleViewChange] États mis à jour - selectedView:', type, 'selectedId:', id);
    };
    
    const getSelectedValue = () => {

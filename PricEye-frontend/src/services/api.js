@@ -579,9 +579,11 @@ export function getPriceOverrides(propertyId, token, startDate, endDate) {
     }
     
     // Un UUID fait au moins 32 caractères (sans tirets) ou 36 avec tirets
-    if (propertyId.length < 32) {
-        console.error('getPriceOverrides: UUID trop court', propertyId, 'Longueur:', propertyId.length);
-        return Promise.reject(new Error(`ID de propriété invalide (trop court: ${propertyId.length} caractères)`));
+    // Vérifier la longueur sans les tirets pour être plus flexible
+    const uuidLength = propertyId.replace(/-/g, '').length;
+    if (uuidLength < 32) {
+        console.error('getPriceOverrides: UUID trop court', propertyId, 'Longueur:', propertyId.length, 'UUID length (sans tirets):', uuidLength);
+        return Promise.reject(new Error(`ID de propriété invalide (trop court: ${uuidLength} caractères)`));
     }
     
     const params = new URLSearchParams();
