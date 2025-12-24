@@ -500,6 +500,12 @@ async function deleteBooking(bookingId) {
  * Récupère les price overrides d'une propriété
  */
 async function getPriceOverrides(propertyId, startDate, endDate) {
+  // Valider que propertyId est un UUID valide
+  if (!propertyId || typeof propertyId !== 'string' || propertyId.length < 32) {
+    console.error('getPriceOverrides: UUID invalide reçu', propertyId, 'Longueur:', propertyId?.length);
+    throw new Error(`UUID de propriété invalide: ${propertyId}`);
+  }
+  
   let query = supabase
     .from('price_overrides')
     .select('*')
@@ -514,7 +520,10 @@ async function getPriceOverrides(propertyId, startDate, endDate) {
   
   const { data, error } = await query.order('date', { ascending: true });
   
-  if (error) throw error;
+  if (error) {
+    console.error('Erreur Supabase getPriceOverrides:', error, 'propertyId:', propertyId);
+    throw error;
+  }
   return data || [];
 }
 

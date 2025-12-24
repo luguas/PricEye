@@ -572,10 +572,25 @@ export function enableAutoPricing(userId, enabled, timezone, token) {
 
 // GET /api/properties/:id/price-overrides - Récupérer les price overrides
 export function getPriceOverrides(propertyId, token, startDate, endDate) {
+    // Valider que propertyId est un UUID valide
+    if (!propertyId || typeof propertyId !== 'string') {
+        console.error('getPriceOverrides: propertyId invalide', propertyId);
+        return Promise.reject(new Error('ID de propriété invalide'));
+    }
+    
+    // Un UUID fait au moins 32 caractères (sans tirets) ou 36 avec tirets
+    if (propertyId.length < 32) {
+        console.error('getPriceOverrides: UUID trop court', propertyId, 'Longueur:', propertyId.length);
+        return Promise.reject(new Error(`ID de propriété invalide (trop court: ${propertyId.length} caractères)`));
+    }
+    
     const params = new URLSearchParams();
     if (startDate) params.append('startDate', startDate);
     if (endDate) params.append('endDate', endDate);
-    return apiRequest(`/api/properties/${propertyId}/price-overrides?${params.toString()}`, {
+    
+    // Encoder l'UUID pour éviter les problèmes d'URL
+    const encodedPropertyId = encodeURIComponent(propertyId);
+    return apiRequest(`/api/properties/${encodedPropertyId}/price-overrides?${params.toString()}`, {
         token,
     });
 }

@@ -6061,9 +6061,16 @@ console.log('[Auto-Pricing] Service de planification démarré. Vérification to
 // GET /api/properties/:id/price-overrides - Récupérer les price overrides pour une période
 app.get('/api/properties/:id/price-overrides', authenticateToken, async (req, res) => {
     try {
-        const propertyId = req.params.id;
+        let propertyId = req.params.id;
         const userId = req.user.uid;
         const { startDate, endDate } = req.query;
+
+        // Valider que propertyId est un UUID valide (32 caractères hexadécimaux, avec ou sans tirets)
+        // Un UUID fait 32 caractères hex (sans tirets) ou 36 avec tirets
+        if (!propertyId || propertyId.length < 32) {
+            console.error('UUID invalide reçu pour price-overrides:', propertyId, 'Longueur:', propertyId?.length);
+            return res.status(400).send({ error: 'ID de propriété invalide.' });
+        }
 
         // Vérifier que la propriété appartient à l'utilisateur
         const property = await db.getProperty(propertyId);

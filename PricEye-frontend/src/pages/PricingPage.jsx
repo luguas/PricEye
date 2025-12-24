@@ -20,7 +20,8 @@ function PricingPage({ token, userProfile }) {
   const [currentCalendarDate, setCurrentCalendarDate] = useState(new Date());
   const [priceOverrides, setPriceOverrides] = useState({});
   const [bookings, setBookings] = useState({}); 
-  const [isLoading, setIsLoading] = useState(true); 
+  const [isLoading, setIsLoading] = useState(true);
+  const [isCalendarLoading, setIsCalendarLoading] = useState(false); 
   const [error, setError] = useState('');
   const [iaLoading, setIaLoading] = useState(false);
   const [isAutoGenerationEnabled, setIsAutoGenerationEnabled] = useState(false);
@@ -442,7 +443,15 @@ function PricingPage({ token, userProfile }) {
 
 
   const fetchCalendarData = useCallback(async () => {
-    if (!selectedId || isLoading) return; 
+    if (!selectedId) {
+      setIsCalendarLoading(false);
+      setPriceOverrides({});
+      setBookings({});
+      return;
+    }
+    
+    setIsCalendarLoading(true);
+    setError('');
     
     let propertyIdToFetch;
     let currentProperty; 
@@ -452,16 +461,40 @@ function PricingPage({ token, userProfile }) {
         currentProperty = properties.find(p => p.id === selectedId);
     } else { 
         const group = allGroups.find(g => g.id === selectedId);
-        if (!group) return;
+        if (!group) {
+          setIsCalendarLoading(false);
+          setPriceOverrides({});
+          setBookings({});
+          return;
+        }
         propertyIdToFetch = group.mainPropertyId || group.properties?.[0];
+        if (!propertyIdToFetch) {
+          setIsCalendarLoading(false);
+          setPriceOverrides({});
+          setBookings({});
+          return;
+        }
+        
+        // Valider que propertyIdToFetch est un UUID valide
+        if (typeof propertyIdToFetch !== 'string' || propertyIdToFetch.length < 32) {
+          console.error('UUID invalide pour le groupe:', propertyIdToFetch, 'Groupe:', group);
+          setIsCalendarLoading(false);
+          setPriceOverrides({});
+          setBookings({});
+          return;
+        }
         currentProperty = properties.find(p => p.id === propertyIdToFetch);
     }
 
-    if (!propertyIdToFetch || !currentProperty) {
+    if (!propertyIdToFetch) {
+         setIsCalendarLoading(false);
          setPriceOverrides({});
          setBookings({});
          return; 
     }
+    
+    // Si currentProperty n'est pas trouvé, on continue quand même avec propertyIdToFetch
+    // car on peut avoir besoin de charger les données même si la propriété n'est pas dans la liste
 
     try {
       const year = currentCalendarDate.getFullYear();
@@ -472,7 +505,15 @@ function PricingPage({ token, userProfile }) {
       const endOfMonth = `${year}-${String(month + 1).padStart(2, '0')}-${String(lastDayOfMonth).padStart(2, '0')}`;
       
       // Fetch Overrides via API backend
-      const overridesData = await getPriceOverrides(propertyIdToFetch, token, startOfMonth, endOfMonth);
+      let overridesData = {};
+      try {
+        overridesData = await getPriceOverrides(propertyIdToFetch, token, startOfMonth, endOfMonth);
+      } catch (overrideError) {
+        console.error("Erreur lors de la récupération des prix:", overrideError);
+        // Continuer avec un objet vide si les prix échouent
+        overridesData = {};
+      }
+      
       const newOverrides = {};
       
       // Gérer à la fois le format tableau (ancien) et objet (nouveau)
@@ -498,31 +539,41 @@ function PricingPage({ token, userProfile }) {
       setPriceOverrides(newOverrides);
 
       // Fetch Bookings
-      const bookingsData = await getBookingsForMonth(propertyIdToFetch, year, month, token);
+      let bookingsData = [];
+      try {
+        bookingsData = await getBookingsForMonth(propertyIdToFetch, year, month, token);
+      } catch (bookingError) {
+        console.error("Erreur lors de la récupération des réservations:", bookingError);
+        // Continuer même si les réservations échouent
+        bookingsData = [];
+      }
+      
       const newBookings = {};
-      bookingsData.forEach(booking => {
-          if (!booking.startDate || !booking.endDate) return;
-          
-          // Valider et parser les dates de manière sécurisée
-          let currentDate = new Date(booking.startDate + 'T00:00:00Z');
-          const endDate = new Date(booking.endDate + 'T00:00:00Z');
-          
-          // Vérifier que les dates sont valides
-          if (isNaN(currentDate.getTime()) || isNaN(endDate.getTime())) {
-              console.warn('Date invalide dans la réservation:', booking);
-              return;
-          }
-          
-          while (currentDate < endDate) { 
-              const dateStr = currentDate.toISOString().split('T')[0];
-              // Vérifier que la date générée est valide (évite les dates comme 2026-02-31)
-              const dateCheck = new Date(dateStr + 'T00:00:00Z');
-              if (!isNaN(dateCheck.getTime()) && dateCheck.toISOString().split('T')[0] === dateStr) {
-                  newBookings[dateStr] = booking;
-              }
-              currentDate.setUTCDate(currentDate.getUTCDate() + 1);
-          }
-      });
+      if (Array.isArray(bookingsData)) {
+        bookingsData.forEach(booking => {
+            if (!booking.startDate || !booking.endDate) return;
+            
+            // Valider et parser les dates de manière sécurisée
+            let currentDate = new Date(booking.startDate + 'T00:00:00Z');
+            const endDate = new Date(booking.endDate + 'T00:00:00Z');
+            
+            // Vérifier que les dates sont valides
+            if (isNaN(currentDate.getTime()) || isNaN(endDate.getTime())) {
+                console.warn('Date invalide dans la réservation:', booking);
+                return;
+            }
+            
+            while (currentDate < endDate) { 
+                const dateStr = currentDate.toISOString().split('T')[0];
+                // Vérifier que la date générée est valide (évite les dates comme 2026-02-31)
+                const dateCheck = new Date(dateStr + 'T00:00:00Z');
+                if (!isNaN(dateCheck.getTime()) && dateCheck.toISOString().split('T')[0] === dateStr) {
+                    newBookings[dateStr] = booking;
+                }
+                currentDate.setUTCDate(currentDate.getUTCDate() + 1);
+            }
+        });
+      }
       setBookings(newBookings);
       
     } catch (err) {
@@ -530,8 +581,10 @@ function PricingPage({ token, userProfile }) {
       setError(t('pricing.errors.calendar', { message: err.message }));
       setPriceOverrides({});
       setBookings({});
+    } finally {
+      setIsCalendarLoading(false);
     }
-  }, [selectedId, selectedView, currentCalendarDate, token, properties, allGroups, isLoading, t]); 
+  }, [selectedId, selectedView, currentCalendarDate, token, properties, allGroups, t]); 
 
    useEffect(() => {
       fetchCalendarData();
@@ -841,6 +894,19 @@ function PricingPage({ token, userProfile }) {
      }
   }, [selectedId, selectedView, properties, allGroups]);
   
+  // Obtenir le prix de base pour l'affichage (utiliser le prix de la propriété ou une valeur par défaut)
+  const getBasePrice = useCallback(() => {
+    if (currentItem && currentItem.daily_revenue) {
+      return currentItem.daily_revenue;
+    }
+    // Si pas de propriété trouvée, utiliser le premier prix override comme référence
+    const firstOverride = Object.values(priceOverrides)[0];
+    if (firstOverride) {
+      return firstOverride;
+    }
+    return 0; // Valeur par défaut
+  }, [currentItem, priceOverrides]);
+  
   // NOUVEAU: Logique pour obtenir l'ID de la propriété à analyser
   const propertyIdForAnalysis = useMemo(() => {
      if (selectedView === 'property') {
@@ -937,9 +1003,16 @@ function PricingPage({ token, userProfile }) {
   const renderCalendar = () => {
     const currentProperty = currentItem;
     
-    if (isLoading || !selectedId || !currentProperty) {
+    if (isLoading || !selectedId) {
          return <div className="grid grid-cols-7 gap-3"><p className="text-center p-4 text-global-inactive col-span-7">{t('pricing.loading')}</p></div>;
     }
+    
+    if (isCalendarLoading) {
+         return <div className="grid grid-cols-7 gap-3"><p className="text-center p-4 text-global-inactive col-span-7">{t('pricing.loading')}</p></div>;
+    }
+    
+    // Utiliser une valeur par défaut si currentProperty n'existe pas
+    const basePrice = currentProperty?.daily_revenue || 0;
     
     const year = currentCalendarDate.getFullYear();
     const month = currentCalendarDate.getMonth();
@@ -987,7 +1060,7 @@ function PricingPage({ token, userProfile }) {
           continue; // Ignorer les dates invalides (ex: 31 février)
         }
         const isBooked = !!bookings[dateStr];
-        const price = isBooked ? bookings[dateStr].pricePerNight : (priceOverrides[dateStr] ?? currentProperty.daily_revenue);
+        const price = isBooked ? bookings[dateStr].pricePerNight : (priceOverrides[dateStr] ?? basePrice);
         const currency = userProfile?.currency || 'EUR';
         const priceFormatted = price != null ? `${Math.round(price)}${currency === 'EUR' ? '€' : currency === 'USD' ? '$US' : currency}` : '';
         
@@ -1177,12 +1250,20 @@ function PricingPage({ token, userProfile }) {
        if (!type || !id) {
            setSelectedView('property'); // Fallback
            setSelectedId('');
+           setIsCalendarLoading(false);
+           setPriceOverrides({});
+           setBookings({});
            return;
        }
+       // Réinitialiser l'état de chargement et les données avant de changer
+       setIsCalendarLoading(true);
+       setPriceOverrides({});
+       setBookings({});
+       clearSelection();
+       setSelectedDateForAnalysis(null);
+       // Changer la sélection
        setSelectedView(type);
        setSelectedId(id);
-       clearSelection();
-       setSelectedDateForAnalysis(null); // Réinitialiser l'analyse
    };
    
    const getSelectedValue = () => {
