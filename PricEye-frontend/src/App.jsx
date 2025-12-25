@@ -132,7 +132,7 @@ function AppContent() {
     };
   }, [handleLogout]);
 
-  // Effet pour vérifier le retour depuis Stripe Checkout (doit être exécuté en premier)
+  // Effet pour vérifier le retour depuis Stripe Checkout
   useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search);
     const sessionId = urlParams.get('session_id');
@@ -164,7 +164,7 @@ function AppContent() {
     }
   }, []);
 
-  // Effet pour le chargement initial (une seule fois)
+  // Effet pour le chargement initial et gestion du token depuis un site externe
   useEffect(() => {
     if (!isInitialLoad) return;
     
@@ -174,6 +174,52 @@ function AppContent() {
       return;
     }
     
+    // PRIORITÉ 1: Vérifier si un token vient d'un site externe dans l'URL
+    const urlParams = new URLSearchParams(window.location.search);
+    const externalToken = urlParams.get('token');
+    
+    // Vérifier aussi le hash (ex: #access_token=... ou #token=...)
+    const hashParams = new URLSearchParams(window.location.hash.substring(1));
+    const hashToken = hashParams.get('token') || hashParams.get('access_token');
+    
+    const tokenFromUrl = externalToken || hashToken;
+    
+    if (tokenFromUrl) {
+      try {
+        // Valider le token JWT
+        const decoded = jwtDecode(tokenFromUrl);
+        
+        // Vérifier que le token n'est pas expiré
+        if (decoded.exp && decoded.exp * 1000 < Date.now()) {
+          console.error('Token expiré depuis site externe');
+          // Nettoyer l'URL
+          const cleanUrl = window.location.pathname || '/';
+          window.history.replaceState({}, '', cleanUrl);
+          setCurrentView('login');
+          setIsInitialLoad(false);
+          return;
+        }
+        
+        // Token valide : le stocker et connecter l'utilisateur
+        localStorage.setItem('authToken', tokenFromUrl);
+        setToken(tokenFromUrl);
+        setCurrentView('dashboard');
+        
+        // Nettoyer l'URL
+        const cleanUrl = window.location.pathname || '/';
+        window.history.replaceState({}, '', cleanUrl);
+        
+        setIsInitialLoad(false);
+        return;
+      } catch (e) {
+        console.error('Token invalide depuis site externe:', e);
+        // Nettoyer l'URL et continuer avec la logique normale
+        const cleanUrl = window.location.pathname || '/';
+        window.history.replaceState({}, '', cleanUrl);
+      }
+    }
+    
+    // PRIORITÉ 2: Vérifier le token stocké dans localStorage
     const storedToken = localStorage.getItem('authToken');
     if (storedToken) {
       // Vérifier que le token est valide avant de l'utiliser
