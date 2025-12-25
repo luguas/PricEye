@@ -2440,23 +2440,64 @@ app.post('/api/properties', authenticateToken, async (req, res) => {
         // surface, capacity, daily_revenue, min_stay, amenities, etc.
         // Adapter les noms de champs pour PostgreSQL (snake_case)
         const propertyWithOwner = { 
+            // Étape 1: Informations de base
             name: newPropertyData.name,
             address: newPropertyData.address,
             location: newPropertyData.location,
-            description: newPropertyData.description,
+            description: newPropertyData.description || '',
             property_type: newPropertyData.property_type || newPropertyData.type || 'villa',
-            surface: newPropertyData.surface,
-            capacity: newPropertyData.capacity,
-            daily_revenue: newPropertyData.daily_revenue,
+            
+            // Étape 2: Caractéristiques du logement
+            surface: newPropertyData.surface || 0,
+            bedrooms: newPropertyData.bedrooms !== undefined ? newPropertyData.bedrooms : null,
+            bathrooms: newPropertyData.bathrooms !== undefined ? newPropertyData.bathrooms : null,
+            floor: newPropertyData.floor || null,
+            construction_year: newPropertyData.construction_year || null,
+            renovation_year: newPropertyData.renovation_year || null,
+            view_type: newPropertyData.view_type || null,
+            
+            // Étape 3: Localisation et environnement
+            neighborhood: newPropertyData.neighborhood || null,
+            city_center_distance: newPropertyData.city_center_distance || null,
+            noise_level: newPropertyData.noise_level || null,
+            public_transport: newPropertyData.public_transport || null,
+            nearby_attractions: newPropertyData.nearby_attractions || null,
+            
+            // Étape 4: Equipements
+            amenities: newPropertyData.amenities || [],
+            kitchen_amenities: newPropertyData.kitchen_amenities || [],
+            security_amenities: newPropertyData.security_amenities || [],
+            
+            // Étape 5: Tarification et conditions
+            base_price: newPropertyData.base_price || newPropertyData.daily_revenue || 100,
+            weekend_surcharge: newPropertyData.weekend_surcharge || null,
+            cleaning_fee: newPropertyData.cleaning_fee || null,
+            deposit: newPropertyData.deposit || null,
             min_stay: newPropertyData.min_stay || 1,
             max_stay: newPropertyData.max_stay || null,
-            amenities: newPropertyData.amenities || [],
+            check_in_time: newPropertyData.check_in_time || null,
+            check_out_time: newPropertyData.check_out_time || null,
+            
+            // Étape 6: Politique et règles
+            smoking_allowed: newPropertyData.smoking_allowed || false,
+            pets_allowed: newPropertyData.pets_allowed || false,
+            events_allowed: newPropertyData.events_allowed || false,
+            children_welcome: newPropertyData.children_welcome || false,
+            instant_booking: newPropertyData.instant_booking || false,
+            license_number: newPropertyData.license_number || null,
+            insurance: newPropertyData.insurance || null,
+            tax_info: newPropertyData.tax_info || null,
+            
+            // Champs existants pour compatibilité
+            capacity: newPropertyData.capacity || 0,
+            daily_revenue: newPropertyData.base_price || newPropertyData.daily_revenue || 100,
+            
+            // Champs système
             owner_id: userId, 
             team_id: teamId, 
             status: 'active', // Statut par défaut
             strategy: newPropertyData.strategy || 'Équilibré',
             floor_price: newPropertyData.floor_price || 0,
-            base_price: newPropertyData.base_price || 100,
             ceiling_price: newPropertyData.ceiling_price || null,
             weekly_discount_percent: newPropertyData.weekly_discount_percent || null,
             monthly_discount_percent: newPropertyData.monthly_discount_percent || null,
