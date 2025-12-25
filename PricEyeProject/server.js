@@ -358,21 +358,39 @@ function calculateBillingQuantities(userProperties, userGroups) {
         const groupProperties = group.properties || [];
         
         if (groupProperties.length > 0) {
-            // La 1ère propriété du groupe = PROPRIÉTÉ PARENTE (prix principal)
-            quantityPrincipal += 1;
+            // Identifier la propriété principale du groupe
+            // Utiliser mainPropertyId (ou main_property_id) si défini, sinon utiliser la première propriété
+            const mainPropertyId = group.mainPropertyId || group.main_property_id;
             
-            // Les propriétés suivantes dans le groupe = PROPRIÉTÉS FILLES (prix enfant 3.99€)
-            if (groupProperties.length > 1) {
-                quantityChild += (groupProperties.length - 1);
+            // Convertir toutes les propriétés en IDs pour faciliter la comparaison
+            const groupPropertyIds = groupProperties.map(prop => {
+                return typeof prop === 'string' ? prop : (prop.id || prop.property_id);
+            }).filter(Boolean);
+            
+            // Déterminer quelle propriété est la principale
+            let principalPropertyId;
+            if (mainPropertyId && groupPropertyIds.includes(mainPropertyId)) {
+                // Utiliser la propriété principale définie dans le groupe
+                principalPropertyId = mainPropertyId;
+            } else if (groupPropertyIds.length > 0) {
+                // Fallback : utiliser la première propriété si aucune principale n'est définie
+                principalPropertyId = groupPropertyIds[0];
+            }
+            
+            // La propriété principale = PROPRIÉTÉ PARENTE (prix principal)
+            if (principalPropertyId) {
+                quantityPrincipal += 1;
+            }
+            
+            // Toutes les autres propriétés du groupe = PROPRIÉTÉS FILLES (prix enfant 3.99€)
+            const childPropertiesCount = groupPropertyIds.length - (principalPropertyId ? 1 : 0);
+            if (childPropertiesCount > 0) {
+                quantityChild += childPropertiesCount;
             }
             
             // Ajouter toutes les propriétés du groupe au Set pour les exclure des propriétés indépendantes
-            // Gérer à la fois les IDs (strings) et les objets propriétés (Supabase)
-            groupProperties.forEach(prop => {
-                const propId = typeof prop === 'string' ? prop : (prop.id || prop.property_id);
-                if (propId) {
-                    propertiesInGroups.add(propId);
-                }
+            groupPropertyIds.forEach(propId => {
+                propertiesInGroups.add(propId);
             });
             
             // TODO: Ajouter ici la validation de géolocalisation pour éviter la fraude
