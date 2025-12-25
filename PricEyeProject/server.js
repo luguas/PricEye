@@ -3523,12 +3523,29 @@ app.put('/api/groups/:id/properties', authenticateToken, async (req, res) => {
                     // Extraire les coordonnées (format peut varier)
                     let templateLat, templateLon, newLat, newLon;
                     
-                    const templateLoc = typeof templatePropertyData.location === 'object' 
-                        ? templatePropertyData.location 
-                        : (typeof templatePropertyData.location === 'string' ? JSON.parse(templatePropertyData.location) : null);
-                    const newLoc = typeof property.location === 'object' 
-                        ? property.location 
-                        : (typeof property.location === 'string' ? JSON.parse(property.location) : null);
+                    let templateLoc = null;
+                    if (typeof templatePropertyData.location === 'object') {
+                        templateLoc = templatePropertyData.location;
+                    } else if (typeof templatePropertyData.location === 'string') {
+                        try {
+                            templateLoc = JSON.parse(templatePropertyData.location);
+                        } catch (e) {
+                            // Si ce n'est pas du JSON valide, on traite comme une chaîne de coordonnées
+                            templateLoc = null;
+                        }
+                    }
+                    
+                    let newLoc = null;
+                    if (typeof property.location === 'object') {
+                        newLoc = property.location;
+                    } else if (typeof property.location === 'string') {
+                        try {
+                            newLoc = JSON.parse(property.location);
+                        } catch (e) {
+                            // Si ce n'est pas du JSON valide, on traite comme une chaîne de coordonnées
+                            newLoc = null;
+                        }
+                    }
                     
                     if (templateLoc?.latitude && templateLoc?.longitude) {
                         templateLat = templateLoc.latitude;
