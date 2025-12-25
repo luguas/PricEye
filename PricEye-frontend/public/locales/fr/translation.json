@@ -254,6 +254,7 @@
     "next": "Suivant",
     "previous": "Précédent",
     "optional": "Optionnel",
+    "filter": "Filtrer",
     "clickToNavigate": "Cliquer pour naviguer vers cette étape",
     "editPricingStrategy": "Modifier la stratégie",
     "steps": {
@@ -315,6 +316,7 @@
     "ok": "OK",
     "cancel": "Annuler",
     "setMain": "Définir principal",
+    "setAsMain": "Définir comme principal",
     "main": "Principal",
     "addProperties": "Ajouter des propriétés disponibles",
     "add": "Ajouter",

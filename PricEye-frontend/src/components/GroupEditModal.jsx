@@ -3,6 +3,11 @@ import { updateGroup, updateGroupStrategy, updateGroupRules, addPropertiesToGrou
 import CustomScrollbar from './CustomScrollbar.jsx';
 import { useLanguage } from '../contexts/LanguageContext.jsx';
 import ConfirmModal from './ConfirmModal.jsx';
+import BoutonStateSecondaire from './BoutonStateSecondaire.jsx';
+import BoutonStatePrincipal from './BoutonStatePrincipal.jsx';
+import IconsStateFiltre from './IconsStateFiltre.jsx';
+import IconsStateAdd from './IconsStateAdd.jsx';
+import IconsStateFlCheBas from './IconsStateFlCheBas.jsx';
 
 // Composant CheckProperty1On (checkbox avec état on/off)
 const CheckProperty1On = ({ property1 = 'off', className = '', onChange }) => {
@@ -33,6 +38,12 @@ const CheckProperty1On = ({ property1 = 'off', className = '', onChange }) => {
 const CloseIcon = () => (
   <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
     <path d="M15 5L5 15M5 5L15 15" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+  </svg>
+);
+
+const DeleteIcon = () => (
+  <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+    <path d="M2 4H14M12.6667 4V13.3333C12.6667 14 12 14.6667 11.3333 14.6667H4.66667C4 14.6667 3.33333 14 3.33333 13.3333V4M5.33333 4V2.66667C5.33333 2 6 1.33333 6.66667 1.33333H9.33333C10 1.33333 10.6667 2 10.6667 2.66667V4M6.66667 7.33333V11.3333M9.33333 7.33333V11.3333" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round"/>
   </svg>
 );
 
@@ -221,16 +232,28 @@ function GroupEditModal({ token, onClose, onSave, group, properties, userProfile
         </div>
 
         {/* Content */}
-        <CustomScrollbar className="flex-1 min-h-0">
-          <div className="p-6 space-y-6">
-            {error && (
-              <div className="p-3 bg-red-900/40 border border-red-500/40 rounded-lg">
-                <p className="text-sm text-red-300">{error}</p>
-              </div>
-            )}
+        {activeTab === 'properties' ? (
+          <div className="flex-1 min-h-0 overflow-y-auto">
+            <div className="p-6">
+              {error && (
+                <div className="p-3 bg-red-900/40 border border-red-500/40 rounded-lg mb-6">
+                  <p className="text-sm text-red-300">{error}</p>
+                </div>
+              )}
+              {/* Tab: Properties sera rendu plus bas */}
+            </div>
+          </div>
+        ) : (
+          <CustomScrollbar className="flex-1 min-h-0">
+            <div className="p-6 space-y-6">
+              {error && (
+                <div className="p-3 bg-red-900/40 border border-red-500/40 rounded-lg">
+                  <p className="text-sm text-red-300">{error}</p>
+                </div>
+              )}
 
-            {/* Tab: General */}
-            {activeTab === 'general' && (
+              {/* Tab: General */}
+              {activeTab === 'general' && (
               <div className="space-y-4">
                 <div>
                   <label htmlFor="groupName" className="block text-sm font-medium text-global-inactive mb-2">
@@ -433,98 +456,108 @@ function GroupEditModal({ token, onClose, onSave, group, properties, userProfile
               </div>
             )}
 
-            {/* Tab: Properties */}
-            {activeTab === 'properties' && (
-              <div className="space-y-6">
-                <div>
-                  <h3 className="text-lg font-semibold text-global-blanc mb-4">
-                    {t('groupsManager.propertiesInGroup')} ({propertiesInGroup.length})
-                  </h3>
-                  {propertiesInGroup.length > 0 ? (
-                    <ul className="space-y-2">
-                      {propertiesInGroup.map(prop => (
-                        <li key={prop.id} className="flex justify-between items-center bg-global-bg-small-box border border-global-stroke-box p-3 rounded-lg">
-                          <div className="flex items-center gap-3 flex-1">
-                            <input
-                              type="radio"
-                              name="mainProperty"
-                              checked={mainPropertyId === prop.id}
-                              onChange={() => setMainPropertyId(prop.id)}
-                              className="w-4 h-4 text-blue-600"
-                            />
-                            <span className="text-global-blanc">{prop.address || prop.name}</span>
-                            {mainPropertyId === prop.id && (
-                              <span className="px-2 py-0.5 bg-blue-600 text-white rounded-full text-xs font-bold">
-                                {t('groupsManager.main')}
-                              </span>
-                            )}
-                          </div>
-                          <button
-                            onClick={() => handleRemoveProperty(prop.id)}
-                            className="px-3 py-1 bg-red-800 hover:bg-red-700 text-white rounded text-sm transition-colors"
-                          >
-                            {t('groupsManager.removeProperty')}
-                          </button>
-                        </li>
-                      ))}
-                    </ul>
-                  ) : (
-                    <p className="text-sm text-global-inactive">{t('groupsManager.noProperties')}</p>
-                  )}
+            </div>
+          </CustomScrollbar>
+        )}
+        
+        {/* Tab: Properties - rendu séparément sans scroll global */}
+        {activeTab === 'properties' && (
+          <div className="flex-1 min-h-0 flex flex-col">
+            {error && (
+              <div className="p-3 bg-red-900/40 border border-red-500/40 rounded-lg m-6 mb-0">
+                <p className="text-sm text-red-300">{error}</p>
+              </div>
+            )}
+            <div className="flex-1 min-h-0 overflow-y-auto p-6">
+              <div className="bg-global-bg-box rounded-[14px] border-solid border-global-stroke-box border p-6 flex flex-col gap-3 items-start justify-start relative w-full">
+                <div className="text-global-blanc text-left font-h2-font-family text-h2-font-size font-h2-font-weight relative">
+                  {t('groupsManager.propertiesInGroup')} ({propertiesInGroup.length})
                 </div>
 
-                {availableProperties.length > 0 && (
-                  <div>
-                    <h3 className="text-lg font-semibold text-global-blanc mb-4">{t('groupsManager.addProperties')}</h3>
-                    <div className="flex gap-2">
-                      <select
-                        multiple
-                        value={selectedPropertiesToAdd}
-                        onChange={(e) => setSelectedPropertiesToAdd(Array.from(e.target.selectedOptions, option => option.value))}
-                        className="flex-grow bg-global-bg-small-box border border-global-stroke-box rounded-[10px] text-sm h-32 text-global-blanc focus:outline-none p-2"
-                        size={Math.min(availableProperties.length, 5)}
-                      >
-                        {availableProperties.map(prop => (
-                          <option key={prop.id} value={prop.id}>
-                            {prop.address || prop.name}
-                          </option>
-                        ))}
-                      </select>
-                      <button
-                        onClick={async () => {
-                          if (selectedPropertiesToAdd.length > 0) {
-                            try {
-                              setIsLoading(true);
-                              await addPropertiesToGroup(group.id, selectedPropertiesToAdd, token);
-                              // Mettre à jour l'état local immédiatement
-                              setPropertiesInGroupIds(prev => [...prev, ...selectedPropertiesToAdd]);
-                              setSelectedPropertiesToAdd([]);
-                              if (onSave) onSave();
-                            } catch (err) {
-                              setError(err.message);
-                            } finally {
-                              setIsLoading(false);
-                            }
-                          }
-                        }}
-                        disabled={isLoading || selectedPropertiesToAdd.length === 0}
-                        className="px-4 py-2 font-semibold text-white bg-gradient-to-r from-[#155dfc] to-[#12a1d5] rounded-md self-start hover:opacity-90 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed"
-                      >
-                        {t('groupsManager.add')}
-                      </button>
+                {/* Propriétés dans le groupe */}
+                {propertiesInGroup.length > 0 ? (
+                  propertiesInGroup.map(prop => (
+                    <div key={prop.id} className="bg-[rgba(29,41,61,0.50)] rounded-[10px] border-solid border-[rgba(49,65,88,0.50)] border p-4 flex flex-col gap-4 items-start justify-start self-stretch shrink-0 relative">
+                      <div className="flex flex-row items-center justify-between self-stretch shrink-0 relative">
+                        <div className="text-[#ffffff] text-left font-h3-font-family text-h3-font-size font-h3-font-weight relative flex-1">
+                          {prop.address || prop.name}
+                        </div>
+                        <div className="flex flex-row gap-2 items-start justify-end shrink-0 relative">
+                          <button
+                            onClick={() => setMainPropertyId(prop.id)}
+                            disabled={mainPropertyId === prop.id || isLoading}
+                            className={`bg-global-bg-small-box rounded-lg border-solid border-global-stroke-box border pt-3 pr-4 pb-3 pl-4 flex flex-row gap-4 items-center justify-start shrink-0 relative transition-opacity ${
+                              mainPropertyId === prop.id 
+                                ? 'opacity-50 cursor-not-allowed' 
+                                : 'hover:opacity-90 cursor-pointer'
+                            }`}
+                          >
+                            <div className="text-[#ffffff] text-center font-['Arial-Regular',_sans-serif] text-sm leading-5 font-normal relative">
+                              {t('groupsManager.setAsMain') || 'Définir comme principal'}
+                            </div>
+                          </button>
+                          <button
+                            onClick={() => handleRemoveProperty(prop.id)}
+                            disabled={isLoading}
+                            className="bg-global-bg-small-box rounded-lg border-solid border-global-stroke-box border flex flex-row gap-0 items-center justify-center self-stretch shrink-0 w-11 relative hover:opacity-90 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed"
+                            style={{ aspectRatio: "1" }}
+                          >
+                            <DeleteIcon className="shrink-0 w-4 h-4 relative overflow-visible text-global-blanc" />
+                          </button>
+                        </div>
+                      </div>
                     </div>
-                    <p className="text-xs text-global-inactive mt-2">
-                      {t('groupEditModal.selectMultipleHint')}
-                    </p>
+                  ))
+                ) : (
+                  <p className="text-sm text-global-inactive">{t('groupsManager.noProperties')}</p>
+                )}
+
+                {/* Section Ajouter des propriétés disponibles */}
+                {availableProperties.length > 0 && (
+                  <div className="bg-[rgba(29,41,61,0.50)] rounded-[10px] border-solid border-[rgba(49,65,88,0.50)] border p-4 flex flex-col gap-4 items-start justify-start self-stretch shrink-0 relative overflow-hidden">
+                    <div className="text-[#ffffff] text-left font-h3-font-family text-h3-font-size font-h3-font-weight relative self-stretch">
+                      {t('groupsManager.addProperties')}
+                    </div>
+                    <div className="self-stretch shrink-0 relative overflow-hidden" style={{ height: '256px' }}>
+                      <CustomScrollbar className="h-full w-full">
+                        <div className="flex flex-col gap-3 items-start justify-start pr-2">
+                          {availableProperties.map(prop => (
+                            <div key={prop.id} className="bg-global-bg-small-box rounded-lg border-solid border-global-stroke-box border pt-3 pr-4 pb-3 pl-5 flex flex-row items-center justify-between w-full shrink-0 relative">
+                              <div className="text-global-blanc text-left font-h4-font-family text-h4-font-size leading-h4-line-height font-h4-font-weight relative flex-1 min-w-0">
+                                {prop.address || prop.name}
+                              </div>
+                              <BoutonStatePrincipal
+                                component={<IconsStateAdd className="!w-5 !self-[unset]" state="add" />}
+                                text={t('groupsManager.add')}
+                                className="!shrink-0"
+                                onClick={async () => {
+                                  try {
+                                    setIsLoading(true);
+                                    await addPropertiesToGroup(group.id, [prop.id], token);
+                                    setPropertiesInGroupIds(prev => [...prev, prop.id]);
+                                    if (onSave) onSave();
+                                  } catch (err) {
+                                    setError(err.message);
+                                  } finally {
+                                    setIsLoading(false);
+                                  }
+                                }}
+                                disabled={isLoading}
+                              />
+                            </div>
+                          ))}
+                        </div>
+                      </CustomScrollbar>
+                    </div>
                   </div>
                 )}
                 {availableProperties.length === 0 && propertiesInGroup.length > 0 && (
                   <p className="text-sm text-global-inactive">{t('groupsManager.allPropertiesInGroup')}</p>
                 )}
               </div>
-            )}
+            </div>
           </div>
-        </CustomScrollbar>
+        )}
 
         {/* Footer */}
         <div className="flex items-center justify-end gap-3 p-6 border-t border-global-stroke-box shrink-0">
