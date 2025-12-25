@@ -298,7 +298,13 @@
     "properties": "Propriétés",
     "groupName": "Nom du groupe",
     "groupNamePlaceholder": "Nom du groupe",
-    "selectMultipleHint": "Maintenez Ctrl (ou Cmd sur Mac) pour sélectionner plusieurs propriétés"
+    "selectMultipleHint": "Maintenez Ctrl (ou Cmd sur Mac) pour sélectionner plusieurs propriétés",
+    "dangerZone": "Zone dangereuse",
+    "deleteGroup": "Supprimer le groupe",
+    "deleteGroupHint": "Cette action est irréversible. Toutes les données du groupe seront supprimées.",
+    "deleteConfirmTitle": "Supprimer le groupe",
+    "deleteConfirmMessage": "Êtes-vous sûr de vouloir supprimer le groupe \"{{groupName}}\" ? Cette action est irréversible.",
+    "deleteConfirm": "Supprimer"
   },
   "strategyModal": {
     "title": "Stratégie IA (Prix)",

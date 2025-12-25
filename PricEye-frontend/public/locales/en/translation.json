@@ -298,7 +298,13 @@
     "properties": "Properties",
     "groupName": "Group name",
     "groupNamePlaceholder": "Group name",
-    "selectMultipleHint": "Hold Ctrl (or Cmd on Mac) to select multiple properties"
+    "selectMultipleHint": "Hold Ctrl (or Cmd on Mac) to select multiple properties",
+    "dangerZone": "Danger Zone",
+    "deleteGroup": "Delete Group",
+    "deleteGroupHint": "This action is irreversible. All group data will be deleted.",
+    "deleteConfirmTitle": "Delete Group",
+    "deleteConfirmMessage": "Are you sure you want to delete the group \"{{groupName}}\"? This action is irreversible.",
+    "deleteConfirm": "Delete"
   },
   "strategyModal": {
     "title": "AI Strategy (Pricing)",

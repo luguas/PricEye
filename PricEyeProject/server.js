@@ -1215,15 +1215,13 @@ app.post('/api/subscriptions/end-trial-and-bill', authenticateToken, async (req,
         const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
         
         // Récupérer le profil utilisateur
-        const userProfileRef = db.collection('users').doc(userId);
-        const userProfileDoc = await userProfileRef.get();
+        const userProfile = await db.getUser(userId);
         
-        if (!userProfileDoc.exists) {
+        if (!userProfile) {
             return res.status(404).send({ error: 'Profil utilisateur non trouvé.' });
         }
         
-        const userProfile = userProfileDoc.data();
-        const subscriptionId = userProfile.stripeSubscriptionId;
+        const subscriptionId = userProfile.stripe_subscription_id || userProfile.stripeSubscriptionId;
         
         if (!subscriptionId) {
             return res.status(400).send({ error: 'Aucun abonnement trouvé.' });
@@ -1242,12 +1240,9 @@ app.post('/api/subscriptions/end-trial-and-bill', authenticateToken, async (req,
         }
         
         // Récupérer toutes les propriétés et groupes pour recalculer les quantités
-        const teamId = userProfile.teamId || userId;
-        const propertiesSnapshot = await db.collection('properties').where('teamId', '==', teamId).get();
-        const userProperties = propertiesSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-        
-        const groupsSnapshot = await db.collection('groups').where('ownerId', '==', userId).get();
-        const userGroups = groupsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        const teamId = userProfile.team_id || userProfile.teamId || userId;
+        const userProperties = await db.getPropertiesByTeam(teamId);
+        const userGroups = await db.getGroupsByOwner(userId);
         
         // Calculer les nouvelles quantités
         const quantities = calculateBillingQuantities(userProperties, userGroups);
@@ -1317,9 +1312,9 @@ app.post('/api/subscriptions/end-trial-and-bill', authenticateToken, async (req,
         await stripe.invoices.finalizeInvoice(invoice.id, { auto_advance: true });
         
         // Mettre à jour le profil utilisateur
-        await userProfileRef.update({
-            subscriptionStatus: updatedSubscription.status,
-            trialEndedAt: admin.firestore.FieldValue.serverTimestamp()
+        await db.updateUser(userId, {
+            subscription_status: updatedSubscription.status,
+            trial_ended_at: new Date().toISOString()
         });
         
         console.log(`[End Trial] Essai terminé et facturation effectuée pour ${userId}`);

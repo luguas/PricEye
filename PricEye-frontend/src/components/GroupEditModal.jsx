@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { updateGroup, updateGroupStrategy, updateGroupRules, addPropertiesToGroup, removePropertiesFromGroup } from '../services/api.js';
+import { updateGroup, updateGroupStrategy, updateGroupRules, addPropertiesToGroup, removePropertiesFromGroup, deleteGroup } from '../services/api.js';
 import CustomScrollbar from './CustomScrollbar.jsx';
 import { useLanguage } from '../contexts/LanguageContext.jsx';
+import ConfirmModal from './ConfirmModal.jsx';
 
 // Composant CheckProperty1On (checkbox avec état on/off)
 const CheckProperty1On = ({ property1 = 'off', className = '', onChange }) => {
@@ -40,6 +41,7 @@ function GroupEditModal({ token, onClose, onSave, group, properties, userProfile
   const [activeTab, setActiveTab] = useState('general');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   // État général
   const [groupName, setGroupName] = useState('');
@@ -161,6 +163,24 @@ function GroupEditModal({ token, onClose, onSave, group, properties, userProfile
     }
   };
 
+  const handleDeleteGroup = async () => {
+    try {
+      setIsLoading(true);
+      setError('');
+      await deleteGroup(group.id, token);
+      // Rafraîchir les données dans le parent
+      if (onSave) {
+        onSave();
+      }
+      onClose();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setIsLoading(false);
+      setShowDeleteConfirm(false);
+    }
+  };
+
   const tabs = [
     { id: 'general', label: t('groupEditModal.general') },
     { id: 'strategy', label: t('groupEditModal.strategy') },
@@ -234,6 +254,24 @@ function GroupEditModal({ token, onClose, onSave, group, properties, userProfile
                   <label className="text-global-blanc cursor-pointer flex-1">
                     {t('groupsManager.syncPrices')}
                   </label>
+                </div>
+
+                {/* Section de suppression */}
+                <div className="pt-4 border-t border-global-stroke-box">
+                  <h3 className="text-sm font-medium text-global-inactive mb-3">
+                    {t('groupEditModal.dangerZone')}
+                  </h3>
+                  <button
+                    type="button"
+                    onClick={() => setShowDeleteConfirm(true)}
+                    disabled={isLoading}
+                    className="px-4 py-2 bg-red-800 hover:bg-red-700 text-white rounded-[10px] text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {t('groupEditModal.deleteGroup')}
+                  </button>
+                  <p className="text-xs text-global-inactive mt-2">
+                    {t('groupEditModal.deleteGroupHint')}
+                  </p>
                 </div>
               </div>
             )}
@@ -507,6 +545,17 @@ function GroupEditModal({ token, onClose, onSave, group, properties, userProfile
           </button>
         </div>
       </div>
+
+      {/* Modale de confirmation de suppression */}
+      <ConfirmModal
+        isOpen={showDeleteConfirm}
+        onClose={() => setShowDeleteConfirm(false)}
+        onConfirm={handleDeleteGroup}
+        title={t('groupEditModal.deleteConfirmTitle')}
+        message={t('groupEditModal.deleteConfirmMessage', { groupName: group?.name || '' })}
+        confirmText={t('groupEditModal.deleteConfirm')}
+        cancelText={t('common.cancel')}
+      />
     </div>
   );
 }
