@@ -276,6 +276,61 @@ function getWeekId(date) {
 }
 
 /**
+ * Calcule le prix mensuel total pour les Parent Units selon le système de tarification par paliers.
+ * 
+ * Paliers de tarification :
+ * - 1ère unité : €13.99/mo
+ * - Unités 2-5 : €11.99/mo (4 unités)
+ * - Unités 6-15 : €8.99/mo (10 unités)
+ * - Unités 16-30 : €5.49/mo (15 unités)
+ * - 30+ unités : €3.99/mo
+ * 
+ * @param {number} quantityPrincipal - Nombre total de Parent Units
+ * @returns {Object} - { totalAmount, breakdown } où totalAmount est en centimes et breakdown détaille chaque palier
+ */
+function calculateTieredPricing(quantityPrincipal) {
+    if (quantityPrincipal === 0) {
+        return { totalAmount: 0, breakdown: [] };
+    }
+    
+    // Prix en centimes par palier
+    const TIERS = [
+        { start: 1, end: 1, pricePerUnit: 1399 },      // 1ère unité : €13.99
+        { start: 2, end: 5, pricePerUnit: 1199 },     // Unités 2-5 : €11.99
+        { start: 6, end: 15, pricePerUnit: 899 },      // Unités 6-15 : €8.99
+        { start: 16, end: 30, pricePerUnit: 549 },    // Unités 16-30 : €5.49
+        { start: 31, end: Infinity, pricePerUnit: 399 } // 30+ unités : €3.99
+    ];
+    
+    let totalAmount = 0;
+    const breakdown = [];
+    
+    for (const tier of TIERS) {
+        if (quantityPrincipal < tier.start) break;
+        
+        // Calculer combien d'unités dans ce palier
+        const unitsInTier = Math.min(quantityPrincipal, tier.end) - tier.start + 1;
+        const tierAmount = unitsInTier * tier.pricePerUnit;
+        
+        if (unitsInTier > 0) {
+            totalAmount += tierAmount;
+            breakdown.push({
+                range: tier.end === Infinity 
+                    ? `${tier.start}+` 
+                    : tier.start === tier.end 
+                        ? `${tier.start}` 
+                        : `${tier.start}-${tier.end}`,
+                units: unitsInTier,
+                pricePerUnit: tier.pricePerUnit,
+                amount: tierAmount
+            });
+        }
+    }
+    
+    return { totalAmount, breakdown };
+}
+
+/**
  * Calcule les quantités de facturation pour un utilisateur basées sur ses propriétés et groupes.
  * 
  * Logique de facturation :
@@ -507,27 +562,36 @@ async function recalculateAndUpdateBilling(userId) {
         if (principalIncrease > 0 || childIncrease > 0) {
             const customerId = subscription.customer;
             
-            // Prix en centimes (13.99€ = 1399 centimes, 3.99€ = 399 centimes)
-            const parentPricePerUnit = 1399; // 13.99€
-            const childPricePerUnit = 399; // 3.99€
-            
-            // Créer un invoice item pour chaque augmentation
+            // Calculer le montant pour les Parent Units selon le système de paliers
             if (principalIncrease > 0) {
-                await stripe.invoiceItems.create({
-                    customer: customerId,
-                    amount: principalIncrease * parentPricePerUnit,
-                    currency: 'eur',
-                    description: `Rattrapage - Ajout de ${principalIncrease} propriété(s) principale(s) en cours de mois`,
-                    metadata: {
-                        userId: userId,
-                        reason: 'mid_month_property_addition',
-                        propertyType: 'principal',
-                        quantity: principalIncrease
-                    }
-                });
-                console.log(`[Billing] Invoice item créé pour ${principalIncrease} propriété(s) principale(s) (rattrapage)`);
+                // Calculer le prix pour les nouvelles unités ajoutées
+                // On calcule le prix total avec toutes les unités, puis on soustrait le prix des anciennes unités
+                const newTotalPricing = calculateTieredPricing(quantities.quantityPrincipal);
+                const oldTotalPricing = calculateTieredPricing(oldQuantityPrincipal);
+                const principalAmount = newTotalPricing.totalAmount - oldTotalPricing.totalAmount;
+                
+                if (principalAmount > 0) {
+                    await stripe.invoiceItems.create({
+                        customer: customerId,
+                        amount: principalAmount,
+                        currency: 'eur',
+                        description: `Rattrapage - Ajout de ${principalIncrease} propriété(s) principale(s) en cours de mois (tarification par paliers)`,
+                        metadata: {
+                            userId: userId,
+                            reason: 'mid_month_property_addition',
+                            propertyType: 'principal',
+                            quantity: principalIncrease,
+                            oldQuantity: oldQuantityPrincipal,
+                            newQuantity: quantities.quantityPrincipal,
+                            pricingBreakdown: JSON.stringify(newTotalPricing.breakdown)
+                        }
+                    });
+                    console.log(`[Billing] Invoice item créé pour ${principalIncrease} propriété(s) principale(s) (rattrapage): ${principalAmount / 100}€`);
+                }
             }
             
+            // Prix fixe pour les Child Units (3.99€ par unité)
+            const childPricePerUnit = 399; // 3.99€ en centimes
             if (childIncrease > 0) {
                 await stripe.invoiceItems.create({
                     customer: customerId,

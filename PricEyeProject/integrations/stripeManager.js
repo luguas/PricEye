@@ -1,5 +1,22 @@
 /**
  * Module de gestion de l'intégration Stripe pour la facturation
+ * 
+ * NOTE IMPORTANTE SUR LE SYSTÈME DE TARIFICATION PAR PALIERS:
+ * 
+ * Le système de tarification par paliers pour les Parent Units est géré dans server.js
+ * via la fonction calculateTieredPricing(). Le montant total calculé selon les paliers
+ * est appliqué via des Invoice Items dans recalculateAndUpdateBilling().
+ * 
+ * Pour une meilleure traçabilité dans Stripe, vous pouvez créer plusieurs Price IDs
+ * (un pour chaque palier) et modifier updateSubscriptionQuantities() pour utiliser
+ * ces Price IDs au lieu d'un seul Price ID avec des Invoice Items.
+ * 
+ * Paliers actuels:
+ * - 1ère unité : €13.99/mo
+ * - Unités 2-5 : €11.99/mo
+ * - Unités 6-15 : €8.99/mo
+ * - Unités 16-30 : €5.49/mo
+ * - 30+ unités : €3.99/mo
  */
 
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
