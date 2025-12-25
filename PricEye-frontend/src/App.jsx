@@ -110,16 +110,12 @@ function AppContent() {
     setNotifications([]);
     setPropertyCount(null);
     
-    // Forcer la redirection vers login
+    // Forcer la redirection vers le site principal
     setCurrentView('login');
-    
-    // Forcer un rechargement complet pour s'assurer que tout est nettoyé
-    // Utiliser replaceState pour éviter de garder l'historique
-    window.history.replaceState({}, '', '/');
     
     // Attendre un peu pour que le nettoyage soit effectué avant le rechargement
     setTimeout(() => {
-      window.location.href = '/';
+      window.location.href = 'https://priceye-ai.com/';
     }, 100);
   }, []);
 

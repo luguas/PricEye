@@ -98,6 +98,17 @@ async function updateSubscriptionQuantities(subscriptionId, quantities) {
         
         const subscriptionItems = subscription.items.data;
         
+        // Trouver les Price IDs pour identifier les items
+        const principalProductId = process.env.STRIPE_PRODUCT_PARENT_ID || process.env.STRIPE_PRODUCT_PRINCIPAL_ID;
+        const principalPriceId = process.env.STRIPE_PRICE_PARENT_ID || process.env.STRIPE_PRICE_PRINCIPAL_ID;
+        
+        // Trouver l'item principal (Parent Units) - doit être supprimé car on utilise des Invoice Items récurrents
+        let principalItem = subscriptionItems.find(item => {
+            const productId = typeof item.price.product === 'string' ? item.price.product : item.price.product.id;
+            const priceId = typeof item.price === 'string' ? item.price : item.price.id;
+            return (principalProductId && productId === principalProductId) || (principalPriceId && priceId === principalPriceId);
+        });
+        
         // Trouver l'item enfant (Child Units - prix fixe)
         let childItem = subscriptionItems.find(item => {
             const productId = typeof item.price.product === 'string' ? item.price.product : item.price.product.id;
@@ -119,6 +130,16 @@ async function updateSubscriptionQuantities(subscriptionId, quantities) {
         );
         
         const itemsToUpdate = [];
+        
+        // IMPORTANT : Supprimer l'item principal de l'abonnement s'il existe
+        // Car on utilise maintenant des Invoice Items récurrents pour les Parent Units
+        if (principalItem) {
+            itemsToUpdate.push({
+                id: principalItem.id,
+                deleted: true
+            });
+            console.log(`[Stripe] Suppression de l'item principal de l'abonnement (remplacé par Invoice Item récurrent)`);
+        }
         
         // Gérer les Parent Units avec système de paliers via Invoice Item récurrent
         const tieredPricing = calculateTieredPricing(quantities.quantityPrincipal);
@@ -287,16 +308,17 @@ async function createSubscription(customerId, paymentMethodId, quantities, trial
             throw new Error('Au moins une quantité doit être supérieure à 0 pour créer un abonnement');
         }
         
-        // Si on n'a que des Parent Units (pas de Child Units), on doit créer un item temporaire
-        // On utilisera le Price ID principal avec quantité 0 (ou on peut créer un Price ID à 0€)
-        // Pour l'instant, on crée l'abonnement avec le Price ID principal à quantité 1 (sera remplacé par l'Invoice Item)
+        // Si on n'a que des Parent Units (pas de Child Units), Stripe exige au moins un item dans l'abonnement
+        // On crée un item temporaire avec le Price ID principal (qui devrait être à 0€)
+        // Cet item sera supprimé immédiatement après la création de l'abonnement
+        let hasPrincipalPlaceholder = false;
         if (items.length === 0 && quantities.quantityPrincipal > 0) {
-            // Utiliser le Price ID principal avec quantité 1 comme placeholder
-            // L'Invoice Item récurrent remplacera le montant
+            // Utiliser le Price ID principal comme placeholder (doit être à 0€ pour éviter la facturation)
             items.push({
                 price: principalPriceId,
                 quantity: 1
             });
+            hasPrincipalPlaceholder = true;
         }
         
         // Attacher la méthode de paiement au customer
@@ -314,16 +336,15 @@ async function createSubscription(customerId, paymentMethodId, quantities, trial
         // Créer l'abonnement avec période d'essai
         const subscription = await stripe.subscriptions.create({
             customer: customerId,
-            items: items,
+            items: items.length > 0 ? items : undefined,
             trial_period_days: trialPeriodDays,
             metadata: {
                 createdAt: new Date().toISOString()
             }
         });
         
-        // Si on a utilisé un placeholder pour les Parent Units, supprimer l'item et le remplacer par l'Invoice Item
-        if (quantities.quantityPrincipal > 0 && quantities.quantityChild === 0) {
-            // Supprimer l'item placeholder
+        // Si on a utilisé un placeholder pour les Parent Units, le supprimer immédiatement
+        if (hasPrincipalPlaceholder) {
             const principalItem = subscription.items.data.find(item => {
                 const priceId = typeof item.price === 'string' ? item.price : item.price.id;
                 return priceId === principalPriceId;
@@ -336,6 +357,7 @@ async function createSubscription(customerId, paymentMethodId, quantities, trial
                         deleted: true
                     }]
                 });
+                console.log(`[Stripe] Item placeholder principal supprimé de l'abonnement ${subscription.id}`);
             }
         }
         
