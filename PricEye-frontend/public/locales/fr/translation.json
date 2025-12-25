@@ -326,6 +326,7 @@
     "propertiesInGroup": "Propriétés dans ce groupe",
     "noProperties": "Aucune propriété assignée.",
     "allPropertiesInGroup": "Toutes vos propriétés sont dans ce groupe.",
+    "subscriptionRequired": "Un abonnement actif est requis pour ajouter des propriétés à un groupe.",
     "pricingStrategy": "Stratégie de prix",
     "stayDuration": "Durée du séjour",
     "pricingRules": "Règles de pricing",

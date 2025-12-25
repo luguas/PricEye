@@ -52,6 +52,10 @@ function GroupEditModal({ token, onClose, onSave, group, properties, userProfile
   const [activeTab, setActiveTab] = useState('general');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
+
+  // Vérifier si l'utilisateur a un abonnement actif
+  const subscriptionStatus = userProfile?.subscriptionStatus || 'none';
+  const hasActiveSubscription = subscriptionStatus === 'active' || subscriptionStatus === 'trialing';
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   // État général
@@ -531,8 +535,13 @@ function GroupEditModal({ token, onClose, onSave, group, properties, userProfile
                                 text={t('groupsManager.add')}
                                 className="!shrink-0"
                                 onClick={async () => {
+                                  if (!hasActiveSubscription) {
+                                    setError(t('groupsManager.subscriptionRequired') || 'Un abonnement actif est requis pour ajouter des propriétés à un groupe.');
+                                    return;
+                                  }
                                   try {
                                     setIsLoading(true);
+                                    setError('');
                                     await addPropertiesToGroup(group.id, [prop.id], token);
                                     setPropertiesInGroupIds(prev => [...prev, prop.id]);
                                     if (onSave) onSave();
@@ -542,7 +551,7 @@ function GroupEditModal({ token, onClose, onSave, group, properties, userProfile
                                     setIsLoading(false);
                                   }
                                 }}
-                                disabled={isLoading}
+                                disabled={isLoading || !hasActiveSubscription}
                               />
                             </div>
                           ))}

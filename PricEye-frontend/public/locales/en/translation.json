@@ -326,6 +326,7 @@
     "propertiesInGroup": "Properties in this group",
     "noProperties": "No properties assigned.",
     "allPropertiesInGroup": "All your properties are in this group.",
+    "subscriptionRequired": "An active subscription is required to add properties to a group.",
     "pricingStrategy": "Pricing Strategy",
     "stayDuration": "Stay Duration",
     "pricingRules": "Pricing Rules",

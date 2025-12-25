@@ -39,8 +39,9 @@ const allowedOrigins = [
     'http://localhost:4173',           // Votre app React en local (Vite preview)
     'http://localhost:3000',
     'https://priceye.vercel.app',
-    'https://pric-eye.vercel.app'           // Votre app React en local (CRA)
-    // 'https://votre-frontend-sur-vercel.app' // << AJOUTEZ L'URL DE VOTRE FRONTEND DÉPLOYÉ ICI
+    'https://pric-eye.vercel.app',
+    'https://priceye-ai.com',          // Site de production
+    'https://www.priceye-ai.com'       // Variante avec www
 ];
 
 app.use(cors({
@@ -54,7 +55,10 @@ app.use(cors({
             return callback(new Error(msg), false);
         }
         return callback(null, true);
-    }
+    },
+    credentials: true,  // Autoriser l'envoi de cookies/credentials
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
 }));
 // Fin de la correction CORS
 
