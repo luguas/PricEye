@@ -142,6 +142,7 @@ function DashboardPage({ token, userProfile }) {
   const [editingGroup, setEditingGroup] = useState(null);
   const [groupsRefreshKey, setGroupsRefreshKey] = useState(0); 
   const [isPropertyModalOpen, setIsPropertyModalOpen] = useState(false);
+  const [propertyModalInitialStep, setPropertyModalInitialStep] = useState(1);
   const [isStrategyModalOpen, setIsStrategyModalOpen] = useState(false);
   const [isRulesModalOpen, setIsRulesModalOpen] = useState(false);
   
@@ -274,11 +275,13 @@ function DashboardPage({ token, userProfile }) {
 
   const handleOpenAddModal = () => {
     setEditingProperty(null);
+    setPropertyModalInitialStep(1);
     setIsPropertyModalOpen(true);
   };
 
   const handleOpenEditModal = (property) => {
     setEditingProperty(property);
+    setPropertyModalInitialStep(1);
     setIsPropertyModalOpen(true);
     setOpenMenuId(null); 
   };
@@ -350,6 +353,7 @@ function DashboardPage({ token, userProfile }) {
     setIsRulesModalOpen(false);
     setEditingProperty(null); 
     setEditingGroup(null);
+    setPropertyModalInitialStep(1);
     // Rafraîchir immédiatement les groupes et propriétés
     await refreshGroupsAndProperties();
     // Forcer le rafraîchissement de GroupsManager
@@ -360,9 +364,10 @@ function DashboardPage({ token, userProfile }) {
     setIsPropertyModalOpen(false);
     setIsStrategyModalOpen(false);
     setIsRulesModalOpen(false);
+    setPropertyModalInitialStep(1);
     setEditingProperty(null); 
     setEditingGroup(null);
-  }
+  };
   
   const formatCurrency = (amount) => {
       const locale = language === 'en' ? 'en-US' : 'fr-FR';
@@ -609,16 +614,15 @@ function DashboardPage({ token, userProfile }) {
 
             <div className="flex items-center gap-2 mt-auto pt-2">
               <button
-                onClick={() => handleOpenStrategyModal(prop)}
+                onClick={() => {
+                  setEditingProperty(prop);
+                  setPropertyModalInitialStep(5);
+                  setIsPropertyModalOpen(true);
+                  setOpenMenuId(null);
+                }}
                 className="flex-1 bg-global-bg-small-box border border-global-stroke-box hover:border-global-content-highlight-2nd text-global-blanc text-xs font-medium py-2 rounded-[8px] transition-colors"
               >
-                {t('dashboard.property.strategyAI')}
-              </button>
-              <button
-                onClick={() => handleOpenRulesModal(prop)}
-                className="flex-1 bg-global-bg-small-box border border-global-stroke-box hover:border-purple-500/50 text-global-blanc text-xs font-medium py-2 rounded-[8px] transition-colors"
-              >
-                {t('dashboard.property.rules')}
+                {t('propertyModal.editPricingStrategy')}
               </button>
               <div className="relative action-menu-container">
                 <button
@@ -629,7 +633,7 @@ function DashboardPage({ token, userProfile }) {
                   ⋮
                 </button>
                 {openMenuId === prop.id && (
-                  <div className="absolute right-0 bottom-full mb-2 w-40 bg-global-bg-box border border-global-stroke-box rounded-lg shadow-xl z-20 py-1 overflow-hidden">
+                  <div className="absolute right-0 bottom-full mb-2 w-40 border border-global-stroke-box rounded-lg shadow-xl z-20 py-1 overflow-hidden" style={{ backgroundColor: 'rgba(15, 23, 43, 1)' }}>
                     <button onClick={() => handleOpenEditModal(prop)} className="block w-full text-left px-4 py-2 text-xs text-global-inactive hover:bg-global-bg-small-box hover:text-white transition-colors">
                         {t('dashboard.property.edit')}
                     </button>
@@ -816,6 +820,7 @@ function DashboardPage({ token, userProfile }) {
           onClose={handleModalClose}
           onSave={handleModalSave}
           property={editingProperty}
+          initialStep={propertyModalInitialStep}
         />
       )}
       {isStrategyModalOpen && (

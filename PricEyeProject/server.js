@@ -2477,6 +2477,9 @@ app.post('/api/properties', authenticateToken, async (req, res) => {
             max_stay: newPropertyData.max_stay || null,
             check_in_time: newPropertyData.check_in_time || null,
             check_out_time: newPropertyData.check_out_time || null,
+            weekly_discount_percent: newPropertyData.weekly_discount_percent !== undefined ? newPropertyData.weekly_discount_percent : null,
+            monthly_discount_percent: newPropertyData.monthly_discount_percent !== undefined ? newPropertyData.monthly_discount_percent : null,
+            weekend_markup_percent: newPropertyData.weekend_markup_percent !== undefined ? newPropertyData.weekend_markup_percent : null,
             
             // Étape 6: Politique et règles
             smoking_allowed: newPropertyData.smoking_allowed || false,
@@ -2498,10 +2501,7 @@ app.post('/api/properties', authenticateToken, async (req, res) => {
             status: 'active', // Statut par défaut
             strategy: newPropertyData.strategy || 'Équilibré',
             floor_price: newPropertyData.floor_price || 0,
-            ceiling_price: newPropertyData.ceiling_price || null,
-            weekly_discount_percent: newPropertyData.weekly_discount_percent || null,
-            monthly_discount_percent: newPropertyData.monthly_discount_percent || null,
-            weekend_markup_percent: newPropertyData.weekend_markup_percent || null
+            ceiling_price: newPropertyData.ceiling_price || null
         };
         
         const createdProperty = await db.createProperty(propertyWithOwner);

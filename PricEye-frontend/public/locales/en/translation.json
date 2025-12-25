@@ -254,6 +254,8 @@
     "next": "Next",
     "previous": "Previous",
     "optional": "Optional",
+    "clickToNavigate": "Click to navigate to this step",
+    "editPricingStrategy": "Edit Strategy",
     "steps": {
       "basicInfo": "Basic Info",
       "characteristics": "Characteristics",
