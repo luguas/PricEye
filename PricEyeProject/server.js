@@ -6399,6 +6399,174 @@ console.log('[Auto-Pricing] Service de planification démarré. Vérification to
 
 // --- ENDPOINTS POUR LES PRICE OVERRIDES ---
 
+// GET /api/properties/:id/pricing-recommendations - Récupérer les recommandations ML pour une période
+app.get('/api/properties/:id/pricing-recommendations', authenticateToken, async (req, res) => {
+    try {
+        const propertyId = req.params.id;
+        const startDate = req.query.startDate;
+        const endDate = req.query.endDate;
+        
+        if (!propertyId) {
+            return res.status(400).send({ error: 'ID de propriété requis.' });
+        }
+        
+        if (!startDate || !endDate) {
+            return res.status(400).send({ error: 'startDate et endDate sont requis.' });
+        }
+        
+        // Vérifier que l'utilisateur a accès à cette propriété
+        const property = await db.getProperty(propertyId);
+        if (!property) {
+            return res.status(404).send({ error: 'Propriété non trouvée.' });
+        }
+        
+        const userId = req.user.uid;
+        const userProfile = await db.getUser(userId);
+        
+        const propertyTeamId = property.team_id || property.owner_id;
+        if (userProfile.team_id !== propertyTeamId && property.owner_id !== userId) {
+            return res.status(403).send({ error: 'Action non autorisée.' });
+        }
+        
+        // Récupérer les recommandations
+        const { data, error } = await supabase
+            .from('pricing_recommendations')
+            .select('*')
+            .eq('property_id', propertyId)
+            .gte('date', startDate)
+            .lte('date', endDate)
+            .order('date', { ascending: true });
+        
+        if (error) {
+            console.error('Erreur lors de la récupération des recommandations:', error);
+            return res.status(500).send({ error: 'Erreur lors de la récupération des recommandations.' });
+        }
+        
+        // Transformer en format objet { date: recommendation }
+        const recommendationsMap = {};
+        (data || []).forEach(rec => {
+            recommendationsMap[rec.date] = {
+                priceRecommended: rec.price_recommended,
+                priceProphet: rec.price_prophet,
+                priceXGBoost: rec.price_xgboost,
+                priceNeuralNetwork: rec.price_neural_network,
+                priceGPT4: rec.price_gpt4,
+                confidenceScore: rec.confidence_score,
+                explanation: rec.explanation_text,
+                keyFactors: rec.key_factors
+            };
+        });
+        
+        res.status(200).send(recommendationsMap);
+    } catch (error) {
+        console.error('Erreur lors de la récupération des recommandations:', error);
+        res.status(500).send({ error: 'Erreur lors de la récupération des recommandations.' });
+    }
+});
+
+// POST /api/properties/:id/pricing-recommendations/apply - Appliquer les recommandations
+app.post('/api/properties/:id/pricing-recommendations/apply', authenticateToken, async (req, res) => {
+    try {
+        const propertyId = req.params.id;
+        const { dates } = req.body; // Array de dates à appliquer
+        
+        if (!propertyId) {
+            return res.status(400).send({ error: 'ID de propriété requis.' });
+        }
+        
+        if (!dates || !Array.isArray(dates) || dates.length === 0) {
+            return res.status(400).send({ error: 'Liste de dates requise.' });
+        }
+        
+        // Vérifier l'accès
+        const property = await db.getProperty(propertyId);
+        if (!property) {
+            return res.status(404).send({ error: 'Propriété non trouvée.' });
+        }
+        
+        const userId = req.user.uid;
+        const userProfile = await db.getUser(userId);
+        
+        const propertyTeamId = property.team_id || property.owner_id;
+        if (userProfile.team_id !== propertyTeamId && property.owner_id !== userId) {
+            return res.status(403).send({ error: 'Action non autorisée.' });
+        }
+        
+        // Récupérer les recommandations pour ces dates
+        const { data: recommendations, error: recError } = await supabase
+            .from('pricing_recommendations')
+            .select('date, price_recommended')
+            .eq('property_id', propertyId)
+            .in('date', dates)
+            .not('price_recommended', 'is', null);
+        
+        if (recError) {
+            throw recError;
+        }
+        
+        if (!recommendations || recommendations.length === 0) {
+            return res.status(404).send({ error: 'Aucune recommandation trouvée pour ces dates.' });
+        }
+        
+        // Vérifier les dates verrouillées
+        const { data: existingOverrides, error: overrideError } = await supabase
+            .from('price_overrides')
+            .select('date, is_locked')
+            .eq('property_id', propertyId)
+            .in('date', dates);
+        
+        if (overrideError) {
+            throw overrideError;
+        }
+        
+        const lockedDates = new Set(
+            (existingOverrides || [])
+                .filter(o => o.is_locked === true)
+                .map(o => o.date)
+        );
+        
+        // Créer les price_overrides (sauf pour les dates verrouillées)
+        const overridesToApply = recommendations
+            .filter(rec => !lockedDates.has(rec.date))
+            .map(rec => ({
+                property_id: propertyId,
+                date: rec.date,
+                price: rec.price_recommended,
+                is_locked: false,
+                reason: 'Recommandation ML (appliquée manuellement)',
+                updated_by: userId
+            }));
+        
+        if (overridesToApply.length === 0) {
+            return res.status(400).send({ 
+                error: 'Toutes les dates sélectionnées sont verrouillées.',
+                lockedDates: Array.from(lockedDates)
+            });
+        }
+        
+        // Appliquer les prix
+        const { error: applyError } = await supabase
+            .from('price_overrides')
+            .upsert(overridesToApply, {
+                onConflict: 'property_id,date'
+            });
+        
+        if (applyError) {
+            throw applyError;
+        }
+        
+        res.status(200).send({ 
+            message: `${overridesToApply.length} recommandation(s) appliquée(s) avec succès.`,
+            applied: overridesToApply.length,
+            skipped: recommendations.length - overridesToApply.length,
+            lockedDates: Array.from(lockedDates)
+        });
+    } catch (error) {
+        console.error('Erreur lors de l\'application des recommandations:', error);
+        res.status(500).send({ error: 'Erreur lors de l\'application des recommandations.' });
+    }
+});
+
 // GET /api/properties/:id/price-overrides - Récupérer les price overrides pour une période
 app.get('/api/properties/:id/price-overrides', authenticateToken, async (req, res) => {
     try {
@@ -6538,7 +6706,31 @@ app.put('/api/properties/:id/price-overrides', authenticateToken, async (req, re
     }
 });
 
+// --- CRON JOB: Pipeline quotidien de pricing ML ---
+/**
+ * Exécute le pipeline de pricing ML tous les jours à 2h du matin
+ * Génère les recommandations de prix pour toutes les propriétés avec auto-pricing activé
+ */
+cron.schedule('0 2 * * *', async () => {
+    console.log('[Cron] Démarrage du pipeline de pricing quotidien...');
+    try {
+        const { runDailyPricingPipeline } = require('./jobs/run_daily_pricing_pipeline');
+        const result = await runDailyPricingPipeline();
+        
+        if (result.success) {
+            console.log('[Cron] Pipeline terminé avec succès');
+        } else {
+            console.warn('[Cron] Pipeline terminé avec des erreurs:', result.stats.errorsCount);
+            // TODO: Envoyer une notification/alerte si nécessaire
+        }
+    } catch (error) {
+        console.error('[Cron] Erreur fatale dans le pipeline de pricing:', error);
+        // TODO: Envoyer une alerte/notification en cas d'erreur fatale
+    }
+});
+
 // --- DÉMARRAGE DU SERVEUR ---
 app.listen(port, () => {
   console.log(`Le serveur écoute sur le port ${port}`);
+  console.log(`Pipeline de pricing ML programmé : tous les jours à 2h00`);
 });

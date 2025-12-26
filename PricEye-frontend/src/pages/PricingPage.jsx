@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { getProperties, generatePricingStrategy, addBooking, getBookingsForMonth, getGroups, updateGroup, getUserProfile, getAutoPricingStatus, enableAutoPricing, getPriceOverrides, updatePriceOverrides } from '../services/api.js';
+import { getProperties, generatePricingStrategy, addBooking, getBookingsForMonth, getGroups, updateGroup, getUserProfile, getAutoPricingStatus, enableAutoPricing, getPriceOverrides, updatePriceOverrides, getPricingRecommendations, applyPricingRecommendations } from '../services/api.js';
 import { jwtDecode } from 'jwt-decode'; 
 // Firebase n'est plus utilisé directement 
 import Bouton from '../components/Bouton.jsx';
@@ -19,9 +19,12 @@ function PricingPage({ token, userProfile }) {
 
   const [currentCalendarDate, setCurrentCalendarDate] = useState(new Date());
   const [priceOverrides, setPriceOverrides] = useState({});
-  const [bookings, setBookings] = useState({}); 
+  const [bookings, setBookings] = useState({});
+  const [pricingRecommendations, setPricingRecommendations] = useState({}); // Nouvelles recommandations ML
   const [isLoading, setIsLoading] = useState(true);
-  const [isCalendarLoading, setIsCalendarLoading] = useState(false); 
+  const [isCalendarLoading, setIsCalendarLoading] = useState(false);
+  const [selectedRecommendation, setSelectedRecommendation] = useState(null); // Pour afficher les détails
+  const [isApplyingRecommendations, setIsApplyingRecommendations] = useState(false); 
   const [error, setError] = useState('');
   const [iaLoading, setIaLoading] = useState(false);
   const [isAutoGenerationEnabled, setIsAutoGenerationEnabled] = useState(false);
@@ -630,6 +633,17 @@ function PricingPage({ token, userProfile }) {
       
       setPriceOverrides(newOverrides);
 
+      // Fetch Pricing Recommendations (ML)
+      let recommendationsData = {};
+      try {
+        recommendationsData = await getPricingRecommendations(propertyIdToFetch, token, startOfMonth, endOfMonth);
+      } catch (recError) {
+        console.error("Erreur lors de la récupération des recommandations ML:", recError);
+        // Continuer avec un objet vide si les recommandations échouent
+        recommendationsData = {};
+      }
+      setPricingRecommendations(recommendationsData || {});
+
       // Fetch Bookings
       let bookingsData = [];
       try {
@@ -792,6 +806,43 @@ function PricingPage({ token, userProfile }) {
   
    const handleMouseUp = () => {
     setIsSelecting(false);
+  };
+
+  // Fonction pour appliquer les recommandations ML
+  const handleApplyRecommendations = async (dates) => {
+    if (!token || !propertyIdForAnalysis) {
+      setError(t('pricing.errors.noPropertySelected') || 'Aucune propriété sélectionnée');
+      return;
+    }
+
+    if (!Array.isArray(dates) || dates.length === 0) {
+      setError('Veuillez sélectionner au moins une date');
+      return;
+    }
+
+    setIsApplyingRecommendations(true);
+    setError('');
+
+    try {
+      const result = await applyPricingRecommendations(propertyIdForAnalysis, dates, token);
+      
+      setAlertModal({
+        isOpen: true,
+        title: t('pricing.modal.success') || 'Succès',
+        message: result.message || `${result.applied} recommandation(s) appliquée(s) avec succès.`
+      });
+
+      // Recharger les données du calendrier
+      await fetchCalendarData();
+      
+      // Fermer la modale de recommandation
+      setSelectedRecommendation(null);
+    } catch (err) {
+      console.error('Erreur lors de l\'application des recommandations:', err);
+      setError(err.message || 'Erreur lors de l\'application des recommandations');
+    } finally {
+      setIsApplyingRecommendations(false);
+    }
   };
   
    useEffect(() => {
@@ -1162,6 +1213,13 @@ function PricingPage({ token, userProfile }) {
         // Vérifier si la date est antérieure à aujourd'hui
         const isPastDate = dateStr < todayStr;
         
+        // Récupérer la recommandation ML pour cette date
+        const recommendation = pricingRecommendations[dateStr];
+        const hasRecommendation = !!recommendation && !isBooked && !isPastDate;
+        const recommendedPrice = recommendation?.priceRecommended;
+        const confidenceScore = recommendation?.confidenceScore;
+        const explanation = recommendation?.explanation;
+        
         let bgClass = 'bg-global-bg-small-box';
         let borderClass = 'border-global-stroke-box';
         let textColor = 'text-global-blanc';
@@ -1220,6 +1278,24 @@ function PricingPage({ token, userProfile }) {
                 {priceFormatted && (
                   <div className={`relative w-fit font-h4-font-family font-h4-font-weight ${isPastDate ? 'text-global-inactive' : 'text-global-blanc'} text-h4-font-size text-center leading-h4-line-height whitespace-nowrap`}>
                     {priceFormatted}
+                  </div>
+                )}
+                {hasRecommendation && recommendedPrice && (
+                  <div 
+                    className="relative w-fit mt-0.5"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setSelectedRecommendation({ date: dateStr, ...recommendation });
+                    }}
+                  >
+                    <div className="text-[10px] text-blue-400 font-medium cursor-pointer hover:underline">
+                      IA: {Math.round(recommendedPrice)}{currency === 'EUR' ? '€' : currency === 'USD' ? '$' : currency}
+                    </div>
+                    {confidenceScore !== null && confidenceScore !== undefined && (
+                      <div className="text-[8px] text-blue-300">
+                        {Math.round(confidenceScore)}%
+                      </div>
+                    )}
                   </div>
                 )}
             </div>
@@ -1691,6 +1767,158 @@ function PricingPage({ token, userProfile }) {
         message={alertModal.message}
         buttonText={t('pricing.modal.ok')}
       />
+
+      {/* Modal pour afficher les détails de la recommandation ML */}
+      {selectedRecommendation && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-global-bg-box border border-global-stroke-box rounded-[14px] p-6 max-w-lg w-full max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-xl font-bold text-global-blanc">
+                {t('pricing.recommendation.title') || 'Recommandation IA'}
+              </h3>
+              <button
+                onClick={() => setSelectedRecommendation(null)}
+                className="text-global-inactive hover:text-global-blanc transition-colors"
+              >
+                <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              {/* Date */}
+              <div>
+                <label className="text-xs font-medium text-global-inactive mb-1 block">
+                  {t('pricing.recommendation.date') || 'Date'}
+                </label>
+                <p className="text-sm font-medium text-global-blanc">
+                  {selectedRecommendation.date}
+                </p>
+              </div>
+
+              {/* Prix recommandé */}
+              <div>
+                <label className="text-xs font-medium text-global-inactive mb-1 block">
+                  {t('pricing.recommendation.recommendedPrice') || 'Prix recommandé'}
+                </label>
+                <p className="text-2xl font-bold text-global-content-highlight-2nd">
+                  {formatCurrency(selectedRecommendation.priceRecommended)}
+                </p>
+              </div>
+
+              {/* Prix actuel pour comparaison */}
+              {priceOverrides[selectedRecommendation.date] && (
+                <div>
+                  <label className="text-xs font-medium text-global-inactive mb-1 block">
+                    {t('pricing.recommendation.currentPrice') || 'Prix actuel'}
+                  </label>
+                  <p className="text-lg font-medium text-global-blanc">
+                    {formatCurrency(priceOverrides[selectedRecommendation.date])}
+                  </p>
+                  {selectedRecommendation.priceRecommended !== priceOverrides[selectedRecommendation.date] && (
+                    <p className="text-xs mt-1 text-global-inactive">
+                      {selectedRecommendation.priceRecommended > priceOverrides[selectedRecommendation.date] 
+                        ? `+${formatCurrency(selectedRecommendation.priceRecommended - priceOverrides[selectedRecommendation.date])}`
+                        : formatCurrency(selectedRecommendation.priceRecommended - priceOverrides[selectedRecommendation.date])}
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {/* Score de confiance */}
+              {selectedRecommendation.confidenceScore !== null && selectedRecommendation.confidenceScore !== undefined && (
+                <div>
+                  <label className="text-xs font-medium text-global-inactive mb-1 block">
+                    {t('pricing.recommendation.confidence') || 'Confiance du modèle'}
+                  </label>
+                  <div className="flex items-center gap-2">
+                    <div className="flex-1 bg-global-bg-small-box rounded-full h-2">
+                      <div 
+                        className="h-2 rounded-full bg-gradient-to-r from-green-500 to-blue-500"
+                        style={{ width: `${selectedRecommendation.confidenceScore}%` }}
+                      />
+                    </div>
+                    <span className="text-sm font-medium text-global-blanc min-w-[3rem] text-right">
+                      {Math.round(selectedRecommendation.confidenceScore)}%
+                    </span>
+                  </div>
+                </div>
+              )}
+
+              {/* Explication */}
+              {selectedRecommendation.explanation && (
+                <div>
+                  <label className="text-xs font-medium text-global-inactive mb-1 block">
+                    {t('pricing.recommendation.explanation') || 'Explication'}
+                  </label>
+                  <p className="text-sm text-global-blanc bg-global-bg-small-box border border-global-stroke-box rounded-[10px] p-3">
+                    {selectedRecommendation.explanation}
+                  </p>
+                </div>
+              )}
+
+              {/* Facteurs clés */}
+              {selectedRecommendation.keyFactors && Object.keys(selectedRecommendation.keyFactors).length > 0 && (
+                <div>
+                  <label className="text-xs font-medium text-global-inactive mb-1 block">
+                    {t('pricing.recommendation.keyFactors') || 'Facteurs clés'}
+                  </label>
+                  <div className="flex flex-wrap gap-2">
+                    {Object.entries(selectedRecommendation.keyFactors).map(([key, value]) => (
+                      <span 
+                        key={key}
+                        className="px-2 py-1 bg-global-bg-small-box border border-global-stroke-box rounded text-xs text-global-blanc"
+                      >
+                        {key}: {typeof value === 'string' ? value : Array.isArray(value) ? value.join(', ') : String(value)}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Détails des modèles individuels */}
+              {(selectedRecommendation.priceXGBoost || selectedRecommendation.priceNeuralNetwork || selectedRecommendation.priceGPT4) && (
+                <div>
+                  <label className="text-xs font-medium text-global-inactive mb-1 block">
+                    {t('pricing.recommendation.modelPredictions') || 'Prédictions des modèles'}
+                  </label>
+                  <div className="space-y-1 text-xs text-global-inactive">
+                    {selectedRecommendation.priceXGBoost && (
+                      <p>XGBoost: {formatCurrency(selectedRecommendation.priceXGBoost)}</p>
+                    )}
+                    {selectedRecommendation.priceNeuralNetwork && (
+                      <p>Réseau de neurones: {formatCurrency(selectedRecommendation.priceNeuralNetwork)}</p>
+                    )}
+                    {selectedRecommendation.priceGPT4 && (
+                      <p>GPT-4: {formatCurrency(selectedRecommendation.priceGPT4)}</p>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Bouton pour appliquer */}
+              <div className="flex gap-2 pt-2">
+                <button
+                  onClick={() => handleApplyRecommendations([selectedRecommendation.date])}
+                  disabled={isApplyingRecommendations}
+                  className="flex-1 bg-gradient-to-r from-[#155dfc] to-[#12a1d5] hover:opacity-90 text-white font-medium py-2 px-4 rounded-[10px] transition-opacity disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {isApplyingRecommendations 
+                    ? (t('pricing.recommendation.applying') || 'Application...')
+                    : (t('pricing.recommendation.apply') || 'Appliquer cette recommandation')}
+                </button>
+                <button
+                  onClick={() => setSelectedRecommendation(null)}
+                  className="px-4 py-2 bg-transparent border border-global-stroke-highlight-2nd text-global-inactive hover:text-global-blanc rounded-[10px] text-sm transition-colors"
+                >
+                  {t('pricing.cancel') || 'Annuler'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

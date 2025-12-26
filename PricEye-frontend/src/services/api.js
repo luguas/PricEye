@@ -582,6 +582,41 @@ export function enableAutoPricing(userId, enabled, timezone, token) {
     });
 }
 
+// GET /api/properties/:id/pricing-recommendations - Récupérer les recommandations ML
+export function getPricingRecommendations(propertyId, token, startDate, endDate) {
+  if (!propertyId || !startDate || !endDate) {
+    return Promise.resolve({});
+  }
+  
+  // Valider que propertyId est un UUID valide
+  const uuidLength = propertyId.replace(/-/g, '').length;
+  if (uuidLength < 32) {
+    console.error('getPricingRecommendations: UUID trop court', propertyId, 'Longueur:', propertyId.length, 'UUID length (sans tirets):', uuidLength);
+    return Promise.resolve({});
+  }
+  
+  const params = new URLSearchParams({
+    startDate: startDate,
+    endDate: endDate
+  });
+  
+  const encodedPropertyId = encodeURIComponent(propertyId);
+  
+  return apiRequest(`/api/properties/${encodedPropertyId}/pricing-recommendations?${params.toString()}`, {
+    method: 'GET',
+    token: token
+  });
+}
+
+// POST /api/properties/:id/pricing-recommendations/apply - Appliquer les recommandations
+export function applyPricingRecommendations(propertyId, dates, token) {
+  return apiRequest(`/api/properties/${propertyId}/pricing-recommendations/apply`, {
+    method: 'POST',
+    body: JSON.stringify({ dates }),
+    token: token
+  });
+}
+
 // GET /api/properties/:id/price-overrides - Récupérer les price overrides
 export function getPriceOverrides(propertyId, token, startDate, endDate) {
     // Valider que propertyId est un UUID valide
