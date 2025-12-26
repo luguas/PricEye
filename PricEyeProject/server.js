@@ -6397,6 +6397,350 @@ cron.schedule('0 * * * *', () => {
 
 console.log('[Auto-Pricing] Service de planification démarré. Vérification toutes les heures.');
 
+// --- ENDPOINTS POUR TESTER LES MODÈLES ML (API) ---
+
+// POST /api/pricing/test/ingest-calendar - Tester l'ingestion des données calendar
+app.post('/api/pricing/test/ingest-calendar', authenticateToken, async (req, res) => {
+    try {
+        const { propertyId, startDate, endDate } = req.body;
+        
+        // Optionnel : autoriser seulement les admins
+        // const userProfile = await db.getUser(req.user.uid);
+        // if (userProfile.role !== 'admin') {
+        //     return res.status(403).send({ error: 'Accès réservé aux administrateurs.' });
+        // }
+        
+        const { ingestCalendarData } = require('./data/ingest_calendar_from_existing.js');
+        
+        const result = await ingestCalendarData({
+            propertyId: propertyId || null,
+            startDate: startDate || null,
+            endDate: endDate || null
+        });
+        
+        res.status(200).json({
+            success: true,
+            message: 'Ingestion calendar terminée',
+            result: result
+        });
+    } catch (error) {
+        console.error('Erreur lors du test ingestion calendar:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+// POST /api/pricing/test/build-features - Tester le feature engineering
+app.post('/api/pricing/test/build-features', authenticateToken, async (req, res) => {
+    try {
+        const { propertyId, startDate, endDate } = req.body;
+        
+        const { buildFeaturesPricingDaily } = require('./features/build_features_pricing_daily.js');
+        
+        const result = await buildFeaturesPricingDaily({
+            propertyId: propertyId || null,
+            startDate: startDate || null,
+            endDate: endDate || null
+        });
+        
+        res.status(200).json({
+            success: true,
+            message: 'Feature engineering terminé',
+            result: result
+        });
+    } catch (error) {
+        console.error('Erreur lors du test feature engineering:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+// POST /api/pricing/test/prophet-forecast - Tester Prophet
+app.post('/api/pricing/test/prophet-forecast', authenticateToken, async (req, res) => {
+    try {
+        const { days = 90 } = req.body;
+        
+        const { generateAllDemandForecasts } = require('./models/forecast/prophet_demand_forecast.js');
+        
+        const result = await generateAllDemandForecasts(days);
+        
+        res.status(200).json({
+            success: true,
+            message: 'Prévisions Prophet générées',
+            result: result
+        });
+    } catch (error) {
+        console.error('Erreur lors du test Prophet:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+// POST /api/pricing/test/xgboost - Tester XGBoost
+app.post('/api/pricing/test/xgboost', authenticateToken, async (req, res) => {
+    try {
+        const { propertyId, startDate, endDate } = req.body;
+        
+        if (!propertyId) {
+            return res.status(400).json({
+                success: false,
+                error: 'propertyId est requis'
+            });
+        }
+        
+        const { generatePriceRecommendations } = require('./models/pricing/xgboost_pricing.js');
+        
+        const result = await generatePriceRecommendations(propertyId, startDate, endDate);
+        
+        res.status(200).json({
+            success: true,
+            message: 'Recommandations XGBoost générées',
+            result: result
+        });
+    } catch (error) {
+        console.error('Erreur lors du test XGBoost:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+// POST /api/pricing/test/neural-network - Tester Neural Network
+app.post('/api/pricing/test/neural-network', authenticateToken, async (req, res) => {
+    try {
+        const { propertyId, startDate, endDate } = req.body;
+        
+        if (!propertyId) {
+            return res.status(400).json({
+                success: false,
+                error: 'propertyId est requis'
+            });
+        }
+        
+        const { generatePriceRecommendations } = require('./models/pricing/neural_network_pricing.js');
+        
+        const result = await generatePriceRecommendations(propertyId, startDate, endDate);
+        
+        res.status(200).json({
+            success: true,
+            message: 'Recommandations Neural Network générées',
+            result: result
+        });
+    } catch (error) {
+        console.error('Erreur lors du test Neural Network:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+// POST /api/pricing/test/gpt4 - Tester GPT-4
+app.post('/api/pricing/test/gpt4', authenticateToken, async (req, res) => {
+    try {
+        const { propertyId, startDate, endDate } = req.body;
+        
+        if (!propertyId) {
+            return res.status(400).json({
+                success: false,
+                error: 'propertyId est requis'
+            });
+        }
+        
+        const { generatePriceRecommendations } = require('./models/pricing/gpt4_pricing_explainer.js');
+        
+        const result = await generatePriceRecommendations(propertyId, startDate, endDate);
+        
+        res.status(200).json({
+            success: true,
+            message: 'Recommandations GPT-4 générées',
+            result: result
+        });
+    } catch (error) {
+        console.error('Erreur lors du test GPT-4:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+// POST /api/pricing/test/ensemble - Tester Ensemble
+app.post('/api/pricing/test/ensemble', authenticateToken, async (req, res) => {
+    try {
+        const { propertyId, startDate, endDate } = req.body;
+        
+        if (!propertyId) {
+            return res.status(400).json({
+                success: false,
+                error: 'propertyId est requis'
+            });
+        }
+        
+        const { generateFinalRecommendations } = require('./models/pricing/ensemble_pricing.js');
+        
+        const result = await generateFinalRecommendations(propertyId, startDate, endDate);
+        
+        res.status(200).json({
+            success: true,
+            message: 'Recommandations Ensemble générées',
+            result: {
+                recommendationsCount: result.length,
+                recommendations: result.slice(0, 5) // Retourner seulement les 5 premières pour éviter une réponse trop lourde
+            }
+        });
+    } catch (error) {
+        console.error('Erreur lors du test Ensemble:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+// POST /api/pricing/test/pipeline - Déclencher le pipeline complet
+app.post('/api/pricing/test/pipeline', authenticateToken, async (req, res) => {
+    try {
+        const { startDate, endDate } = req.body;
+        
+        const { runDailyPricingPipeline } = require('./jobs/run_daily_pricing_pipeline.js');
+        
+        // Lancer le pipeline en arrière-plan et retourner immédiatement
+        runDailyPricingPipeline({ startDate, endDate })
+            .then(result => {
+                console.log('[API] Pipeline terminé:', result);
+            })
+            .catch(error => {
+                console.error('[API] Erreur pipeline:', error);
+            });
+        
+        res.status(202).json({
+            success: true,
+            message: 'Pipeline démarré en arrière-plan. Consultez /api/pricing/test/status pour voir les résultats.'
+        });
+    } catch (error) {
+        console.error('Erreur lors du démarrage du pipeline:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+// GET /api/pricing/test/status - Voir les statistiques et logs récents
+app.get('/api/pricing/test/status', authenticateToken, async (req, res) => {
+    try {
+        const limit = parseInt(req.query.limit) || 10;
+        
+        // Récupérer les logs d'exécution récents
+        const { data: runs, error: runsError } = await supabase
+            .from('model_runs')
+            .select('*')
+            .order('created_at', { ascending: false })
+            .limit(limit);
+        
+        if (runsError) {
+            throw runsError;
+        }
+        
+        // Compter les recommandations totales
+        const { count: totalRecs, error: recError } = await supabase
+            .from('pricing_recommendations')
+            .select('*', { count: 'exact', head: true });
+        
+        // Compter les features
+        const { count: totalFeatures, error: featuresError } = await supabase
+            .from('features_pricing_daily')
+            .select('*', { count: 'exact', head: true });
+        
+        // Compter les prévisions Prophet
+        const { count: totalForecasts, error: forecastError } = await supabase
+            .from('demand_forecasts')
+            .select('*', { count: 'exact', head: true });
+        
+        res.status(200).json({
+            success: true,
+            stats: {
+                totalRecommendations: totalRecs || 0,
+                totalFeatures: totalFeatures || 0,
+                totalForecasts: totalForecasts || 0,
+                recentRuns: runs || []
+            }
+        });
+    } catch (error) {
+        console.error('Erreur lors de la récupération du statut:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+// GET /api/pricing/test/recommendations - Voir les recommandations d'une propriété
+app.get('/api/pricing/test/recommendations', authenticateToken, async (req, res) => {
+    try {
+        const { propertyId, limit = 20 } = req.query;
+        
+        if (!propertyId) {
+            return res.status(400).json({
+                success: false,
+                error: 'propertyId est requis dans les query params'
+            });
+        }
+        
+        // Vérifier l'accès
+        const property = await db.getProperty(propertyId);
+        if (!property) {
+            return res.status(404).json({
+                success: false,
+                error: 'Propriété non trouvée'
+            });
+        }
+        
+        const userId = req.user.uid;
+        const userProfile = await db.getUser(userId);
+        
+        const propertyTeamId = property.team_id || property.owner_id;
+        if (userProfile.team_id !== propertyTeamId && property.owner_id !== userId) {
+            return res.status(403).json({
+                success: false,
+                error: 'Action non autorisée'
+            });
+        }
+        
+        const { data, error } = await supabase
+            .from('pricing_recommendations')
+            .select('*')
+            .eq('property_id', propertyId)
+            .not('price_recommended', 'is', null)
+            .order('date', { ascending: true })
+            .limit(parseInt(limit));
+        
+        if (error) {
+            throw error;
+        }
+        
+        res.status(200).json({
+            success: true,
+            count: data?.length || 0,
+            recommendations: data || []
+        });
+    } catch (error) {
+        console.error('Erreur lors de la récupération des recommandations:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
 // --- ENDPOINTS POUR LES PRICE OVERRIDES ---
 
 // GET /api/properties/:id/pricing-recommendations - Récupérer les recommandations ML pour une période

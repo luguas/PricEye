@@ -216,7 +216,7 @@ async function logPipelineRun(stats) {
         .insert(runData);
     
     if (error) {
-        console.error('[Pipeline] Erreur lors de l''enregistrement du log:', error);
+        console.error('[Pipeline] Erreur lors de l\'enregistrement du log:', error);
     } else {
         console.log(`\n[Pipeline] Exécution loggée: ${runDate}`);
     }
