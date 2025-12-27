@@ -3,7 +3,12 @@ const express = require('express');
 const cors = require('cors');
 require('dotenv').config();
 const cron = require('node-cron');
-const OpenAI = require('openai'); 
+const OpenAI = require('openai');
+const { exec } = require('child_process');
+const { promisify } = require('util');
+const path = require('path');
+
+const execAsync = promisify(exec); 
 
 // --- INITIALISATION DE SUPABASE ---
 const { supabase } = require('./config/supabase.js');
@@ -39,9 +44,8 @@ const allowedOrigins = [
     'http://localhost:4173',           // Votre app React en local (Vite preview)
     'http://localhost:3000',
     'https://priceye.vercel.app',
-    'https://pric-eye.vercel.app',
-    'https://priceye-ai.com',          // Site de production
-    'https://www.priceye-ai.com'       // Variante avec www
+    'https://pric-eye.vercel.app'           // Votre app React en local (CRA)
+    // 'https://votre-frontend-sur-vercel.app' // << AJOUTEZ L'URL DE VOTRE FRONTEND DÉPLOYÉ ICI
 ];
 
 app.use(cors({
@@ -55,10 +59,7 @@ app.use(cors({
             return callback(new Error(msg), false);
         }
         return callback(null, true);
-    },
-    credentials: true,  // Autoriser l'envoi de cookies/credentials
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
+    }
 }));
 // Fin de la correction CORS
 
@@ -2444,68 +2445,27 @@ app.post('/api/properties', authenticateToken, async (req, res) => {
         // surface, capacity, daily_revenue, min_stay, amenities, etc.
         // Adapter les noms de champs pour PostgreSQL (snake_case)
         const propertyWithOwner = { 
-            // Étape 1: Informations de base
             name: newPropertyData.name,
             address: newPropertyData.address,
             location: newPropertyData.location,
-            description: newPropertyData.description || '',
+            description: newPropertyData.description,
             property_type: newPropertyData.property_type || newPropertyData.type || 'villa',
-            
-            // Étape 2: Caractéristiques du logement
-            surface: newPropertyData.surface || 0,
-            bedrooms: newPropertyData.bedrooms !== undefined ? newPropertyData.bedrooms : null,
-            bathrooms: newPropertyData.bathrooms !== undefined ? newPropertyData.bathrooms : null,
-            floor: newPropertyData.floor || null,
-            construction_year: newPropertyData.construction_year || null,
-            renovation_year: newPropertyData.renovation_year || null,
-            view_type: newPropertyData.view_type || null,
-            
-            // Étape 3: Localisation et environnement
-            neighborhood: newPropertyData.neighborhood || null,
-            city_center_distance: newPropertyData.city_center_distance || null,
-            noise_level: newPropertyData.noise_level || null,
-            public_transport: newPropertyData.public_transport || null,
-            nearby_attractions: newPropertyData.nearby_attractions || null,
-            
-            // Étape 4: Equipements
-            amenities: newPropertyData.amenities || [],
-            kitchen_amenities: newPropertyData.kitchen_amenities || [],
-            security_amenities: newPropertyData.security_amenities || [],
-            
-            // Étape 5: Tarification et conditions
-            base_price: newPropertyData.base_price || newPropertyData.daily_revenue || 100,
-            weekend_surcharge: newPropertyData.weekend_surcharge || null,
-            cleaning_fee: newPropertyData.cleaning_fee || null,
-            deposit: newPropertyData.deposit || null,
+            surface: newPropertyData.surface,
+            capacity: newPropertyData.capacity,
+            daily_revenue: newPropertyData.daily_revenue,
             min_stay: newPropertyData.min_stay || 1,
             max_stay: newPropertyData.max_stay || null,
-            check_in_time: newPropertyData.check_in_time || null,
-            check_out_time: newPropertyData.check_out_time || null,
-            weekly_discount_percent: newPropertyData.weekly_discount_percent !== undefined ? newPropertyData.weekly_discount_percent : null,
-            monthly_discount_percent: newPropertyData.monthly_discount_percent !== undefined ? newPropertyData.monthly_discount_percent : null,
-            weekend_markup_percent: newPropertyData.weekend_markup_percent !== undefined ? newPropertyData.weekend_markup_percent : null,
-            
-            // Étape 6: Politique et règles
-            smoking_allowed: newPropertyData.smoking_allowed || false,
-            pets_allowed: newPropertyData.pets_allowed || false,
-            events_allowed: newPropertyData.events_allowed || false,
-            children_welcome: newPropertyData.children_welcome || false,
-            instant_booking: newPropertyData.instant_booking || false,
-            license_number: newPropertyData.license_number || null,
-            insurance: newPropertyData.insurance || null,
-            tax_info: newPropertyData.tax_info || null,
-            
-            // Champs existants pour compatibilité
-            capacity: newPropertyData.capacity || 0,
-            daily_revenue: newPropertyData.base_price || newPropertyData.daily_revenue || 100,
-            
-            // Champs système
+            amenities: newPropertyData.amenities || [],
             owner_id: userId, 
             team_id: teamId, 
             status: 'active', // Statut par défaut
             strategy: newPropertyData.strategy || 'Équilibré',
             floor_price: newPropertyData.floor_price || 0,
-            ceiling_price: newPropertyData.ceiling_price || null
+            base_price: newPropertyData.base_price || 100,
+            ceiling_price: newPropertyData.ceiling_price || null,
+            weekly_discount_percent: newPropertyData.weekly_discount_percent || null,
+            monthly_discount_percent: newPropertyData.monthly_discount_percent || null,
+            weekend_markup_percent: newPropertyData.weekend_markup_percent || null
         };
         
         const createdProperty = await db.createProperty(propertyWithOwner);
@@ -5715,6 +5675,171 @@ async function updateMarketNewsCache(language = 'fr') {
 // Planifier la tâche pour s'exécuter tous les jours à 3h00 du matin
 // Ne générer que les langues qui ont un cache existant (langues réellement utilisées)
 console.log("Mise en place de la tâche planifiée pour les actualités (tous les jours à 3h00).");
+// --- CRON JOBS ---
+
+// ============================================================================
+// PIPELINE QUOTIDIEN DE DONNÉES MARCHÉ (ÉTAPES 0.5, 0.6, 0.7)
+// ============================================================================
+
+/**
+ * Exécute le pipeline complet de données marché en séquence.
+ * ÉTAPE 0.5 : Collecte données marché
+ * ÉTAPE 0.6 : Enrichissement IA données marché
+ * ÉTAPE 0.7 : Construction features marché
+ */
+async function runMarketDataPipeline() {
+    const pipelineStartTime = Date.now();
+    const pipelineStats = {
+        startTime: new Date().toISOString(),
+        steps: {
+            collect: { success: false, duration: 0, error: null },
+            enrich: { success: false, duration: 0, error: null },
+            buildFeatures: { success: false, duration: 0, error: null }
+        },
+        totalDuration: 0
+    };
+
+    console.log('[Market Data Pipeline] ========================================');
+    console.log('[Market Data Pipeline] Démarrage du pipeline quotidien de données marché');
+    console.log('[Market Data Pipeline] ========================================');
+
+    // Date range par défaut : aujourd'hui + 90 jours
+    const today = new Date();
+    const endDate = new Date();
+    endDate.setDate(endDate.getDate() + 90);
+    const dateRange = {
+        startDate: today.toISOString().split('T')[0],
+        endDate: endDate.toISOString().split('T')[0]
+    };
+
+    // ÉTAPE 0.5 : Collecte données marché
+    console.log('[Market Data Pipeline] ÉTAPE 0.5 : Collecte de données marché...');
+    try {
+        const collectStartTime = Date.now();
+        const collectResult = await collectMarketData({
+            dateRange
+        });
+        const collectDuration = (Date.now() - collectStartTime) / 1000;
+
+        pipelineStats.steps.collect = {
+            success: collectResult.success,
+            duration: collectDuration,
+            error: collectResult.error || null,
+            stats: collectResult.report
+        };
+
+        if (collectResult.success) {
+            console.log(`[Market Data Pipeline] ✓ ÉTAPE 0.5 terminée: ${collectResult.report?.total_records || 0} records collectés en ${collectDuration.toFixed(2)}s`);
+        } else {
+            console.warn(`[Market Data Pipeline] ⚠ ÉTAPE 0.5 terminée avec erreurs: ${collectResult.error}`);
+            // On continue quand même, la collecte n'est pas bloquante
+        }
+    } catch (error) {
+        const collectDuration = (Date.now() - Date.now()) / 1000;
+        pipelineStats.steps.collect = {
+            success: false,
+            duration: collectDuration,
+            error: error.message
+        };
+        console.error('[Market Data Pipeline] ✗ ERREUR CRITIQUE ÉTAPE 0.5:', error);
+        // On continue quand même
+    }
+
+    // ÉTAPE 0.6 : Enrichissement IA données marché
+    console.log('[Market Data Pipeline] ÉTAPE 0.6 : Enrichissement IA des données marché...');
+    try {
+        const enrichStartTime = Date.now();
+        const enrichResult = await enrichMarketData({
+            dateRange
+        });
+        const enrichDuration = (Date.now() - enrichStartTime) / 1000;
+
+        pipelineStats.steps.enrich = {
+            success: enrichResult.success,
+            duration: enrichDuration,
+            error: enrichResult.error || null,
+            stats: enrichResult.report
+        };
+
+        if (enrichResult.success) {
+            console.log(`[Market Data Pipeline] ✓ ÉTAPE 0.6 terminée: ${enrichResult.report?.total_enriched || 0} records enrichis en ${enrichDuration.toFixed(2)}s`);
+        } else {
+            console.warn(`[Market Data Pipeline] ⚠ ÉTAPE 0.6 terminée avec erreurs: ${enrichResult.error}`);
+            // On continue quand même, l'enrichissement n'est pas bloquante
+        }
+    } catch (error) {
+        const enrichDuration = (Date.now() - Date.now()) / 1000;
+        pipelineStats.steps.enrich = {
+            success: false,
+            duration: enrichDuration,
+            error: error.message
+        };
+        console.error('[Market Data Pipeline] ✗ ERREUR CRITIQUE ÉTAPE 0.6:', error);
+        // On continue quand même
+    }
+
+    // ÉTAPE 0.7 : Construction features marché
+    console.log('[Market Data Pipeline] ÉTAPE 0.7 : Construction des features marché...');
+    try {
+        const buildStartTime = Date.now();
+        const buildResult = await buildMarketFeatures({
+            dateRange,
+            updatePricing: true
+        });
+        const buildDuration = (Date.now() - buildStartTime) / 1000;
+
+        pipelineStats.steps.buildFeatures = {
+            success: buildResult.success,
+            duration: buildDuration,
+            error: buildResult.error || null,
+            stats: buildResult.report
+        };
+
+        if (buildResult.success) {
+            const featuresBuilt = buildResult.report?.build_features?.features_built || 0;
+            const propertiesUpdated = buildResult.report?.update_pricing?.properties_updated || 0;
+            console.log(`[Market Data Pipeline] ✓ ÉTAPE 0.7 terminée: ${featuresBuilt} features construites, ${propertiesUpdated} propriétés mises à jour en ${buildDuration.toFixed(2)}s`);
+        } else {
+            console.warn(`[Market Data Pipeline] ⚠ ÉTAPE 0.7 terminée avec erreurs: ${buildResult.error}`);
+            // On continue quand même, la construction n'est pas bloquante
+        }
+    } catch (error) {
+        const buildDuration = (Date.now() - Date.now()) / 1000;
+        pipelineStats.steps.buildFeatures = {
+            success: false,
+            duration: buildDuration,
+            error: error.message
+        };
+        console.error('[Market Data Pipeline] ✗ ERREUR CRITIQUE ÉTAPE 0.7:', error);
+        // On continue quand même
+    }
+
+    // Résumé final
+    pipelineStats.totalDuration = (Date.now() - pipelineStartTime) / 1000;
+    const allSuccess = pipelineStats.steps.collect.success && 
+                       pipelineStats.steps.enrich.success && 
+                       pipelineStats.steps.buildFeatures.success;
+    
+    console.log('[Market Data Pipeline] ========================================');
+    console.log('[Market Data Pipeline] Pipeline terminé');
+    console.log(`[Market Data Pipeline] Durée totale: ${pipelineStats.totalDuration.toFixed(2)}s`);
+    console.log(`[Market Data Pipeline] Statut: ${allSuccess ? '✓ SUCCÈS' : '⚠ ERREURS PARTIELLES'}`);
+    console.log(`[Market Data Pipeline] - Collecte: ${pipelineStats.steps.collect.success ? '✓' : '✗'} (${pipelineStats.steps.collect.duration.toFixed(2)}s)`);
+    console.log(`[Market Data Pipeline] - Enrichissement: ${pipelineStats.steps.enrich.success ? '✓' : '✗'} (${pipelineStats.steps.enrich.duration.toFixed(2)}s)`);
+    console.log(`[Market Data Pipeline] - Construction features: ${pipelineStats.steps.buildFeatures.success ? '✓' : '✗'} (${pipelineStats.steps.buildFeatures.duration.toFixed(2)}s)`);
+    console.log('[Market Data Pipeline] ========================================');
+
+    return pipelineStats;
+}
+
+// Job quotidien du pipeline de données marché (2h UTC, avant le pipeline de pricing)
+cron.schedule('0 2 * * *', async () => {
+    await runMarketDataPipeline();
+}, {
+    scheduled: true,
+    timezone: "UTC"
+});
+
 cron.schedule('0 3 * * *', async () => {
     // Vérifier quelles langues sont réellement utilisées (ont un cache existant)
     const frCache = await db.getSystemCache('marketNews_fr');
@@ -6397,519 +6522,7 @@ cron.schedule('0 * * * *', () => {
 
 console.log('[Auto-Pricing] Service de planification démarré. Vérification toutes les heures.');
 
-// --- ENDPOINTS POUR TESTER LES MODÈLES ML (API) ---
-
-// POST /api/pricing/test/ingest-calendar - Tester l'ingestion des données calendar
-app.post('/api/pricing/test/ingest-calendar', authenticateToken, async (req, res) => {
-    try {
-        const { propertyId, startDate, endDate } = req.body;
-        
-        // Optionnel : autoriser seulement les admins
-        // const userProfile = await db.getUser(req.user.uid);
-        // if (userProfile.role !== 'admin') {
-        //     return res.status(403).send({ error: 'Accès réservé aux administrateurs.' });
-        // }
-        
-        const { ingestCalendarData } = require('./data/ingest_calendar_from_existing.js');
-        
-        const result = await ingestCalendarData({
-            propertyId: propertyId || null,
-            startDate: startDate || null,
-            endDate: endDate || null
-        });
-        
-        res.status(200).json({
-            success: true,
-            message: 'Ingestion calendar terminée',
-            result: result
-        });
-    } catch (error) {
-        console.error('Erreur lors du test ingestion calendar:', error);
-        res.status(500).json({
-            success: false,
-            error: error.message
-        });
-    }
-});
-
-// POST /api/pricing/test/build-features - Tester le feature engineering
-app.post('/api/pricing/test/build-features', authenticateToken, async (req, res) => {
-    try {
-        const { propertyId, startDate, endDate } = req.body;
-        
-        const { buildFeaturesPricingDaily } = require('./features/build_features_pricing_daily.js');
-        
-        const result = await buildFeaturesPricingDaily({
-            propertyId: propertyId || null,
-            startDate: startDate || null,
-            endDate: endDate || null
-        });
-        
-        res.status(200).json({
-            success: true,
-            message: 'Feature engineering terminé',
-            result: result
-        });
-    } catch (error) {
-        console.error('Erreur lors du test feature engineering:', error);
-        res.status(500).json({
-            success: false,
-            error: error.message
-        });
-    }
-});
-
-// POST /api/pricing/test/prophet-forecast - Tester Prophet
-app.post('/api/pricing/test/prophet-forecast', authenticateToken, async (req, res) => {
-    try {
-        const { days = 90 } = req.body;
-        
-        const { generateAllDemandForecasts } = require('./models/forecast/prophet_demand_forecast.js');
-        
-        const result = await generateAllDemandForecasts(days);
-        
-        res.status(200).json({
-            success: true,
-            message: 'Prévisions Prophet générées',
-            result: result
-        });
-    } catch (error) {
-        console.error('Erreur lors du test Prophet:', error);
-        res.status(500).json({
-            success: false,
-            error: error.message
-        });
-    }
-});
-
-// POST /api/pricing/test/xgboost - Tester XGBoost
-app.post('/api/pricing/test/xgboost', authenticateToken, async (req, res) => {
-    try {
-        const { propertyId, startDate, endDate } = req.body;
-        
-        if (!propertyId) {
-            return res.status(400).json({
-                success: false,
-                error: 'propertyId est requis'
-            });
-        }
-        
-        const { generatePriceRecommendations } = require('./models/pricing/xgboost_pricing.js');
-        
-        const result = await generatePriceRecommendations(propertyId, startDate, endDate);
-        
-        res.status(200).json({
-            success: true,
-            message: 'Recommandations XGBoost générées',
-            result: result
-        });
-    } catch (error) {
-        console.error('Erreur lors du test XGBoost:', error);
-        res.status(500).json({
-            success: false,
-            error: error.message
-        });
-    }
-});
-
-// POST /api/pricing/test/neural-network - Tester Neural Network
-app.post('/api/pricing/test/neural-network', authenticateToken, async (req, res) => {
-    try {
-        const { propertyId, startDate, endDate } = req.body;
-        
-        if (!propertyId) {
-            return res.status(400).json({
-                success: false,
-                error: 'propertyId est requis'
-            });
-        }
-        
-        const { generatePriceRecommendations } = require('./models/pricing/neural_network_pricing.js');
-        
-        const result = await generatePriceRecommendations(propertyId, startDate, endDate);
-        
-        res.status(200).json({
-            success: true,
-            message: 'Recommandations Neural Network générées',
-            result: result
-        });
-    } catch (error) {
-        console.error('Erreur lors du test Neural Network:', error);
-        res.status(500).json({
-            success: false,
-            error: error.message
-        });
-    }
-});
-
-// POST /api/pricing/test/gpt4 - Tester GPT-4
-app.post('/api/pricing/test/gpt4', authenticateToken, async (req, res) => {
-    try {
-        const { propertyId, startDate, endDate } = req.body;
-        
-        if (!propertyId) {
-            return res.status(400).json({
-                success: false,
-                error: 'propertyId est requis'
-            });
-        }
-        
-        const { generatePriceRecommendations } = require('./models/pricing/gpt4_pricing_explainer.js');
-        
-        const result = await generatePriceRecommendations(propertyId, startDate, endDate);
-        
-        res.status(200).json({
-            success: true,
-            message: 'Recommandations GPT-4 générées',
-            result: result
-        });
-    } catch (error) {
-        console.error('Erreur lors du test GPT-4:', error);
-        res.status(500).json({
-            success: false,
-            error: error.message
-        });
-    }
-});
-
-// POST /api/pricing/test/ensemble - Tester Ensemble
-app.post('/api/pricing/test/ensemble', authenticateToken, async (req, res) => {
-    try {
-        const { propertyId, startDate, endDate } = req.body;
-        
-        if (!propertyId) {
-            return res.status(400).json({
-                success: false,
-                error: 'propertyId est requis'
-            });
-        }
-        
-        const { generateFinalRecommendations } = require('./models/pricing/ensemble_pricing.js');
-        
-        const result = await generateFinalRecommendations(propertyId, startDate, endDate);
-        
-        res.status(200).json({
-            success: true,
-            message: 'Recommandations Ensemble générées',
-            result: {
-                recommendationsCount: result.length,
-                recommendations: result.slice(0, 5) // Retourner seulement les 5 premières pour éviter une réponse trop lourde
-            }
-        });
-    } catch (error) {
-        console.error('Erreur lors du test Ensemble:', error);
-        res.status(500).json({
-            success: false,
-            error: error.message
-        });
-    }
-});
-
-// POST /api/pricing/test/pipeline - Déclencher le pipeline complet
-app.post('/api/pricing/test/pipeline', authenticateToken, async (req, res) => {
-    try {
-        const { startDate, endDate } = req.body;
-        
-        const { runDailyPricingPipeline } = require('./jobs/run_daily_pricing_pipeline.js');
-        
-        // Lancer le pipeline en arrière-plan et retourner immédiatement
-        runDailyPricingPipeline({ startDate, endDate })
-            .then(result => {
-                console.log('[API] Pipeline terminé:', result);
-            })
-            .catch(error => {
-                console.error('[API] Erreur pipeline:', error);
-            });
-        
-        res.status(202).json({
-            success: true,
-            message: 'Pipeline démarré en arrière-plan. Consultez /api/pricing/test/status pour voir les résultats.'
-        });
-    } catch (error) {
-        console.error('Erreur lors du démarrage du pipeline:', error);
-        res.status(500).json({
-            success: false,
-            error: error.message
-        });
-    }
-});
-
-// GET /api/pricing/test/status - Voir les statistiques et logs récents
-app.get('/api/pricing/test/status', authenticateToken, async (req, res) => {
-    try {
-        const limit = parseInt(req.query.limit) || 10;
-        
-        // Récupérer les logs d'exécution récents
-        const { data: runs, error: runsError } = await supabase
-            .from('model_runs')
-            .select('*')
-            .order('created_at', { ascending: false })
-            .limit(limit);
-        
-        if (runsError) {
-            throw runsError;
-        }
-        
-        // Compter les recommandations totales
-        const { count: totalRecs, error: recError } = await supabase
-            .from('pricing_recommendations')
-            .select('*', { count: 'exact', head: true });
-        
-        // Compter les features
-        const { count: totalFeatures, error: featuresError } = await supabase
-            .from('features_pricing_daily')
-            .select('*', { count: 'exact', head: true });
-        
-        // Compter les prévisions Prophet
-        const { count: totalForecasts, error: forecastError } = await supabase
-            .from('demand_forecasts')
-            .select('*', { count: 'exact', head: true });
-        
-        res.status(200).json({
-            success: true,
-            stats: {
-                totalRecommendations: totalRecs || 0,
-                totalFeatures: totalFeatures || 0,
-                totalForecasts: totalForecasts || 0,
-                recentRuns: runs || []
-            }
-        });
-    } catch (error) {
-        console.error('Erreur lors de la récupération du statut:', error);
-        res.status(500).json({
-            success: false,
-            error: error.message
-        });
-    }
-});
-
-// GET /api/pricing/test/recommendations - Voir les recommandations d'une propriété
-app.get('/api/pricing/test/recommendations', authenticateToken, async (req, res) => {
-    try {
-        const { propertyId, limit = 20 } = req.query;
-        
-        if (!propertyId) {
-            return res.status(400).json({
-                success: false,
-                error: 'propertyId est requis dans les query params'
-            });
-        }
-        
-        // Vérifier l'accès
-        const property = await db.getProperty(propertyId);
-        if (!property) {
-            return res.status(404).json({
-                success: false,
-                error: 'Propriété non trouvée'
-            });
-        }
-        
-        const userId = req.user.uid;
-        const userProfile = await db.getUser(userId);
-        
-        const propertyTeamId = property.team_id || property.owner_id;
-        if (userProfile.team_id !== propertyTeamId && property.owner_id !== userId) {
-            return res.status(403).json({
-                success: false,
-                error: 'Action non autorisée'
-            });
-        }
-        
-        const { data, error } = await supabase
-            .from('pricing_recommendations')
-            .select('*')
-            .eq('property_id', propertyId)
-            .not('price_recommended', 'is', null)
-            .order('date', { ascending: true })
-            .limit(parseInt(limit));
-        
-        if (error) {
-            throw error;
-        }
-        
-        res.status(200).json({
-            success: true,
-            count: data?.length || 0,
-            recommendations: data || []
-        });
-    } catch (error) {
-        console.error('Erreur lors de la récupération des recommandations:', error);
-        res.status(500).json({
-            success: false,
-            error: error.message
-        });
-    }
-});
-
 // --- ENDPOINTS POUR LES PRICE OVERRIDES ---
-
-// GET /api/properties/:id/pricing-recommendations - Récupérer les recommandations ML pour une période
-app.get('/api/properties/:id/pricing-recommendations', authenticateToken, async (req, res) => {
-    try {
-        const propertyId = req.params.id;
-        const startDate = req.query.startDate;
-        const endDate = req.query.endDate;
-        
-        if (!propertyId) {
-            return res.status(400).send({ error: 'ID de propriété requis.' });
-        }
-        
-        if (!startDate || !endDate) {
-            return res.status(400).send({ error: 'startDate et endDate sont requis.' });
-        }
-        
-        // Vérifier que l'utilisateur a accès à cette propriété
-        const property = await db.getProperty(propertyId);
-        if (!property) {
-            return res.status(404).send({ error: 'Propriété non trouvée.' });
-        }
-        
-        const userId = req.user.uid;
-        const userProfile = await db.getUser(userId);
-        
-        const propertyTeamId = property.team_id || property.owner_id;
-        if (userProfile.team_id !== propertyTeamId && property.owner_id !== userId) {
-            return res.status(403).send({ error: 'Action non autorisée.' });
-        }
-        
-        // Récupérer les recommandations
-        const { data, error } = await supabase
-            .from('pricing_recommendations')
-            .select('*')
-            .eq('property_id', propertyId)
-            .gte('date', startDate)
-            .lte('date', endDate)
-            .order('date', { ascending: true });
-        
-        if (error) {
-            console.error('Erreur lors de la récupération des recommandations:', error);
-            return res.status(500).send({ error: 'Erreur lors de la récupération des recommandations.' });
-        }
-        
-        // Transformer en format objet { date: recommendation }
-        const recommendationsMap = {};
-        (data || []).forEach(rec => {
-            recommendationsMap[rec.date] = {
-                priceRecommended: rec.price_recommended,
-                priceProphet: rec.price_prophet,
-                priceXGBoost: rec.price_xgboost,
-                priceNeuralNetwork: rec.price_neural_network,
-                priceGPT4: rec.price_gpt4,
-                confidenceScore: rec.confidence_score,
-                explanation: rec.explanation_text,
-                keyFactors: rec.key_factors
-            };
-        });
-        
-        res.status(200).send(recommendationsMap);
-    } catch (error) {
-        console.error('Erreur lors de la récupération des recommandations:', error);
-        res.status(500).send({ error: 'Erreur lors de la récupération des recommandations.' });
-    }
-});
-
-// POST /api/properties/:id/pricing-recommendations/apply - Appliquer les recommandations
-app.post('/api/properties/:id/pricing-recommendations/apply', authenticateToken, async (req, res) => {
-    try {
-        const propertyId = req.params.id;
-        const { dates } = req.body; // Array de dates à appliquer
-        
-        if (!propertyId) {
-            return res.status(400).send({ error: 'ID de propriété requis.' });
-        }
-        
-        if (!dates || !Array.isArray(dates) || dates.length === 0) {
-            return res.status(400).send({ error: 'Liste de dates requise.' });
-        }
-        
-        // Vérifier l'accès
-        const property = await db.getProperty(propertyId);
-        if (!property) {
-            return res.status(404).send({ error: 'Propriété non trouvée.' });
-        }
-        
-        const userId = req.user.uid;
-        const userProfile = await db.getUser(userId);
-        
-        const propertyTeamId = property.team_id || property.owner_id;
-        if (userProfile.team_id !== propertyTeamId && property.owner_id !== userId) {
-            return res.status(403).send({ error: 'Action non autorisée.' });
-        }
-        
-        // Récupérer les recommandations pour ces dates
-        const { data: recommendations, error: recError } = await supabase
-            .from('pricing_recommendations')
-            .select('date, price_recommended')
-            .eq('property_id', propertyId)
-            .in('date', dates)
-            .not('price_recommended', 'is', null);
-        
-        if (recError) {
-            throw recError;
-        }
-        
-        if (!recommendations || recommendations.length === 0) {
-            return res.status(404).send({ error: 'Aucune recommandation trouvée pour ces dates.' });
-        }
-        
-        // Vérifier les dates verrouillées
-        const { data: existingOverrides, error: overrideError } = await supabase
-            .from('price_overrides')
-            .select('date, is_locked')
-            .eq('property_id', propertyId)
-            .in('date', dates);
-        
-        if (overrideError) {
-            throw overrideError;
-        }
-        
-        const lockedDates = new Set(
-            (existingOverrides || [])
-                .filter(o => o.is_locked === true)
-                .map(o => o.date)
-        );
-        
-        // Créer les price_overrides (sauf pour les dates verrouillées)
-        const overridesToApply = recommendations
-            .filter(rec => !lockedDates.has(rec.date))
-            .map(rec => ({
-                property_id: propertyId,
-                date: rec.date,
-                price: rec.price_recommended,
-                is_locked: false,
-                reason: 'Recommandation ML (appliquée manuellement)',
-                updated_by: userId
-            }));
-        
-        if (overridesToApply.length === 0) {
-            return res.status(400).send({ 
-                error: 'Toutes les dates sélectionnées sont verrouillées.',
-                lockedDates: Array.from(lockedDates)
-            });
-        }
-        
-        // Appliquer les prix
-        const { error: applyError } = await supabase
-            .from('price_overrides')
-            .upsert(overridesToApply, {
-                onConflict: 'property_id,date'
-            });
-        
-        if (applyError) {
-            throw applyError;
-        }
-        
-        res.status(200).send({ 
-            message: `${overridesToApply.length} recommandation(s) appliquée(s) avec succès.`,
-            applied: overridesToApply.length,
-            skipped: recommendations.length - overridesToApply.length,
-            lockedDates: Array.from(lockedDates)
-        });
-    } catch (error) {
-        console.error('Erreur lors de l\'application des recommandations:', error);
-        res.status(500).send({ error: 'Erreur lors de l\'application des recommandations.' });
-    }
-});
 
 // GET /api/properties/:id/price-overrides - Récupérer les price overrides pour une période
 app.get('/api/properties/:id/price-overrides', authenticateToken, async (req, res) => {
@@ -7050,31 +6663,798 @@ app.put('/api/properties/:id/price-overrides', authenticateToken, async (req, re
     }
 });
 
-// --- CRON JOB: Pipeline quotidien de pricing ML ---
+// --- COLLECTE DE DONNÉES MARCHÉ ---
+
 /**
- * Exécute le pipeline de pricing ML tous les jours à 2h du matin
- * Génère les recommandations de prix pour toutes les propriétés avec auto-pricing activé
+ * Exécute le script Python de collecte de données marché.
+ * 
+ * @param {Object} options - Options pour la collecte
+ * @param {Array<string>} options.countries - Liste de codes pays (optionnel)
+ * @param {Array<string>} options.cities - Liste de villes (optionnel)
+ * @param {Object} options.dateRange - Plage de dates {startDate, endDate} (optionnel)
+ * @param {boolean} options.skipCompetitors - Si true, skip la collecte concurrents
+ * @param {boolean} options.skipWeather - Si true, skip la collecte météo
+ * @returns {Promise<Object>} Rapport de collecte
  */
-cron.schedule('0 2 * * *', async () => {
-    console.log('[Cron] Démarrage du pipeline de pricing quotidien...');
+async function collectMarketData(options = {}) {
+    const {
+        countries = null,
+        cities = null,
+        dateRange = null,
+        skipCompetitors = false,
+        skipWeather = false
+    } = options;
+
     try {
-        const { runDailyPricingPipeline } = require('./jobs/run_daily_pricing_pipeline');
-        const result = await runDailyPricingPipeline();
+        // Construire la commande Python
+        let command = 'python -m market_data_pipeline.jobs.collect_market_data --json';
         
-        if (result.success) {
-            console.log('[Cron] Pipeline terminé avec succès');
-        } else {
-            console.warn('[Cron] Pipeline terminé avec des erreurs:', result.stats.errorsCount);
-            // TODO: Envoyer une notification/alerte si nécessaire
+        // Ajouter les arguments
+        if (countries && countries.length > 0) {
+            command += ` --countries ${countries.join(' ')}`;
         }
+        
+        if (cities && cities.length > 0) {
+            command += ` --cities ${cities.join(' ')}`;
+        }
+        
+        if (dateRange && dateRange.startDate) {
+            command += ` --start-date ${dateRange.startDate}`;
+        }
+        
+        if (dateRange && dateRange.endDate) {
+            command += ` --end-date ${dateRange.endDate}`;
+        }
+        
+        if (skipCompetitors) {
+            command += ' --skip-competitors';
+        }
+        
+        if (skipWeather) {
+            command += ' --skip-weather';
+        }
+
+        console.log(`[Market Data] Exécution de la collecte: ${command}`);
+        
+        // Exécuter le script Python
+        // Note: Sur Windows, on peut utiliser 'python', sur Linux/Mac 'python3'
+        const pythonCommand = process.platform === 'win32' ? 'python' : 'python3';
+        command = command.replace('python', pythonCommand);
+        
+        const { stdout, stderr } = await execAsync(command, {
+            cwd: __dirname,
+            maxBuffer: 10 * 1024 * 1024, // 10MB buffer pour les grandes sorties
+            env: {
+                ...process.env, // Hériter des variables d'environnement
+                PYTHONUNBUFFERED: '1' // Désactiver le buffering Python pour voir les logs en temps réel
+            }
+        });
+
+        // Parser la sortie JSON
+        let report;
+        try {
+            // La sortie peut contenir des logs avant le JSON, chercher le JSON
+            const jsonMatch = stdout.match(/\{[\s\S]*\}/);
+            if (jsonMatch) {
+                report = JSON.parse(jsonMatch[0]);
+            } else {
+                throw new Error('No JSON output found in stdout');
+            }
+        } catch (parseError) {
+            console.error('[Market Data] Erreur de parsing JSON:', parseError);
+            console.error('[Market Data] stdout:', stdout);
+            console.error('[Market Data] stderr:', stderr);
+            
+            // Retourner un rapport d'erreur
+            return {
+                success: false,
+                error: 'Failed to parse Python script output',
+                stdout: stdout,
+                stderr: stderr,
+                parseError: parseError.message
+            };
+        }
+
+        // Si stderr contient des erreurs mais que le script a retourné un JSON, 
+        // c'est peut-être juste des warnings
+        if (stderr) {
+            console.warn('[Market Data] Warnings/Errors from Python script:', stderr);
+        }
+
+        console.log(`[Market Data] Collecte terminée: ${report.status || 'unknown'}, ${report.total_records || 0} records`);
+        
+        return {
+            success: report.status !== 'failed',
+            report: report
+        };
+
     } catch (error) {
-        console.error('[Cron] Erreur fatale dans le pipeline de pricing:', error);
-        // TODO: Envoyer une alerte/notification en cas d'erreur fatale
+        console.error('[Market Data] Erreur lors de l\'exécution du script Python:', error);
+        
+        return {
+            success: false,
+            error: error.message,
+            code: error.code,
+            signal: error.signal
+        };
+    }
+}
+
+/**
+ * Endpoint API pour déclencher la collecte de données marché.
+ * POST /api/market-data/collect
+ */
+app.post('/api/market-data/collect', authenticateToken, async (req, res) => {
+    try {
+        const { countries, cities, dateRange, skipCompetitors, skipWeather } = req.body;
+
+        console.log('[Market Data] Collecte déclenchée via API par utilisateur:', req.user.uid);
+
+        const startTime = Date.now();
+        const result = await collectMarketData({
+            countries,
+            cities,
+            dateRange,
+            skipCompetitors,
+            skipWeather
+        });
+        const duration = (Date.now() - startTime) / 1000;
+
+        if (result.success) {
+            res.status(200).json({
+                success: true,
+                message: 'Collecte de données marché terminée avec succès',
+                stats: {
+                    status: result.report.status,
+                    totalRecords: result.report.total_records || 0,
+                    duration: result.report.duration_seconds || duration,
+                    sources: result.report.sources
+                },
+                duration: duration,
+                report: result.report
+            });
+        } else {
+            res.status(500).json({
+                success: false,
+                error: result.error || 'Erreur lors de la collecte',
+                duration: duration,
+                report: result.report || null,
+                details: result
+            });
+        }
+
+    } catch (error) {
+        console.error('[Market Data] Erreur dans l\'endpoint API:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Erreur interne lors de la collecte de données marché',
+            message: error.message
+        });
+    }
+});
+
+/**
+ * Exécute le script Python d'enrichissement IA des données marché.
+ * 
+ * @param {Object} options - Options pour l'enrichissement
+ * @param {Object} options.dateRange - Plage de dates {startDate, endDate} (optionnel)
+ * @returns {Promise<Object>} Rapport d'enrichissement
+ */
+async function enrichMarketData(options = {}) {
+    const {
+        dateRange = null
+    } = options;
+
+    try {
+        // Construire la commande Python
+        let command = 'python -m market_data_pipeline.jobs.enrich_market_data --json';
+        
+        // Ajouter les arguments
+        if (dateRange && dateRange.startDate) {
+            command += ` --start-date ${dateRange.startDate}`;
+        }
+        
+        if (dateRange && dateRange.endDate) {
+            command += ` --end-date ${dateRange.endDate}`;
+        }
+
+        console.log(`[Market Data] Exécution de l'enrichissement: ${command}`);
+        
+        // Exécuter le script Python
+        const pythonCommand = process.platform === 'win32' ? 'python' : 'python3';
+        command = command.replace('python', pythonCommand);
+        
+        const { stdout, stderr } = await execAsync(command, {
+            cwd: __dirname,
+            maxBuffer: 10 * 1024 * 1024,
+            env: {
+                ...process.env,
+                PYTHONUNBUFFERED: '1'
+            }
+        });
+
+        // Parser la sortie JSON
+        let report;
+        try {
+            const jsonMatch = stdout.match(/\{[\s\S]*\}/);
+            if (jsonMatch) {
+                report = JSON.parse(jsonMatch[0]);
+            } else {
+                throw new Error('No JSON output found in stdout');
+            }
+        } catch (parseError) {
+            console.error('[Market Data] Erreur de parsing JSON:', parseError);
+            console.error('[Market Data] stdout:', stdout);
+            console.error('[Market Data] stderr:', stderr);
+            
+            return {
+                success: false,
+                error: 'Failed to parse Python script output',
+                stdout: stdout,
+                stderr: stderr,
+                parseError: parseError.message
+            };
+        }
+
+        if (stderr) {
+            console.warn('[Market Data] Warnings/Errors from Python script:', stderr);
+        }
+
+        console.log(`[Market Data] Enrichissement terminé: ${report.status || 'unknown'}`);
+        
+        return {
+            success: report.status !== 'failed',
+            report: report
+        };
+
+    } catch (error) {
+        console.error('[Market Data] Erreur lors de l\'exécution du script Python:', error);
+        
+        return {
+            success: false,
+            error: error.message,
+            code: error.code,
+            signal: error.signal
+        };
+    }
+}
+
+/**
+ * Exécute le script Python de construction des features marché.
+ * 
+ * @param {Object} options - Options pour la construction
+ * @param {Array<string>} options.cities - Liste de villes (optionnel)
+ * @param {Object} options.dateRange - Plage de dates {startDate, endDate} (optionnel)
+ * @param {boolean} options.updatePricing - Si true, met à jour features_pricing_daily (défaut: true)
+ * @returns {Promise<Object>} Rapport de construction
+ */
+async function buildMarketFeatures(options = {}) {
+    const {
+        cities = null,
+        dateRange = null,
+        updatePricing = true
+    } = options;
+
+    try {
+        // Construire la commande Python
+        let command = 'python -m market_data_pipeline.jobs.build_market_features';
+        
+        // Ajouter les arguments
+        if (dateRange && dateRange.startDate) {
+            command += ` --start-date ${dateRange.startDate}`;
+        } else {
+            // Par défaut, construire pour les 90 prochains jours
+            const today = new Date();
+            const endDate = new Date();
+            endDate.setDate(endDate.getDate() + 90);
+            command += ` --start-date ${today.toISOString().split('T')[0]}`;
+            command += ` --end-date ${endDate.toISOString().split('T')[0]}`;
+        }
+        
+        if (dateRange && dateRange.endDate) {
+            command += ` --end-date ${dateRange.endDate}`;
+        }
+        
+        if (cities && cities.length > 0) {
+            command += ` --cities ${cities.join(' ')}`;
+        }
+        
+        if (!updatePricing) {
+            command += ' --no-update-pricing';
+        }
+        
+        command += ' --json';
+
+        console.log(`[Market Data] Exécution de la construction des features: ${command}`);
+        
+        // Exécuter le script Python
+        const pythonCommand = process.platform === 'win32' ? 'python' : 'python3';
+        command = command.replace('python', pythonCommand);
+        
+        const { stdout, stderr } = await execAsync(command, {
+            cwd: __dirname,
+            maxBuffer: 10 * 1024 * 1024,
+            env: {
+                ...process.env,
+                PYTHONUNBUFFERED: '1'
+            }
+        });
+
+        // Parser la sortie JSON
+        let report;
+        try {
+            const jsonMatch = stdout.match(/\{[\s\S]*\}/);
+            if (jsonMatch) {
+                report = JSON.parse(jsonMatch[0]);
+            } else {
+                throw new Error('No JSON output found in stdout');
+            }
+        } catch (parseError) {
+            console.error('[Market Data] Erreur de parsing JSON:', parseError);
+            console.error('[Market Data] stdout:', stdout);
+            console.error('[Market Data] stderr:', stderr);
+            
+            return {
+                success: false,
+                error: 'Failed to parse Python script output',
+                stdout: stdout,
+                stderr: stderr,
+                parseError: parseError.message
+            };
+        }
+
+        if (stderr) {
+            console.warn('[Market Data] Warnings/Errors from Python script:', stderr);
+        }
+
+        console.log(`[Market Data] Construction des features terminée: ${report.status || 'unknown'}`);
+        
+        return {
+            success: report.status !== 'failed',
+            report: report
+        };
+
+    } catch (error) {
+        console.error('[Market Data] Erreur lors de l\'exécution du script Python:', error);
+        
+        return {
+            success: false,
+            error: error.message,
+            code: error.code,
+            signal: error.signal
+        };
+    }
+}
+
+/**
+ * Endpoint API pour déclencher l'enrichissement IA des données marché.
+ * POST /api/market-data/enrich
+ */
+app.post('/api/market-data/enrich', authenticateToken, async (req, res) => {
+    try {
+        const { dateRange } = req.body;
+
+        console.log('[Market Data] Enrichissement déclenché via API par utilisateur:', req.user.uid);
+
+        const startTime = Date.now();
+        const result = await enrichMarketData({
+            dateRange
+        });
+        const duration = (Date.now() - startTime) / 1000;
+
+        if (result.success) {
+            res.status(200).json({
+                success: true,
+                message: 'Enrichissement IA terminé avec succès',
+                stats: {
+                    status: result.report.status,
+                    enrichedRecords: result.report.total_enriched || 0,
+                    duration: result.report.duration_seconds || duration
+                },
+                duration: duration,
+                report: result.report
+            });
+        } else {
+            res.status(500).json({
+                success: false,
+                error: result.error || 'Erreur lors de l\'enrichissement',
+                duration: duration,
+                report: result.report || null,
+                details: result
+            });
+        }
+
+    } catch (error) {
+        console.error('[Market Data] Erreur dans l\'endpoint API:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Erreur interne lors de l\'enrichissement des données marché',
+            message: error.message
+        });
+    }
+});
+
+/**
+ * Endpoint API pour déclencher la construction des features marché.
+ * POST /api/market-data/build-features
+ */
+app.post('/api/market-data/build-features', authenticateToken, async (req, res) => {
+    try {
+        const { cities, dateRange, updatePricing = true } = req.body;
+
+        console.log('[Market Data] Construction des features déclenchée via API par utilisateur:', req.user.uid);
+
+        const startTime = Date.now();
+        const result = await buildMarketFeatures({
+            cities,
+            dateRange,
+            updatePricing
+        });
+        const duration = (Date.now() - startTime) / 1000;
+
+        if (result.success) {
+            res.status(200).json({
+                success: true,
+                message: 'Construction des features terminée avec succès',
+                stats: {
+                    status: result.report.status,
+                    featuresBuilt: result.report.build_features?.features_built || 0,
+                    propertiesUpdated: result.report.update_pricing?.properties_updated || 0,
+                    duration: result.report.build_features?.duration_seconds || duration
+                },
+                duration: duration,
+                report: result.report
+            });
+        } else {
+            res.status(500).json({
+                success: false,
+                error: result.error || 'Erreur lors de la construction des features',
+                duration: duration,
+                report: result.report || null,
+                details: result
+            });
+        }
+
+    } catch (error) {
+        console.error('[Market Data] Erreur dans l\'endpoint API:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Erreur interne lors de la construction des features marché',
+            message: error.message
+        });
+    }
+});
+
+/**
+ * Endpoint API pour récupérer le statut global du pipeline marché.
+ * GET /api/market-data/status
+ */
+app.get('/api/market-data/status', authenticateToken, async (req, res) => {
+    try {
+        console.log('[Market Data] Statut demandé par utilisateur:', req.user.uid);
+
+        // Récupérer les dernières exécutions de chaque job depuis pipeline_logs_market
+        const { data: collectJobs, error: collectError } = await supabase
+            .from('pipeline_logs_market')
+            .select('*')
+            .eq('job_name', 'collect_market_data')
+            .order('start_time', { ascending: false })
+            .limit(5);
+
+        const { data: enrichJobs, error: enrichError } = await supabase
+            .from('pipeline_logs_market')
+            .select('*')
+            .eq('job_name', 'enrich_market_data')
+            .order('start_time', { ascending: false })
+            .limit(5);
+
+        const { data: buildJobs, error: buildError } = await supabase
+            .from('pipeline_logs_market')
+            .select('*')
+            .eq('job_name', 'build_market_features')
+            .order('start_time', { ascending: false })
+            .limit(5);
+
+        // Récupérer les jobs en cours
+        const { data: runningJobs, error: runningError } = await supabase
+            .from('pipeline_logs_market')
+            .select('*')
+            .eq('status', 'running')
+            .order('start_time', { ascending: true });
+
+        // Calculer les statistiques globales
+        const lastCollect = collectJobs && collectJobs.length > 0 ? collectJobs[0] : null;
+        const lastEnrich = enrichJobs && enrichJobs.length > 0 ? enrichJobs[0] : null;
+        const lastBuild = buildJobs && buildJobs.length > 0 ? buildJobs[0] : null;
+
+        // Statistiques de succès (7 derniers jours)
+        const sevenDaysAgo = new Date();
+        sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+
+        const { data: recentJobs, error: recentError } = await supabase
+            .from('pipeline_logs_market')
+            .select('job_name, status')
+            .gte('start_time', sevenDaysAgo.toISOString());
+
+        const stats = {
+            collect: {
+                total: 0,
+                success: 0,
+                failed: 0,
+                partial: 0
+            },
+            enrich: {
+                total: 0,
+                success: 0,
+                failed: 0,
+                partial: 0
+            },
+            build: {
+                total: 0,
+                success: 0,
+                failed: 0,
+                partial: 0
+            }
+        };
+
+        if (recentJobs) {
+            recentJobs.forEach(job => {
+                let jobStats = null;
+                
+                // Déterminer le type de job
+                if (job.job_name === 'collect_market_data') {
+                    jobStats = stats.collect;
+                } else if (job.job_name === 'enrich_market_data') {
+                    jobStats = stats.enrich;
+                } else if (job.job_name === 'build_market_features') {
+                    jobStats = stats.build;
+                }
+                
+                if (jobStats) {
+                    jobStats.total++;
+                    if (job.status === 'success') jobStats.success++;
+                    else if (job.status === 'failed') jobStats.failed++;
+                    else if (job.status === 'partial') jobStats.partial++;
+                }
+            });
+        }
+
+        res.status(200).json({
+            success: true,
+            status: {
+                lastCollect: lastCollect ? {
+                    status: lastCollect.status,
+                    startTime: lastCollect.start_time,
+                    endTime: lastCollect.end_time,
+                    duration: lastCollect.duration_seconds,
+                    recordsProcessed: lastCollect.records_processed,
+                    recordsSuccess: lastCollect.records_success,
+                    recordsFailed: lastCollect.records_failed
+                } : null,
+                lastEnrich: lastEnrich ? {
+                    status: lastEnrich.status,
+                    startTime: lastEnrich.start_time,
+                    endTime: lastEnrich.end_time,
+                    duration: lastEnrich.duration_seconds,
+                    recordsProcessed: lastEnrich.records_processed,
+                    recordsSuccess: lastEnrich.records_success,
+                    recordsFailed: lastEnrich.records_failed
+                } : null,
+                lastBuild: lastBuild ? {
+                    status: lastBuild.status,
+                    startTime: lastBuild.start_time,
+                    endTime: lastBuild.end_time,
+                    duration: lastBuild.duration_seconds,
+                    recordsProcessed: lastBuild.records_processed,
+                    recordsSuccess: lastBuild.records_success,
+                    recordsFailed: lastBuild.records_failed
+                } : null,
+                runningJobs: runningJobs ? runningJobs.map(job => ({
+                    jobName: job.job_name,
+                    jobType: job.job_type,
+                    startTime: job.start_time
+                })) : [],
+                stats: stats
+            }
+        });
+
+    } catch (error) {
+        console.error('[Market Data] Erreur dans l\'endpoint status:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Erreur interne lors de la récupération du statut',
+            message: error.message
+        });
+    }
+});
+
+/**
+ * Endpoint API pour récupérer les features marché.
+ * GET /api/market-data/features
+ */
+app.get('/api/market-data/features', authenticateToken, async (req, res) => {
+    try {
+        const { city, country, date, neighborhood } = req.query;
+
+        // Validation des paramètres requis
+        if (!city || !country || !date) {
+            return res.status(400).json({
+                success: false,
+                error: 'Paramètres manquants: city, country et date sont requis',
+                required: ['city', 'country', 'date']
+            });
+        }
+
+        // Validation du format de date
+        const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+        if (!dateRegex.test(date)) {
+            return res.status(400).json({
+                success: false,
+                error: 'Format de date invalide. Utilisez YYYY-MM-DD'
+            });
+        }
+
+        console.log(`[Market Data] Features demandées: city=${city}, country=${country}, date=${date}, neighborhood=${neighborhood || 'all'}`);
+
+        // Construire la requête
+        let query = supabase
+            .from('market_features')
+            .select('*')
+            .eq('city', city)
+            .eq('country', country)
+            .eq('date', date);
+
+        if (neighborhood) {
+            query = query.eq('neighborhood', neighborhood);
+        }
+
+        const { data: features, error } = await query.order('created_at', { ascending: false }).limit(1);
+
+        if (error) {
+            console.error('[Market Data] Erreur Supabase:', error);
+            return res.status(500).json({
+                success: false,
+                error: 'Erreur lors de la récupération des features',
+                details: error.message
+            });
+        }
+
+        if (!features || features.length === 0) {
+            return res.status(404).json({
+                success: false,
+                error: 'Aucune feature trouvée pour les critères spécifiés',
+                query: { city, country, date, neighborhood: neighborhood || 'all' }
+            });
+        }
+
+        res.status(200).json({
+            success: true,
+            features: features[0],
+            query: { city, country, date, neighborhood: neighborhood || 'all' }
+        });
+
+    } catch (error) {
+        console.error('[Market Data] Erreur dans l\'endpoint features:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Erreur interne lors de la récupération des features',
+            message: error.message
+        });
+    }
+});
+
+/**
+ * Endpoint API pour récupérer les prix concurrents.
+ * GET /api/market-data/competitor-prices
+ */
+app.get('/api/market-data/competitor-prices', authenticateToken, async (req, res) => {
+    try {
+        const { city, country, date } = req.query;
+
+        // Validation des paramètres requis
+        if (!city || !country || !date) {
+            return res.status(400).json({
+                success: false,
+                error: 'Paramètres manquants: city, country et date sont requis',
+                required: ['city', 'country', 'date']
+            });
+        }
+
+        // Validation du format de date
+        const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+        if (!dateRegex.test(date)) {
+            return res.status(400).json({
+                success: false,
+                error: 'Format de date invalide. Utilisez YYYY-MM-DD'
+            });
+        }
+
+        console.log(`[Market Data] Prix concurrents demandés: city=${city}, country=${country}, date=${date}`);
+
+        // Récupérer depuis enriched_competitor_data ou raw_competitor_data
+        // On essaie d'abord enriched_competitor_data pour avoir les données enrichies
+        let { data: enrichedData, error: enrichedError } = await supabase
+            .from('enriched_competitor_data')
+            .select('*')
+            .eq('city', city)
+            .eq('country', country)
+            .eq('date', date)
+            .order('created_at', { ascending: false })
+            .limit(10);
+
+        // Si pas de données enrichies, essayer raw_competitor_data
+        if ((!enrichedData || enrichedData.length === 0) && enrichedError === null) {
+            const { data: rawData, error: rawError } = await supabase
+                .from('raw_competitor_data')
+                .select('*')
+                .eq('city', city)
+                .eq('country', country)
+                .eq('date', date)
+                .order('collected_at', { ascending: false })
+                .limit(10);
+
+            if (rawError) {
+                console.error('[Market Data] Erreur Supabase (raw):', rawError);
+                return res.status(500).json({
+                    success: false,
+                    error: 'Erreur lors de la récupération des prix concurrents',
+                    details: rawError.message
+                });
+            }
+
+            enrichedData = rawData;
+        } else if (enrichedError) {
+            console.error('[Market Data] Erreur Supabase (enriched):', enrichedError);
+            return res.status(500).json({
+                success: false,
+                error: 'Erreur lors de la récupération des prix concurrents',
+                details: enrichedError.message
+            });
+        }
+
+        if (!enrichedData || enrichedData.length === 0) {
+            return res.status(404).json({
+                success: false,
+                error: 'Aucun prix concurrent trouvé pour les critères spécifiés',
+                query: { city, country, date }
+            });
+        }
+
+        // Agréger les prix si plusieurs résultats
+        const prices = enrichedData.map(item => ({
+            avgPrice: item.avg_price || item.price_data?.avg_price,
+            minPrice: item.min_price || item.price_data?.min_price,
+            maxPrice: item.max_price || item.price_data?.max_price,
+            currency: item.currency || 'EUR',
+            sampleSize: item.sample_size || item.price_data?.sample_size || 0,
+            propertyType: item.property_type,
+            neighborhood: item.neighborhood,
+            collectedAt: item.collected_at || item.created_at
+        }));
+
+        res.status(200).json({
+            success: true,
+            prices: prices,
+            summary: {
+                count: prices.length,
+                avgPrice: prices.reduce((sum, p) => sum + (p.avgPrice || 0), 0) / prices.length,
+                minPrice: Math.min(...prices.map(p => p.minPrice || Infinity).filter(p => p !== Infinity)),
+                maxPrice: Math.max(...prices.map(p => p.maxPrice || 0).filter(p => p > 0))
+            },
+            query: { city, country, date }
+        });
+
+    } catch (error) {
+        console.error('[Market Data] Erreur dans l\'endpoint competitor-prices:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Erreur interne lors de la récupération des prix concurrents',
+            message: error.message
+        });
     }
 });
 
 // --- DÉMARRAGE DU SERVEUR ---
 app.listen(port, () => {
   console.log(`Le serveur écoute sur le port ${port}`);
-  console.log(`Pipeline de pricing ML programmé : tous les jours à 2h00`);
 });
