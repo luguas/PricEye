@@ -1,0 +1,22 @@
+# Configuration Render pour PricEye Backend
+# Documentation: https://render.com/docs/yaml-spec
+
+services:
+  - type: web
+    name: priceye-backend
+    env: node
+    plan: free # ou starter/pro pour plus de ressources
+    buildCommand: npm install && cd PricEyeProject && npm install
+    startCommand: cd PricEyeProject && npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      # Ajoutez vos autres variables d'environnement via le dashboard Render
+      # - key: SUPABASE_URL
+      #   sync: false
+      # - key: SUPABASE_SERVICE_ROLE_KEY
+      #   sync: false
+      # - key: STRIPE_SECRET_KEY
+      #   sync: false
+      # etc.
+

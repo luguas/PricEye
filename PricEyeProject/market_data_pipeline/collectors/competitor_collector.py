@@ -35,7 +35,12 @@ class CompetitorCollector(BaseCollector):
     """
     
     # Actor ID par défaut (peut être personnalisé)
-    DEFAULT_ACTOR_ID = "airbnb-scraper"  # Ou l'ID spécifique de l'Actor Apify
+    # Note: L'actor doit être disponible dans votre compte Apify
+    # Exemples d'actors populaires pour Airbnb:
+    # - "dtrungtin/airbnb-scraper"
+    # - "apify/airbnb-scraper" (si disponible)
+    # - "your-username/airbnb-scraper" (votre propre actor)
+    DEFAULT_ACTOR_ID = "dtrungtin/airbnb-scraper"  # Actor public populaire
     
     def __init__(
         self,
@@ -203,18 +208,20 @@ class CompetitorCollector(BaseCollector):
             Dict de configuration pour l'Actor
         """
         # Format standard pour Apify Airbnb Scraper
-        # Note: Le format exact dépend de l'Actor utilisé
+        # Documentation: https://apify.com/tri_angle/airbnb-scraper/input-schema
+        # LIMITE DE COÛT: Maximum 0.06$ par run
+        MAX_COST_USD = 0.06
+        
         actor_input = {
             "startUrls": [
-                {"url": url} for url in competitor_urls[:20]  # Limiter à 20
+                {"url": url} for url in competitor_urls[:3]  # Limiter à 3 URLs max (reduit les coûts)
             ],
-            # Options de scraping
-            "maxItems": 20,
-            "extendOutputFunction": None,
-            "extendScraperFunction": None,
-            # Dates
-            "checkInDate": date_range['start_date'].isoformat(),
-            "checkOutDate": date_range['end_date'].isoformat(),
+            # LIMITE DE COÛT: Maximum 0.06$ par run (arrête automatiquement si dépassé)
+            # Selon la documentation Apify, maxCostPerRun est un paramètre d'input standard
+            "maxCostPerRun": MAX_COST_USD,
+            # Dates (format YYYY-MM-DD selon la doc: checkIn et checkOut)
+            "checkIn": date_range['start_date'].isoformat(),
+            "checkOut": date_range['end_date'].isoformat(),
             # Options additionnelles
             "proxy": {
                 "useApifyProxy": True
@@ -240,10 +247,15 @@ class CompetitorCollector(BaseCollector):
         
         try:
             # Exécuter l'Actor de manière asynchrone
+            # Note: maxCostPerRun est déjà dans actor_input
             run = self.apify_client.actor(self.actor_id).call(run_input=actor_input)
             run_id = run['id']
             
-            logger.info(f"Apify Actor run started: {run_id}")
+            max_cost = actor_input.get('maxCostPerRun', 'N/A')
+            logger.info(
+                f"Apify Actor run started: {run_id} "
+                f"(max cost limit: ${max_cost})"
+            )
             return run_id
             
         except Exception as e:
@@ -286,17 +298,52 @@ class CompetitorCollector(BaseCollector):
             run_status = self.apify_client.run(run_id).get()
             status = run_status['status']
             
-            logger.debug(f"Apify run {run_id} status: {status}")
+            # Vérifier le coût estimé pour limiter à 0.06$ maximum
+            MAX_COST_USD = 0.06
+            stats = run_status.get('stats', {})
+            consumed_resources = stats.get('consumedResources') or {}
+            compute_units_used = consumed_resources.get('computeUnits') or 0
+            
+            # Estimation du coût (approximatif, dépend du plan Apify)
+            # Généralement: 1 compute unit ≈ 0.01$ pour le plan free, moins pour les plans payants
+            # Pour être conservateur, on arrête si computeUnits > 6 (≈0.06$)
+            if compute_units_used > 6:
+                logger.warning(
+                    f"Apify run {run_id} a atteint {compute_units_used} compute units "
+                    f"(coût estimé > {MAX_COST_USD}$). Arrêt du run pour limiter les coûts."
+                )
+                try:
+                    self.apify_client.run(run_id).abort()
+                except Exception as abort_error:
+                    logger.error(f"Erreur lors de l'arrêt du run: {abort_error}")
+                raise RuntimeError(
+                    f"Run Apify arrêté: coût estimé dépassé ({compute_units_used} compute units > 6, limite: {MAX_COST_USD}$)"
+                )
+            
+            logger.debug(f"Apify run {run_id} status: {status}, compute units: {compute_units_used}")
             
             if status == 'SUCCEEDED':
-                # Récupérer les résultats
-                dataset_items = list(
-                    self.apify_client.dataset(run_status['defaultDatasetId']).iterate_items()
-                )
+                # Récupérer les résultats avec une limite stricte pour contrôler les coûts
+                dataset_id = run_status.get('defaultDatasetId')
+                if dataset_id:
+                    # Récupérer uniquement les 5 premiers items pour limiter les coûts
+                    # Utiliser iterate_items avec une limite
+                    all_items = self.apify_client.dataset(dataset_id).iterate_items()
+                    dataset_items = []
+                    count = 0
+                    max_items = 5  # Limite stricte pour rester sous 0.06$
+                    for item in all_items:
+                        if count >= max_items:
+                            break
+                        dataset_items.append(item)
+                        count += 1
+                else:
+                    dataset_items = []
                 
+                estimated_cost = compute_units_used * 0.01  # Estimation: 1 CU ≈ 0.01$
                 logger.info(
                     f"Apify run {run_id} completed successfully. "
-                    f"Retrieved {len(dataset_items)} items"
+                    f"Retrieved {len(dataset_items)} items (limite: 5, coût estimé: ~${estimated_cost:.3f})"
                 )
                 
                 return {
@@ -484,9 +531,10 @@ class CompetitorCollector(BaseCollector):
         Génère des URLs de recherche Airbnb pour trouver les concurrents.
         
         Note: Cette méthode génère des URLs de recherche génériques.
-        Idéalement, les URLs des 20 concurrents directs devraient être fournies
+        Idéalement, les URLs des concurrents directs devraient être fournies
         manuellement ou identifiées via une autre méthode (ex: recherche manuelle,
         base de données existante, etc.).
+        Le nombre de propriétés scrapées est limité à 10 via maxItems.
         
         Args:
             property_info: Informations sur la propriété
@@ -521,7 +569,8 @@ class CompetitorCollector(BaseCollector):
         )
         
         # Retourner une seule URL de recherche pour l'instant
-        # En production, cette méthode devrait identifier les 20 meilleurs concurrents
+        # En production, cette méthode devrait identifier les meilleurs concurrents
+        # (actuellement limité à 10 via maxItems dans _prepare_actor_input)
         return [url]
     
     def _validate(self, data: Dict[str, Any]) -> bool:

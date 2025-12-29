@@ -524,6 +524,15 @@ export function getPositioningReport(token, startDate, endDate) {
     });
 }
 
+export function getMarketKpis(token, startDate, endDate, city = null, country = null) {
+    const params = new URLSearchParams({ startDate, endDate });
+    if (city) params.append('city', city);
+    if (country) params.append('country', country);
+    return apiRequest(`/api/reports/market-kpis?${params.toString()}`, {
+        token,
+    });
+}
+
 export function getDateAnalysis(propertyId, date, token) {
     return apiRequest(`/api/reports/analyze-date`, {
         method: 'POST',

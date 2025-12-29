@@ -58,18 +58,19 @@ async def get_active_properties(
         supabase = create_client(settings.supabase_url, settings.supabase_key)
         
         # Construire la requête
-        query = supabase.table('properties').select('id, city, country, bedrooms, bathrooms, property_type, status, latitude, longitude')
+        # Note: La table properties peut ne pas avoir les colonnes city/country directement
+        # On sélectionne toutes les colonnes disponibles et on filtre ensuite si possible
+        query = supabase.table('properties').select('*')
         
-        # Filtrer par status actif
-        query = query.eq('status', 'active')
+        # Filtrer par status actif (si la colonne existe)
+        try:
+            query = query.eq('status', 'active')
+        except Exception as e:
+            logger.debug(f"Status filter may not be applicable: {e}")
         
-        # Filtrer par pays si spécifié
-        if countries:
-            query = query.in_('country', countries)
-        
-        # Filtrer par villes si spécifié
-        if cities:
-            query = query.in_('city', cities)
+        # Note: Si city/country n'existent pas comme colonnes directes,
+        # elles peuvent être dans un champ JSON ou dans une autre table
+        # Pour l'instant, on récupère toutes les propriétés actives
         
         # Exécuter la requête
         loop = asyncio.get_event_loop()
@@ -79,6 +80,78 @@ async def get_active_properties(
         )
         
         properties = response.data if response.data else []
+        
+        # Filtrer par pays et ville si spécifié (après récupération)
+        # Cela permet de gérer le cas où ces colonnes n'existent pas
+        if countries or cities:
+            filtered_properties = []
+            for prop in properties:
+                # Extraire city et country (peuvent être dans différents champs)
+                # Priorité: city direct > location (string ou dict) > address.city (dict)
+                prop_city = None
+                if prop.get('city'):
+                    prop_city = str(prop.get('city')).strip()
+                elif prop.get('location'):
+                    location = prop.get('location')
+                    if isinstance(location, str):
+                        prop_city = location.strip()
+                    elif isinstance(location, dict):
+                        prop_city = (location.get('city') or location.get('name'))
+                        if prop_city:
+                            prop_city = str(prop_city).strip()
+                elif isinstance(prop.get('address'), dict):
+                    prop_city = prop.get('address', {}).get('city')
+                    if prop_city:
+                        prop_city = str(prop_city).strip()
+                
+                # Extraire country
+                prop_country = None
+                if prop.get('country'):
+                    prop_country = str(prop.get('country')).strip()
+                elif isinstance(prop.get('address'), dict):
+                    prop_country = prop.get('address', {}).get('country')
+                    if prop_country:
+                        prop_country = str(prop_country).strip()
+                elif isinstance(prop.get('location'), dict):
+                    prop_country = prop.get('location', {}).get('country')
+                    if prop_country:
+                        prop_country = str(prop_country).strip()
+                # Si pas de country trouvé, utiliser 'FR' par défaut
+                if not prop_country:
+                    prop_country = 'FR'  # Défaut FR si non spécifié
+                
+                # Filtrer par pays
+                if countries and prop_country not in countries:
+                    continue
+                
+                # Filtrer par ville (normalisation : comparaison case-insensitive)
+                if cities:
+                    if not prop_city:
+                        continue
+                    prop_city_normalized = prop_city.lower().strip()
+                    cities_normalized = [c.lower().strip() for c in cities]
+                    if prop_city_normalized not in cities_normalized:
+                        continue
+                
+                # Ajouter city et country aux propriétés pour faciliter l'utilisation
+                prop['city'] = prop_city
+                prop['country'] = prop_country
+                
+                filtered_properties.append(prop)
+            
+            properties = filtered_properties
+        else:
+            # Même sans filtres, ajouter city et country aux propriétés pour faciliter l'utilisation
+            for prop in properties:
+                if not prop.get('city'):
+                    location = prop.get('location')
+                    if isinstance(location, str):
+                        prop['city'] = location.strip()
+                    elif isinstance(location, dict):
+                        prop['city'] = (location.get('city') or location.get('name'))
+                
+                if not prop.get('country'):
+                    prop['country'] = 'FR'  # Défaut FR si non spécifié
         
         logger.info(f"Retrieved {len(properties)} active properties from Supabase")
         return properties
@@ -94,7 +167,8 @@ async def collect_all_sources(
     date_range: Optional[Dict[str, date]] = None,
     settings: Optional[Settings] = None,
     collect_competitors: bool = True,
-    collect_weather: bool = True
+    collect_weather: bool = True,
+    max_properties: Optional[int] = None
 ) -> Dict[str, Any]:
     """
     Collecte les données de toutes les sources.
@@ -106,6 +180,7 @@ async def collect_all_sources(
         settings: Configuration (si None, charge depuis env)
         collect_competitors: Si True, collecte les données concurrents
         collect_weather: Si True, collecte les données météo
+        max_properties: Nombre maximum de propriétés à traiter (None = toutes)
     
     Returns:
         Rapport de collecte avec stats et erreurs
@@ -171,11 +246,44 @@ async def collect_all_sources(
     logger.info("Fetching active properties from Supabase...")
     properties = await get_active_properties(settings, countries, cities)
     
+    # Limiter le nombre de propriétés si max_properties est spécifié
+    if max_properties is not None and len(properties) > max_properties:
+        logger.info(f"Limiting to {max_properties} properties (found {len(properties)})")
+        properties = properties[:max_properties]
+    
     if not properties:
         logger.warning("No active properties found")
         report["warnings"].append("No active properties found")
+        report["status"] = "skipped"  # Aucune propriété à traiter = skipped
         report["end_time"] = datetime.now().isoformat()
         report["duration_seconds"] = (datetime.now() - start_time).total_seconds()
+        
+        # Logger la fin du job
+        stats = {
+            "records_processed": 0,
+            "records_success": 0,
+            "records_failed": 0,
+            "duration_seconds": report["duration_seconds"]
+        }
+        
+        # Créer un message d'avertissement si des warnings existent
+        warning_message = None
+        if report["warnings"]:
+            warning_message = "; ".join(report["warnings"])
+        
+        await log_job_end(
+            job_name="collect_market_data",
+            status=JobStatus.PARTIAL,  # Marqué comme partial car aucune donnée
+            stats=stats,
+            errors=None,
+            error_message=warning_message  # Utiliser error_message pour les warnings
+        )
+        
+        logger.info("=" * 60)
+        logger.info("Collection skipped: No active properties found")
+        logger.info(f"  Duration: {report['duration_seconds']:.2f}s")
+        logger.info("=" * 60)
+        
         return report
     
     logger.info(f"Found {len(properties)} active properties")

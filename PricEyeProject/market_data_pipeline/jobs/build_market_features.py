@@ -272,10 +272,10 @@ async def update_pricing_features(
         end_date = date_range['end_date']
         
         # Récupérer toutes les propriétés actives
+        # Note: Les colonnes city/country peuvent ne pas exister directement
+        # On sélectionne toutes les colonnes et on filtre ensuite
         properties_query = supabase_client.table('properties')\
-            .select('id, country, city, neighborhood, property_type')\
-            .not_.is_('city', 'null')\
-            .not_.is_('country', 'null')
+            .select('*')
         
         properties_response = await loop.run_in_executor(
             None,
@@ -284,7 +284,22 @@ async def update_pricing_features(
         
         properties = properties_response.data if properties_response.data else []
         
-        logger.info(f"Found {len(properties)} properties to update")
+        # Filtrer les propriétés qui ont city et country (peuvent être dans différents champs)
+        valid_properties = []
+        for prop in properties:
+            # Extraire city et country (peuvent être dans différents champs)
+            prop_city = prop.get('city') or prop.get('location') or (prop.get('address', {}).get('city') if isinstance(prop.get('address'), dict) else None)
+            prop_country = prop.get('country') or (prop.get('address', {}).get('country') if isinstance(prop.get('address'), dict) else None)
+            
+            if prop_city and prop_country:
+                # Normaliser les valeurs dans la prop pour faciliter l'utilisation
+                prop['city'] = prop_city
+                prop['country'] = prop_country
+                valid_properties.append(prop)
+        
+        properties = valid_properties
+        
+        logger.info(f"Found {len(properties)} properties with city/country to update")
         
         # Pour chaque propriété et chaque date
         current_date = start_date

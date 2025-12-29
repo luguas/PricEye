@@ -8,7 +8,7 @@ import asyncio
 import logging
 import json
 from typing import Dict, List, Optional, Any
-from datetime import datetime
+from datetime import datetime, date
 from enum import Enum
 import os
 
@@ -82,6 +82,30 @@ class PipelineMonitor:
         
         return self._supabase_client
     
+    def _serialize_for_json(self, obj: Any) -> Any:
+        """
+        Sérialise récursivement un objet pour JSON (convertit les dates).
+        
+        Args:
+            obj: Objet à sérialiser (dict, list, date, datetime, etc.)
+        
+        Returns:
+            Objet sérialisable pour JSON
+        """
+        if isinstance(obj, (date, datetime)):
+            return obj.isoformat()
+        elif isinstance(obj, dict):
+            return {
+                k: self._serialize_for_json(v)
+                for k, v in obj.items()
+            }
+        elif isinstance(obj, list):
+            return [self._serialize_for_json(item) for item in obj]
+        elif isinstance(obj, Enum):
+            return obj.value
+        else:
+            return obj
+    
     async def log_job_start(
         self,
         job_name: str,
@@ -126,6 +150,9 @@ class PipelineMonitor:
         supabase_client = self._get_supabase_client()
         if supabase_client:
             try:
+                # Convertir les dates en strings pour JSON (sérialisation récursive)
+                params_serializable = self._serialize_for_json(params) if params else {}
+                
                 loop = asyncio.get_event_loop()
                 
                 record = {
@@ -136,7 +163,7 @@ class PipelineMonitor:
                     'records_processed': 0,
                     'records_success': 0,
                     'records_failed': 0,
-                    'config': json.dumps(params) if params else None,
+                    'config': json.dumps(params_serializable) if params_serializable else None,
                     'triggered_by': triggered_by,
                     'triggered_by_user': triggered_by_user
                 }

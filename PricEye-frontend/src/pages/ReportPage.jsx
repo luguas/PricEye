@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { getProperties, getReportKpis, getRevenueOverTime, getPerformanceOverTime, getMarketDemandSnapshot, getPositioningReport } from '../services/api.js'; // Importer getPerformanceOverTime
+import { getProperties, getReportKpis, getRevenueOverTime, getPerformanceOverTime, getMarketDemandSnapshot, getPositioningReport, getMarketKpis } from '../services/api.js'; // Importer getPerformanceOverTime
 import { exportToExcel } from '../utils/exportUtils.js';
 import Chart from 'chart.js/auto'; 
 import { getDatesFromRange, getPreviousDates } from '../utils/dateUtils.js'; // Importer les deux fonctions
@@ -136,6 +136,8 @@ function ReportPage({ token, userProfile }) {
   // KPIs State
   const [kpis, setKpis] = useState(null); // Période N
   const [prevKpis, setPrevKpis] = useState(null); // Période N-1
+  const [marketKpis, setMarketKpis] = useState(null); // KPIs du marché (période N)
+  const [prevMarketKpis, setPrevMarketKpis] = useState(null); // KPIs du marché (période N-1)
   const [chartData, setChartData] = useState(null); // Pour le graphique de revenus
   const [performanceData, setPerformanceData] = useState(null); // NOUVEAU: Pour le graphique de performance
   const [revparData, setRevparData] = useState(null); // Pour le graphique RevPAR, ADR & Occupation
@@ -610,9 +612,11 @@ function ReportPage({ token, userProfile }) {
           const { startDate: prevStartDate, endDate: prevEndDate } = getPreviousDates(currentStartDate, currentEndDate);
 
           // 2. Appeler l'API pour les deux périodes en parallèle
-          const [currentData, prevData, revenueData, perfData, marketSnapshotData, positioningReport] = await Promise.all([
+          const [currentData, prevData, currentMarketKpisData, prevMarketKpisData, revenueData, perfData, marketSnapshotData, positioningReport] = await Promise.all([
               getReportKpis(token, currentStartDate, currentEndDate),
               getReportKpis(token, prevStartDate, prevEndDate),
+              getMarketKpis(token, currentStartDate, currentEndDate),
+              getMarketKpis(token, prevStartDate, prevEndDate),
               getRevenueOverTime(token, currentStartDate, currentEndDate),
               getPerformanceOverTime(token, currentStartDate, currentEndDate), // NOUVEL APPEL
               getMarketDemandSnapshot(token, userProfile.timezone || 'Europe/Paris'),
@@ -621,6 +625,8 @@ function ReportPage({ token, userProfile }) {
           
           setKpis(currentData);
           setPrevKpis(prevData);
+          setMarketKpis(currentMarketKpisData);
+          setPrevMarketKpis(prevMarketKpisData);
           setChartData(revenueData); // Sauvegarder les données du graphique de revenus
           setPerformanceData(perfData); // NOUVEAU: Sauvegarder les données du graphique de performance
           setMarketSnapshot(marketSnapshotData || null);
@@ -2305,7 +2311,56 @@ function ReportPage({ token, userProfile }) {
 
         {/* Graphique Tendance marché - Offre vs Demande (onglet Marché) */}
         {activeTab === 'market' && (
-          <div className="self-stretch shrink-0 grid gap-6 relative" style={{ gridTemplateColumns: '2fr 1fr' }}>
+          <>
+            {/* KPIs du marché */}
+            <div className="self-stretch shrink-0 grid gap-4 relative mb-6" style={{ gridTemplateColumns: 'repeat(4, minmax(0, 1fr))' }}>
+              <KpiCard
+                title="Prix moyen marché"
+                value={marketKpis?.competitor_avg_price || 0}
+                previousValue={prevMarketKpis?.competitor_avg_price || 0}
+                formatter={formatCurrency}
+                isLoading={isKpiLoading}
+              />
+              <KpiCard
+                title="Niveau de demande"
+                value={marketKpis?.market_demand_level === 'very_high' ? 100 : 
+                      marketKpis?.market_demand_level === 'high' ? 75 :
+                      marketKpis?.market_demand_level === 'medium' ? 50 :
+                      marketKpis?.market_demand_level === 'low' ? 25 : 0}
+                previousValue={prevMarketKpis?.market_demand_level === 'very_high' ? 100 : 
+                              prevMarketKpis?.market_demand_level === 'high' ? 75 :
+                              prevMarketKpis?.market_demand_level === 'medium' ? 50 :
+                              prevMarketKpis?.market_demand_level === 'low' ? 25 : 0}
+                formatter={(v) => {
+                  const level = marketKpis?.market_demand_level || 'unknown';
+                  const labels = {
+                    'very_high': 'Très élevé',
+                    'high': 'Élevé',
+                    'medium': 'Moyen',
+                    'low': 'Faible',
+                    'unknown': 'N/A'
+                  };
+                  return labels[level] || 'N/A';
+                }}
+                isLoading={isKpiLoading}
+              />
+              <KpiCard
+                title="Score météo"
+                value={marketKpis?.weather_score || 0}
+                previousValue={prevMarketKpis?.weather_score || 0}
+                formatter={(v) => `${Math.round(v || 0)}/100`}
+                isLoading={isKpiLoading}
+              />
+              <KpiCard
+                title="Impact événements"
+                value={marketKpis?.event_impact_score || 0}
+                previousValue={prevMarketKpis?.event_impact_score || 0}
+                formatter={(v) => `${v > 0 ? '+' : ''}${Math.round(v || 0)}%`}
+                isLoading={isKpiLoading}
+              />
+            </div>
+            
+            <div className="self-stretch shrink-0 grid gap-6 relative" style={{ gridTemplateColumns: '2fr 1fr' }}>
             {/* Graphique Tendance marché - Offre vs Demande */}
             <div className="bg-[rgba(15,23,43,0.40)] rounded-[14px] border-solid border-[rgba(49,65,88,0.50)] border pt-[25px] pr-[25px] pb-px pl-[25px] flex flex-col gap-6 items-start justify-start h-[452px] relative">
               <div className="self-stretch shrink-0 h-7 relative">
@@ -2388,6 +2443,7 @@ function ReportPage({ token, userProfile }) {
               </div>
             </div>
           </div>
+          </>
         )}
 
         {/* Contenu pour les autres onglets (Positionnement, Prévisions, Performance Financière) */}

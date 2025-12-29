@@ -6,8 +6,11 @@ import os
 from typing import List, Optional
 from dataclasses import dataclass
 from dotenv import load_dotenv
+from pathlib import Path
 
-load_dotenv()
+# Charger .env depuis le répertoire du projet (PricEyeProject/)
+project_root = Path(__file__).parent.parent.parent
+load_dotenv(dotenv_path=project_root / ".env")
 
 
 @dataclass

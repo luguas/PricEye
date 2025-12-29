@@ -68,8 +68,13 @@ class BaseCollector(ABC):
     
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Context manager exit."""
+        await self.close()
+    
+    async def close(self):
+        """Ferme les ressources du collecteur (session HTTP, etc.)."""
         if self.session:
             await self.session.close()
+            self.session = None
     
     async def collect(
         self,
@@ -353,24 +358,70 @@ class BaseCollector(ABC):
             # Insert avec upsert
             # Note: Le client Supabase Python est synchrone, on l'exécute dans un thread pool
             # pour ne pas bloquer l'event loop
+            # Pour raw_weather_data, la contrainte unique est (source, country, city, forecast_date)
+            # Pour raw_competitor_data, c'est différent - on utilise upsert avec on_conflict
             loop = asyncio.get_event_loop()
-            response = await loop.run_in_executor(
-                None,
-                lambda: self._supabase_client.table(table_name).upsert(
-                    records_to_insert
-                ).execute()
-            )
+            
+            # Déterminer les colonnes de conflit selon la table
+            # Les contraintes UNIQUE sont définies dans les migrations SQL
+            conflict_columns = None
+            if table_name == 'raw_weather_data':
+                # Contrainte: UNIQUE(source, country, city, forecast_date)
+                conflict_columns = 'source,country,city,forecast_date'
+            elif table_name == 'raw_competitor_data':
+                # Contrainte: UNIQUE(source, country, city, neighborhood, property_type, data_date)
+                conflict_columns = 'source,country,city,neighborhood,property_type,data_date'
+            elif table_name == 'raw_events_data':
+                # Contrainte: UNIQUE(source, country, city, event_name, event_date, venue_name)
+                conflict_columns = 'source,country,city,event_name,event_date,venue_name'
+            elif table_name == 'raw_news_data':
+                # Contrainte: UNIQUE(source, url, published_at)
+                conflict_columns = 'source,url,published_at'
+            elif table_name == 'raw_market_trends_data':
+                # Contrainte: UNIQUE(source, country, city, trend_date)
+                conflict_columns = 'source,country,city,trend_date'
+            
+            if conflict_columns:
+                response = await loop.run_in_executor(
+                    None,
+                    lambda: self._supabase_client.table(table_name).upsert(
+                        records_to_insert,
+                        on_conflict=conflict_columns
+                    ).execute()
+                )
+            else:
+                response = await loop.run_in_executor(
+                    None,
+                    lambda: self._supabase_client.table(table_name).upsert(
+                        records_to_insert
+                    ).execute()
+                )
             
             # Vérifier les erreurs
             if hasattr(response, 'error') and response.error:
-                raise Exception(f"Supabase error: {response.error}")
+                # Si c'est une erreur de duplicate key, ce n'est pas critique (upsert devrait gérer)
+                if 'duplicate key' in str(response.error).lower() or '23505' in str(response.error):
+                    logger.warning(
+                        f"Duplicate key detected for {self.source_name} in {table_name}. "
+                        f"This is normal if data already exists (upsert should handle it)."
+                    )
+                    # Ne pas lever d'exception, considérer comme succès
+                else:
+                    raise Exception(f"Supabase error: {response.error}")
             
             logger.info(
                 f"Stored {len(records_to_insert)} records for {self.source_name} "
                 f"in table {table_name}"
             )
-            
+        
         except Exception as e:
+            # Si c'est une erreur de duplicate key, logger comme warning mais continuer
+            if 'duplicate key' in str(e).lower() or '23505' in str(e):
+                logger.warning(
+                    f"Duplicate key detected for {self.source_name} in {table_name}: {e}. "
+                    f"Data may already exist. This is non-critical."
+                )
+                return  # Retourner sans erreur
             logger.error(
                 f"Error storing data for {self.source_name} in Supabase: {e}",
                 exc_info=True

@@ -7455,6 +7455,200 @@ app.get('/api/market-data/competitor-prices', authenticateToken, async (req, res
 });
 
 // --- DÉMARRAGE DU SERVEUR ---
+// GET /api/reports/market-kpis - KPIs du marché basés sur market_features
+app.get('/api/reports/market-kpis', authenticateToken, async (req, res) => {
+    try {
+        const userId = req.user.uid;
+        const { startDate, endDate, city, country } = req.query;
+
+        if (!startDate || !endDate) {
+            return res.status(400).send({ error: 'Les dates de début et de fin sont requises.' });
+        }
+
+        // 1. Récupérer le teamId et les propriétés de l'utilisateur
+        const userProfile = await db.getUser(userId);
+        if (!userProfile || !userProfile.team_id) {
+            return res.status(404).send({ error: 'Impossible de trouver votre équipe.' });
+        }
+        const teamId = userProfile.team_id;
+
+        // 2. Récupérer les propriétés actives pour obtenir leurs villes/pays
+        const properties = await db.getPropertiesByTeam(teamId);
+        if (!properties || properties.length === 0) {
+            return res.status(200).json({
+                competitor_avg_price: 0,
+                market_demand_level: 'unknown',
+                weather_score: 0,
+                event_impact_score: 0,
+                trend_score: 0,
+                data_quality_score: 0
+            });
+        }
+
+        // 3. Extraire les villes/pays uniques des propriétés
+        const locations = new Set();
+        properties.forEach(prop => {
+            // Extraire city et country (peuvent être dans différents champs)
+            const propCity = prop.city || prop.location || (prop.address?.city);
+            const propCountry = prop.country || (prop.address?.country) || 'FR';
+            
+            if (propCity && propCountry) {
+                locations.add(`${propCountry}:${propCity}`);
+            }
+        });
+
+        // 4. Filtrer par ville/pays si spécifié
+        let targetLocations = Array.from(locations);
+        if (city && country) {
+            targetLocations = targetLocations.filter(loc => loc === `${country}:${city}`);
+        }
+
+        if (targetLocations.length === 0) {
+            return res.status(200).json({
+                competitor_avg_price: 0,
+                market_demand_level: 'unknown',
+                weather_score: 0,
+                event_impact_score: 0,
+                trend_score: 0,
+                data_quality_score: 0
+            });
+        }
+
+        // 5. Construire la requête Supabase pour récupérer les market_features
+        // Récupérer les features pour la plage de dates
+        let allFeatures = [];
+        
+        for (const loc of targetLocations) {
+            const [locCountry, locCity] = loc.split(':');
+            
+            const { data: features, error } = await supabase
+                .from('market_features')
+                .select('*')
+                .eq('country', locCountry)
+                .eq('city', locCity)
+                .gte('date', startDate)
+                .lte('date', endDate)
+                .order('date', { ascending: true });
+
+            if (error) {
+                console.error(`Error fetching market features for ${locCity}, ${locCountry}:`, error);
+                continue;
+            }
+
+            if (features && features.length > 0) {
+                allFeatures = allFeatures.concat(features);
+            }
+        }
+
+        if (allFeatures.length === 0) {
+            return res.status(200).json({
+                competitor_avg_price: 0,
+                market_demand_level: 'unknown',
+                weather_score: 0,
+                event_impact_score: 0,
+                trend_score: 0,
+                data_quality_score: 0,
+                message: 'Aucune donnée marché disponible pour cette période'
+            });
+        }
+
+        // 6. Calculer les KPIs agrégés
+        const featuresWithPrice = allFeatures.filter(f => f.competitor_avg_price != null);
+        const avgCompetitorPrice = featuresWithPrice.length > 0
+            ? featuresWithPrice.reduce((sum, f) => sum + (f.competitor_avg_price || 0), 0) / featuresWithPrice.length
+            : 0;
+
+        const featuresWithWeather = allFeatures.filter(f => f.weather_score != null);
+        const avgWeatherScore = featuresWithWeather.length > 0
+            ? featuresWithWeather.reduce((sum, f) => sum + (f.weather_score || 0), 0) / featuresWithWeather.length
+            : 0;
+
+        const featuresWithEvent = allFeatures.filter(f => f.expected_demand_impact != null);
+        const avgEventImpact = featuresWithEvent.length > 0
+            ? featuresWithEvent.reduce((sum, f) => sum + (f.expected_demand_impact || 0), 0) / featuresWithEvent.length
+            : 0;
+
+        const featuresWithTrend = allFeatures.filter(f => f.market_trend_score != null);
+        const avgTrendScore = featuresWithTrend.length > 0
+            ? featuresWithTrend.reduce((sum, f) => sum + (f.market_trend_score || 0), 0) / featuresWithTrend.length
+            : 0;
+
+        const featuresWithQuality = allFeatures.filter(f => f.data_quality_score != null);
+        const avgDataQuality = featuresWithQuality.length > 0
+            ? featuresWithQuality.reduce((sum, f) => sum + (f.data_quality_score || 0), 0) / featuresWithQuality.length
+            : 0;
+
+        // Déterminer le niveau de demande moyen
+        // market_demand_level n'existe pas directement dans market_features, on le calcule
+        // à partir des signaux disponibles (tendance, événements, météo)
+        let marketDemandLevel = 'unknown';
+        const demandSignals = {
+            trend: avgTrendScore > 0.3 ? 1 : (avgTrendScore < -0.3 ? -1 : 0),
+            events: avgEventImpact > 20 ? 1 : (avgEventImpact < -20 ? -1 : 0),
+            weather: avgWeatherScore > 70 ? 1 : (avgWeatherScore < 40 ? -1 : 0)
+        };
+        const totalSignal = demandSignals.trend + demandSignals.events + demandSignals.weather;
+        
+        if (totalSignal >= 2) {
+            marketDemandLevel = 'very_high';
+        } else if (totalSignal >= 1) {
+            marketDemandLevel = 'high';
+        } else if (totalSignal >= -1) {
+            marketDemandLevel = 'medium';
+        } else {
+            marketDemandLevel = 'low';
+        }
+
+        // 7. Statistiques additionnelles
+        const competitorStats = {
+            avg: avgCompetitorPrice,
+            min: featuresWithPrice.length > 0 
+                ? Math.min(...featuresWithPrice.map(f => f.competitor_min_price || f.competitor_avg_price))
+                : null,
+            max: featuresWithPrice.length > 0
+                ? Math.max(...featuresWithPrice.map(f => f.competitor_max_price || f.competitor_avg_price))
+                : null,
+            median: featuresWithPrice.length > 0
+                ? featuresWithPrice.reduce((sum, f) => sum + (f.competitor_p50_price || f.competitor_avg_price || 0), 0) / featuresWithPrice.length
+                : 0
+        };
+
+        const totalEvents = allFeatures.reduce((sum, f) => sum + (f.event_count || 0), 0);
+        const majorEventsCount = allFeatures.filter(f => f.has_major_event === true).length;
+
+        res.status(200).json({
+            // KPIs principaux
+            competitor_avg_price: Math.round(avgCompetitorPrice * 100) / 100,
+            market_demand_level: marketDemandLevel,
+            weather_score: Math.round(avgWeatherScore * 100) / 100,
+            event_impact_score: Math.round(avgEventImpact * 100) / 100,
+            trend_score: Math.round(avgTrendScore * 100) / 100,
+            data_quality_score: Math.round(avgDataQuality * 100) / 100,
+
+            // Statistiques détaillées
+            competitor_stats: {
+                avg: Math.round(competitorStats.avg * 100) / 100,
+                min: competitorStats.min !== null && competitorStats.min !== Infinity ? Math.round(competitorStats.min * 100) / 100 : null,
+                max: competitorStats.max !== null && competitorStats.max !== -Infinity ? Math.round(competitorStats.max * 100) / 100 : null,
+                median: Math.round(competitorStats.median * 100) / 100
+            },
+
+            // Événements
+            total_events: totalEvents,
+            major_events_count: majorEventsCount,
+
+            // Métadonnées
+            locations_analyzed: targetLocations.length,
+            date_range: { start: startDate, end: endDate },
+            data_points: allFeatures.length
+        });
+
+    } catch (error) {
+        console.error('Erreur lors du calcul des KPIs marché:', error);
+        res.status(500).send({ error: 'Erreur serveur lors du calcul des KPIs marché.' });
+    }
+});
+
 app.listen(port, () => {
   console.log(`Le serveur écoute sur le port ${port}`);
 });

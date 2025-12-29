@@ -3,7 +3,7 @@ Normaliseur de données météo (OpenWeatherMap, WeatherAPI).
 """
 
 import logging
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from datetime import date, datetime
 
 logger = logging.getLogger(__name__)

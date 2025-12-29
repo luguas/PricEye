@@ -66,7 +66,9 @@ async def get_unenriched_data(
                 # Utiliser collected_at pour filtrer
                 query = query.gte('collected_at', start_date.isoformat())
             if end_date:
-                query = query.lte('collected_at', end_date.isoformat())
+                # Ajouter 23:59:59 pour inclure toute la journée
+                end_datetime = datetime.combine(end_date, datetime.max.time())
+                query = query.lte('collected_at', end_datetime.isoformat())
         
         # Limiter le nombre de résultats
         query = query.limit(limit)
@@ -187,8 +189,8 @@ async def enrich_all_sources(
     try:
         # Récupérer le client Supabase
         supabase_client = create_client(settings.supabase_url, settings.supabase_key)
-        
-        # Initialiser les enrichers
+    
+    # Initialiser les enrichers
         logger.info("Initializing enrichers...")
         similarity_engine = SimilarityEngine(settings=settings)
         nlp_pipeline = NLPPipeline(settings=settings)
@@ -537,8 +539,8 @@ async def enrich_all_sources(
         logger.info(f"  Status: {report['status']}")
         logger.info(f"  Errors: {len(report['errors'])}")
         logger.info("=" * 60)
-    
-    return report
+        
+        return report
         
     except Exception as e:
         logger.error(f"Critical error in enrichment pipeline: {e}", exc_info=True)
@@ -555,8 +557,8 @@ async def enrich_all_sources(
             errors=report["errors"],
             error_message=str(e)
         )
-        
-        return report
+    
+    return report
 
 
 def main():
@@ -650,21 +652,21 @@ def main():
                 print(f"  Processed: {trends['cities_processed']}")
                 print(f"  Enriched: {trends['cities_enriched']}")
                 print(f"  Errors: {len(trends['errors'])}")
-    
-    if report["errors"]:
+            
+            if report["errors"]:
                 print(f"\nErrors ({len(report['errors'])}):")
                 for error in report["errors"][:5]:  # Afficher les 5 premières
                     print(f"  - {error.get('source', 'unknown')}: {error.get('error', 'unknown error')}")
                 if len(report["errors"]) > 5:
                     print(f"  ... and {len(report['errors']) - 5} more errors")
-        
-        # Exit code basé sur le statut
-        if report["status"] == "failed":
-            return 1
-        elif report["status"] == "partial":
-            return 2  # Warning
-        else:
-            return 0
+            
+            # Exit code basé sur le statut
+            if report["status"] == "failed":
+                return 1
+            elif report["status"] == "partial":
+                return 2  # Warning
+            else:
+                return 0
             
     except KeyboardInterrupt:
         logger.warning("Enrichment interrupted by user")

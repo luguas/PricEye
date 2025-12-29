@@ -5,9 +5,11 @@ Gestion des clés API pour les différentes sources de données.
 import os
 from typing import Optional
 from dotenv import load_dotenv
+from pathlib import Path
 
-# Charger les variables d'environnement
-load_dotenv()
+# Charger .env depuis le répertoire du projet (même chemin que settings.py)
+project_root = Path(__file__).parent.parent.parent
+load_dotenv(dotenv_path=project_root / ".env")
 
 
 def get_api_key(service_name: str, default: Optional[str] = None) -> Optional[str]:
@@ -21,6 +23,11 @@ def get_api_key(service_name: str, default: Optional[str] = None) -> Optional[st
     Returns:
         La clé API ou None si non trouvée
     """
+    # Gérer les exceptions pour les noms de variables différents
+    if service_name == "APIFY":
+        # Apify utilise APIFY_API_TOKEN au lieu de APIFY_API_KEY
+        return os.getenv("APIFY_API_TOKEN") or os.getenv("APIFY_API_KEY", default)
+    
     env_key = f"{service_name}_API_KEY"
     return os.getenv(env_key, default)
 
