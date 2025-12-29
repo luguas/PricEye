@@ -235,7 +235,18 @@ class BaseCollector(ABC):
                 return await func(*args, **kwargs)
             except aiohttp.ClientResponseError as e:
                 # Ne pas retry sur erreurs 4xx (sauf 429)
-                if 400 <= e.status < 500 and e.status != 429:
+                # Erreurs 401 (Unauthorized) : Clé API invalide ou manquante
+                if e.status == 401:
+                    logger.error(
+                        f"Authentication failed (401) for {self.source_name}. "
+                        f"Please check your API key configuration. "
+                        f"Error: {e.message}"
+                    )
+                    raise ValueError(
+                        f"API authentication failed for {self.source_name}. "
+                        f"Please check your API key in .env file."
+                    )
+                elif 400 <= e.status < 500 and e.status != 429:
                     logger.error(
                         f"Client error {e.status} for {self.source_name}: {e.message}. "
                         "Not retrying."

@@ -251,13 +251,25 @@ class NewsCollector(BaseCollector):
                             break
                         
                         page += 1
+                    elif response.status == 401:
+                        error_text = await response.text()
+                        logger.error(
+                            f"NewsAPI authentication failed (401). "
+                            f"Please check your NEWSAPI_KEY in .env file. "
+                            f"Error: {error_text[:200]}"
+                        )
+                        raise ValueError(
+                            f"NewsAPI authentication failed. "
+                            f"Please check your NEWSAPI_KEY configuration."
+                        )
                     elif response.status == 429:
                         logger.warning("NewsAPI rate limit hit, waiting...")
                         await asyncio.sleep(60)  # Attendre 1 minute
                         continue
                     else:
                         error_text = await response.text()
-                        raise Exception(f"NewsAPI error {response.status}: {error_text}")
+                        logger.error(f"NewsAPI error {response.status}: {error_text[:200]}")
+                        raise Exception(f"NewsAPI error {response.status}: {error_text[:200]}")
             
             except aiohttp.ClientError as e:
                 logger.error(f"Error fetching NewsAPI page {page}: {e}")

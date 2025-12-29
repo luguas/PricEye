@@ -248,6 +248,17 @@ class EventsCollector(BaseCollector):
                         'items': data.get('events', []),
                         'pagination': data.get('pagination', {})
                     }
+                elif response.status == 401:
+                    error_text = await response.text()
+                    logger.error(
+                        f"Eventbrite API authentication failed (401). "
+                        f"Please check your EVENTBRITE_API_KEY in .env file. "
+                        f"Error: {error_text[:200]}"
+                    )
+                    raise ValueError(
+                        f"Eventbrite API authentication failed. "
+                        f"Please check your EVENTBRITE_API_KEY configuration."
+                    )
                 else:
                     error_text = await response.text()
                     raise Exception(f"Eventbrite API error {response.status}: {error_text}")
