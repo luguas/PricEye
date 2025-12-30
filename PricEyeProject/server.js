@@ -1512,9 +1512,7 @@ app.post('/api/checkout/create-session', authenticateToken, async (req, res) => 
         }
         
         // Vérifier si l'utilisateur a déjà un abonnement actif (payant)
-        // On autorise les utilisateurs en période d'essai ('trialing') à créer une session checkout
-        let existingCurrency = null; // Devise de l'abonnement existant
-        let existingPriceIds = { parent: null, child: null }; // Price IDs de l'abonnement existant
+        // Si en période d'essai, rediriger vers le portail client
         const subscriptionId = userProfile.stripe_subscription_id || userProfile.subscription_id;
         if (subscriptionId) {
             try {
@@ -1524,53 +1522,39 @@ app.post('/api/checkout/create-session', authenticateToken, async (req, res) => 
                 if (existingSubscription.status === 'active') {
                     return res.status(400).send({ error: 'Vous avez déjà un abonnement actif.' });
                 }
-                // Si l'abonnement est en période d'essai, récupérer la devise et les price IDs pour les réutiliser
-                if (existingSubscription.status === 'trialing' && existingSubscription.items?.data?.length > 0) {
-                    // Récupérer tous les items de l'abonnement pour identifier les price IDs
-                    const items = existingSubscription.items.data;
-                    for (const item of items) {
-                        const price = item.price;
-                        const priceId = price.id;
-                        const currency = price.currency?.toLowerCase() || null;
-                        
-                        // Identifier si c'est un price parent ou child en fonction des metadata
-                        const metadata = price.metadata || {};
-                        const isParent = metadata.type === 'parent' || metadata.type === 'principal' || 
-                                        metadata.billing_type === 'parent' || metadata.billing_type === 'principal';
-                        const isChild = metadata.type === 'child' || metadata.billing_type === 'child';
-                        
-                        if (isParent) {
-                            existingPriceIds.parent = priceId;
-                        } else if (isChild) {
-                            existingPriceIds.child = priceId;
-                        }
-                        
-                        if (!existingCurrency && currency) {
-                            existingCurrency = currency;
-                        }
-                    }
+                // Si l'abonnement est en période d'essai, rediriger vers le portail client
+                // Stripe ne permet pas de créer une nouvelle session checkout quand il y a déjà un abonnement
+                if (existingSubscription.status === 'trialing') {
+                    console.log(`[Checkout] Abonnement existant en période d'essai détecté. Redirection vers le portail client.`);
+                    const customerId = userProfile.stripe_customer_id;
                     
-                    // Si on n'a pas pu identifier via metadata, utiliser la logique de montant
-                    // (les prices parent sont généralement plus chers que les child)
-                    if (!existingPriceIds.parent && items.length > 0) {
-                        // Trier par montant décroissant et prendre le premier comme parent
-                        const sortedItems = [...items].sort((a, b) => (b.price.unit_amount || 0) - (a.price.unit_amount || 0));
-                        existingPriceIds.parent = sortedItems[0].price.id;
-                        if (sortedItems.length > 1) {
-                            existingPriceIds.child = sortedItems[1].price.id;
+                    if (customerId) {
+                        // Créer une session du portail client au lieu d'une session checkout
+                        const frontendUrl = process.env.FRONTEND_URL || 'https://pric-eye.vercel.app';
+                        try {
+                            const portalSession = await stripe.billingPortal.sessions.create({
+                                customer: customerId,
+                                return_url: `${frontendUrl}/billing`
+                            });
+                            console.log(`[Checkout] Session portail créée pour ${userId}: ${portalSession.url}`);
+                            return res.status(200).json({
+                                url: portalSession.url,
+                                sessionId: portalSession.id,
+                                isPortal: true,
+                                message: 'Vous avez déjà un abonnement en période d\'essai. Utilisez le portail client pour gérer votre abonnement.'
+                            });
+                        } catch (portalError) {
+                            console.error(`[Checkout] Erreur lors de la création de la session portail:`, portalError);
+                            return res.status(400).send({ 
+                                error: 'Vous avez déjà un abonnement en période d\'essai. Veuillez utiliser le portail client pour gérer votre abonnement.',
+                                shouldUsePortal: true
+                            });
                         }
+                    } else {
+                        return res.status(400).send({ 
+                            error: 'Vous avez déjà un abonnement en période d\'essai. Veuillez contacter le support pour gérer votre abonnement.'
+                        });
                     }
-                    
-                    // Fallback: si on n'a toujours pas de price IDs, utiliser le premier item comme parent
-                    if (!existingPriceIds.parent && items.length > 0) {
-                        existingPriceIds.parent = items[0].price.id;
-                        if (items.length > 1) {
-                            existingPriceIds.child = items[1].price.id;
-                        }
-                    }
-                    
-                    console.log(`[Checkout] Abonnement existant en période d'essai détecté. Devise: ${existingCurrency}`);
-                    console.log(`[Checkout] Price IDs existants - Parent: ${existingPriceIds.parent}, Child: ${existingPriceIds.child}`);
                 }
             } catch (error) {
                 console.log(`[Checkout] L'abonnement existant ${subscriptionId} n'est plus valide.`);
@@ -1620,48 +1604,10 @@ app.post('/api/checkout/create-session', authenticateToken, async (req, res) => 
         const lineItems = [];
         
         // Support des deux noms de variables pour compatibilité
-        let parentPriceId = process.env.STRIPE_PRICE_PARENT_ID || process.env.STRIPE_PRICE_PRINCIPAL_ID;
-        let childPriceId = process.env.STRIPE_PRICE_CHILD_ID;
+        const parentPriceId = process.env.STRIPE_PRICE_PARENT_ID || process.env.STRIPE_PRICE_PRINCIPAL_ID;
+        const childPriceId = process.env.STRIPE_PRICE_CHILD_ID;
         
-        // Si on a un abonnement existant en période d'essai, utiliser ses price IDs pour éviter les conflits de devise
-        if (existingPriceIds.parent || existingPriceIds.child) {
-            if (existingPriceIds.parent) {
-                parentPriceId = existingPriceIds.parent;
-                console.log(`[Checkout] Utilisation du price ID parent de l'abonnement existant: ${parentPriceId}`);
-            }
-            if (existingPriceIds.child) {
-                childPriceId = existingPriceIds.child;
-                console.log(`[Checkout] Utilisation du price ID child de l'abonnement existant: ${childPriceId}`);
-            }
-        } else {
-            // Vérifier que les price IDs configurés sont valides
-            if (!parentPriceId || !childPriceId) {
-                return res.status(500).send({ error: 'Configuration Stripe incomplète. Contactez le support.' });
-            }
-            
-            // Vérifier la devise des prices configurés si on a une devise existante
-            if (existingCurrency) {
-                try {
-                    // Récupérer la devise du price parent pour vérification
-                    const parentPrice = await stripe.prices.retrieve(parentPriceId);
-                    const configuredCurrency = parentPrice.currency?.toLowerCase();
-                    
-                    if (configuredCurrency !== existingCurrency) {
-                        console.error(`[Checkout] Conflit de devise: abonnement existant en ${existingCurrency}, mais prices configurés en ${configuredCurrency}`);
-                        return res.status(400).send({ 
-                            error: `Vous avez déjà un abonnement en ${existingCurrency.toUpperCase()}. Veuillez utiliser le portail client pour gérer votre abonnement existant.` 
-                        });
-                    }
-                    console.log(`[Checkout] Devise vérifiée: ${existingCurrency} correspond aux prices configurés`);
-                } catch (priceError) {
-                    console.error(`[Checkout] Erreur lors de la vérification de la devise des prices:`, priceError);
-                    // Continuer malgré l'erreur, on fera confiance aux price IDs configurés
-                }
-            }
-        }
-        
-        // Vérification finale que les price IDs sont valides
-        if (!parentPriceId) {
+        if (!parentPriceId || !childPriceId) {
             return res.status(500).send({ error: 'Configuration Stripe incomplète. Contactez le support.' });
         }
         
