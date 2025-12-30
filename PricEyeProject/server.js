@@ -1513,6 +1513,7 @@ app.post('/api/checkout/create-session', authenticateToken, async (req, res) => 
         
         // Vérifier si l'utilisateur a déjà un abonnement actif (payant)
         // On autorise les utilisateurs en période d'essai ('trialing') à créer une session checkout
+        let existingCurrency = null; // Devise de l'abonnement existant
         const subscriptionId = userProfile.stripe_subscription_id || userProfile.subscription_id;
         if (subscriptionId) {
             try {
@@ -1521,6 +1522,16 @@ app.post('/api/checkout/create-session', authenticateToken, async (req, res) => 
                 // Les utilisateurs en période d'essai ('trialing') peuvent créer une session checkout
                 if (existingSubscription.status === 'active') {
                     return res.status(400).send({ error: 'Vous avez déjà un abonnement actif.' });
+                }
+                // Si l'abonnement est en période d'essai, récupérer la devise pour la réutiliser
+                if (existingSubscription.status === 'trialing' && existingSubscription.items?.data?.length > 0) {
+                    // Récupérer la devise depuis le premier price de l'abonnement
+                    const firstPriceId = existingSubscription.items.data[0].price.id;
+                    const price = await stripe.prices.retrieve(firstPriceId);
+                    existingCurrency = price.currency?.toLowerCase() || null;
+                    console.log(`[Checkout] Abonnement existant en période d'essai détecté. Devise: ${existingCurrency}`);
+                    // Note: On continue pour permettre la création d'une nouvelle session checkout
+                    // mais on vérifiera que la devise correspond
                 }
             } catch (error) {
                 console.log(`[Checkout] L'abonnement existant ${subscriptionId} n'est plus valide.`);
@@ -1575,6 +1586,26 @@ app.post('/api/checkout/create-session', authenticateToken, async (req, res) => 
         
         if (!parentPriceId || !childPriceId) {
             return res.status(500).send({ error: 'Configuration Stripe incomplète. Contactez le support.' });
+        }
+        
+        // Vérifier la devise des prices configurés et s'assurer qu'elle correspond à celle de l'abonnement existant
+        if (existingCurrency) {
+            try {
+                // Récupérer la devise du price parent pour vérification
+                const parentPrice = await stripe.prices.retrieve(parentPriceId);
+                const configuredCurrency = parentPrice.currency?.toLowerCase();
+                
+                if (configuredCurrency !== existingCurrency) {
+                    console.error(`[Checkout] Conflit de devise: abonnement existant en ${existingCurrency}, mais prices configurés en ${configuredCurrency}`);
+                    return res.status(400).send({ 
+                        error: `Vous avez déjà un abonnement en ${existingCurrency.toUpperCase()}. Veuillez utiliser le portail client pour gérer votre abonnement existant.` 
+                    });
+                }
+                console.log(`[Checkout] Devise vérifiée: ${existingCurrency} correspond aux prices configurés`);
+            } catch (priceError) {
+                console.error(`[Checkout] Erreur lors de la vérification de la devise des prices:`, priceError);
+                // Continuer malgré l'erreur, on fera confiance aux price IDs configurés
+            }
         }
         
         // Ajouter l'item parent si quantité > 0
