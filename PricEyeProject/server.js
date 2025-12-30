@@ -6172,6 +6172,7 @@ app.post('/api/properties/:id/pricing-strategy', authenticateToken, async (req, 
     try {
         const { id } = req.params;
         const userId = req.user.uid;
+        const { useMarketData = 'true', useAI = 'hybrid' } = req.query; // Nouveaux paramètres
 
         const property = await db.getProperty(id);
         if (!property) {
@@ -6192,8 +6193,75 @@ app.post('/api/properties/:id/pricing-strategy', authenticateToken, async (req, 
         
         // Récupérer la langue de l'utilisateur
         const language = req.query.language || userProfile?.language || 'fr';
+        
+        // Extraire city et country depuis property.location
+        const location = property.location || '';
+        const city = location.split(',')[0].trim() || '';
+        const country = property.country || 'FR';
+        
+        // Essayer d'abord le pricing déterministe basé sur market_features
+        const shouldUseMarketData = useMarketData === 'true' || useMarketData === true;
+        let strategyResult = null; // Déclarer en dehors pour être accessible partout
+        
+        if (shouldUseMarketData && city) {
+            try {
+                const deterministicPricing = require('./utils/deterministic_pricing');
+                
+                // Date range: aujourd'hui + 180 jours
+                const endDate = new Date();
+                endDate.setDate(endDate.getDate() + 180);
+                const endDateStr = endDate.toISOString().split('T')[0];
+                
+                console.log(`[Pricing] Utilisation du pricing déterministe pour ${city}, ${country} (${today} à ${endDateStr})`);
+                
+                const calendar = await deterministicPricing.generateDeterministicPricingCalendar({
+                    property,
+                    startDate: today,
+                    endDate: endDateStr,
+                    city,
+                    country
+                });
+                
+                if (calendar && calendar.length > 0) {
+                    console.log(`[Pricing] ✓ Pricing déterministe généré: ${calendar.length} jours`);
+                    
+                    // Convertir au format attendu
+                    const daily_prices = calendar.map(day => ({
+                        date: day.date,
+                        price: day.price,
+                        reason: day.reasoning || "Tarification basée sur données marché"
+                    }));
+                    
+                    strategyResult = {
+                        strategy_summary: `Tarification déterministe basée sur ${calendar.filter(d => d.market_data_used?.competitor_avg_price).length}/${calendar.length} jours de données marché`,
+                        daily_prices,
+                        method: 'deterministic',
+                        raw: {
+                            calendar: calendar.map(day => ({
+                                date: day.date,
+                                final_suggested_price: day.price,
+                                price_breakdown: day.breakdown,
+                                reasoning: day.reasoning,
+                                market_data_used: day.market_data_used
+                            }))
+                        }
+                    };
+                    
+                    // Pricing déterministe réussi, on skip l'IA et on continue avec la sauvegarde
+                    console.log(`[Pricing] ✓ Pricing déterministe réussi, skip de l'IA`);
+                }
+            } catch (marketDataError) {
+                console.error(`[Pricing] Erreur pricing déterministe, fallback sur IA:`, marketDataError);
+                // Continuer avec l'IA comme fallback
+                strategyResult = null; // S'assurer qu'on n'utilise pas un résultat partiel
+            }
+        }
 
-        // Nouveau prompt : moteur de tarification intelligente (Revenue Management complet)
+        // Si pas de stratégie déterministe, utiliser l'IA
+        if (!strategyResult) {
+            console.log(`[Pricing] Utilisation de l'IA pour générer les prix`);
+            
+            // Nouveau prompt : moteur de tarification intelligente (Revenue Management complet)
         const prompt = `
 ### RÔLE DU SYSTÈME : MOTEUR DE TARIFICATION INTELLIGENTE 
 
@@ -6450,7 +6518,7 @@ RAPPEL CRITIQUE : La réponse finale doit être UNIQUEMENT ce JSON, sans texte a
             overridesToSave.push({
                 date: day.date,
                 price: finalPrice,
-                reason: day.reason || "Stratégie IA",
+                reason: day.reason || (strategyResult.method === 'deterministic' ? "Tarification basée sur données marché" : "Stratégie IA"),
                 isLocked: false,
                 updatedBy: req.user.uid
             });
@@ -6459,16 +6527,19 @@ RAPPEL CRITIQUE : La réponse finale doit être UNIQUEMENT ce JSON, sans texte a
         // Sauvegarder tous les overrides en une seule opération
         if (overridesToSave.length > 0) {
             await db.upsertPriceOverrides(id, overridesToSave);
-            console.log(`Stratégie IA sauvegardée pour ${id} (${overridesToSave.length} jours, en respectant les prix verrouillés).`);
+            const methodLabel = strategyResult.method === 'deterministic' ? 'déterministe' : 'IA';
+            console.log(`Stratégie ${methodLabel} sauvegardée pour ${id} (${overridesToSave.length} jours, en respectant les prix verrouillés).`);
         } else {
             console.log(`Aucun prix à sauvegarder pour ${id} (tous verrouillés ou invalides).`);
         }
         
         // Log de l'action
-        await logPropertyChange(id, req.user.uid, req.user.email, 'update:ia-pricing', {
+        const actionType = strategyResult.method === 'deterministic' ? 'update:deterministic-pricing' : 'update:ia-pricing';
+        await logPropertyChange(id, req.user.uid, req.user.email, actionType, {
             summary: strategyResult.strategy_summary,
             days: overridesToSave.length,
-            lockedPricesIgnored: lockedPrices.size
+            lockedPricesIgnored: lockedPrices.size,
+            method: strategyResult.method || 'ai'
         });
 
         res.status(200).json(strategyResult); 
