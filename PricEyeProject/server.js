@@ -6262,7 +6262,7 @@ app.post('/api/properties/:id/pricing-strategy', authenticateToken, async (req, 
             console.log(`[Pricing] Utilisation de l'IA pour générer les prix`);
             
             // Nouveau prompt : moteur de tarification intelligente (Revenue Management complet)
-        const prompt = `
+            const prompt = `
 ### RÔLE DU SYSTÈME : MOTEUR DE TARIFICATION INTELLIGENTE 
 
 Tu es l'IA centrale d'un système de Revenue Management (Yield Management) comparable aux leaders mondiaux (PriceLabs, Wheelhouse, Beyond). Ta capacité d'analyse dépasse celle d'un humain : tu croises des millions de signaux faibles pour déterminer le "Prix Juste" (Fair Price) à l'instant T.
@@ -6408,33 +6408,35 @@ Structure attendue :
 }
 
 RAPPEL CRITIQUE : La réponse finale doit être UNIQUEMENT ce JSON, sans texte additionnel, sans commentaires, sans markdown.
-        `;
+            `;
 
-        const iaResult = await callGeminiWithSearch(prompt, 10, language);
+            const iaResult = await callGeminiWithSearch(prompt, 10, language);
 
-        if (!iaResult || !Array.isArray(iaResult.calendar) || iaResult.calendar.length === 0) {
-            throw new Error("La réponse de l'IA est invalide ou ne contient pas de calendrier de prix.");
-        }
-
-        // Adapter le nouveau format (calendar) en daily_prices pour le reste du backend
-        const daily_prices = iaResult.calendar.map(day => {
-            const rawPrice = day.final_suggested_price;
-            let priceNum = Number(rawPrice);
-            if (isNaN(priceNum)) {
-                priceNum = property.base_price;
+            if (!iaResult || !Array.isArray(iaResult.calendar) || iaResult.calendar.length === 0) {
+                throw new Error("La réponse de l'IA est invalide ou ne contient pas de calendrier de prix.");
             }
-            return {
-                date: day.date,
-                price: priceNum,
-                reason: day.reasoning || "Tarification IA dynamique"
-            };
-        });
 
-        const strategyResult = {
-            strategy_summary: iaResult.audit_metadata?.market_sentiment || "Stratégie IA dynamique générée.",
-            daily_prices,
-            raw: iaResult
-        };
+            // Adapter le nouveau format (calendar) en daily_prices pour le reste du backend
+            const daily_prices = iaResult.calendar.map(day => {
+                const rawPrice = day.final_suggested_price;
+                let priceNum = Number(rawPrice);
+                if (isNaN(priceNum)) {
+                    priceNum = property.base_price;
+                }
+                return {
+                    date: day.date,
+                    price: priceNum,
+                    reason: day.reasoning || "Tarification IA dynamique"
+                };
+            });
+
+            strategyResult = {
+                strategy_summary: iaResult.audit_metadata?.market_sentiment || "Stratégie IA dynamique générée.",
+                daily_prices,
+                method: 'ai',
+                raw: iaResult
+            };
+        }
 
         // --- NOUVELLE ÉTAPE: Synchronisation PMS (AVANT la sauvegarde Firestore) ---
         if (property.pmsId && property.pmsType) {
