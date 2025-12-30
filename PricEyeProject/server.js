@@ -264,6 +264,32 @@ async function syncAllPMSRates() {
 
 
 /**
+ * HELPER: Récupère ou initialise le team_id d'un utilisateur
+ * Si l'utilisateur n'a pas de team_id, il est initialisé avec son propre userId
+ * @param {string} userId - L'ID de l'utilisateur
+ * @returns {Promise<{teamId: string, userProfile: object}>} - Le team_id et le profil utilisateur
+ */
+async function getOrInitializeTeamId(userId) {
+    const userProfile = await db.getUser(userId);
+    if (!userProfile) {
+        throw new Error('Profil utilisateur non trouvé.');
+    }
+    
+    // Si team_id existe, le retourner
+    if (userProfile.team_id) {
+        return { teamId: userProfile.team_id, userProfile };
+    }
+    
+    // Sinon, initialiser team_id = userId (l'utilisateur est son propre équipe)
+    console.log(`[Helper] Initialisation du team_id pour l'utilisateur ${userId}`);
+    const teamId = userId;
+    await db.updateUser(userId, { team_id: teamId });
+    // Mettre à jour le userProfile en mémoire pour le retourner
+    userProfile.team_id = teamId;
+    return { teamId, userProfile };
+}
+
+/**
  * HELPER: Obtient l'identifiant de la semaine (ISO 8601) pour une date donnée.
  * @param {Date} date - L'objet Date (en UTC)
  * @returns {string} - L'identifiant de la semaine (ex: "2025-W05")
@@ -2074,12 +2100,7 @@ app.post('/api/integrations/import-properties', authenticateToken, async (req, r
 
     try {
         // 1. Get user's teamId
-        const userProfile = await db.getUser(userId);
-        if (!userProfile || !userProfile.team_id) {
-             console.error(`[Import] Échec: Profil utilisateur ${userId} non trouvé ou n'a pas de team_id.`);
-             return res.status(404).send({ error: 'Profil utilisateur non trouvé ou team_id manquant.' });
-        }
-        const teamId = userProfile.team_id;
+        const { teamId, userProfile } = await getOrInitializeTeamId(userId);
         
         // 2. Vérification de la limite de 10 propriétés pendant l'essai gratuit
         const subscriptionId = userProfile.stripe_subscription_id || userProfile.subscription_id;
@@ -2370,15 +2391,8 @@ app.get('/api/properties', authenticateToken, async (req, res) => {
     try {
         const userId = req.user.uid;
         
-        const userProfile = await db.getUser(userId);
-        let properties;
-        if (!userProfile || !userProfile.team_id) {
-             console.warn(`Utilisateur ${userId} n'a pas de team_id, fallback sur owner_id.`);
-             properties = await db.getPropertiesByOwner(userId);
-        } else {
-            const teamId = userProfile.team_id;
-            properties = await db.getPropertiesByTeam(teamId);
-        }
+        const { teamId, userProfile } = await getOrInitializeTeamId(userId);
+        const properties = await db.getPropertiesByTeam(teamId);
         
         // Filtrer les propriétés avec des IDs invalides (UUIDs tronqués)
         const validProperties = properties.filter(prop => {
@@ -3025,11 +3039,7 @@ app.get('/api/bookings', authenticateToken, async (req, res) => {
         }
 
         // 1. Récupérer le teamId de l'utilisateur
-        const userProfile = await db.getUser(userId);
-        if (!userProfile || !userProfile.team_id) {
-            return res.status(404).send({ error: 'Impossible de trouver votre équipe.' });
-        }
-        const teamId = userProfile.team_id;
+        const { teamId } = await getOrInitializeTeamId(userId);
 
         // 2. Interroger toutes les réservations de l'équipe qui chevauchent la période
         const bookings = await db.getBookingsByTeamAndDateRange(teamId, startDate, endDate);
@@ -3944,11 +3954,7 @@ app.get('/api/teams/members', authenticateToken, async (req, res) => {
     try {
         const userId = req.user.uid;
 
-        const userProfile = await db.getUser(userId);
-        if (!userProfile || !userProfile.team_id) {
-            return res.status(404).send({ error: 'Impossible de trouver votre équipe.' });
-        }
-        const teamId = userProfile.team_id;
+        const { teamId, userProfile } = await getOrInitializeTeamId(userId);
 
         // Récupérer tous les membres de l'équipe
         const { data: members, error } = await supabase
@@ -4054,11 +4060,7 @@ app.get('/api/reports/kpis', authenticateToken, async (req, res) => {
         }
 
         // 1. Récupérer le teamId de l'utilisateur
-        const userProfile = await db.getUser(userId);
-        if (!userProfile || !userProfile.team_id) {
-            return res.status(404).send({ error: 'Impossible de trouver votre équipe.' });
-        }
-        const teamId = userProfile.team_id;
+        const { teamId } = await getOrInitializeTeamId(userId);
 
         // 2. Récupérer les données des propriétés (pour le prix de base)
         const properties = await db.getPropertiesByTeam(teamId);
@@ -4156,11 +4158,7 @@ app.get('/api/reports/revenue-over-time', authenticateToken, async (req, res) =>
         }
 
         // 1. Trouver le teamId et le nombre total de propriétés
-        const userProfile = await db.getUser(userId);
-        if (!userProfile || !userProfile.team_id) {
-            return res.status(404).send({ error: 'Impossible de trouver votre équipe.' });
-        }
-        const teamId = userProfile.team_id;
+        const { teamId } = await getOrInitializeTeamId(userId);
 
         const properties = await db.getPropertiesByTeam(teamId);
         const totalPropertiesInTeam = properties.length;
@@ -4218,11 +4216,7 @@ app.get('/api/reports/market-demand-snapshot', authenticateToken, async (req, re
         const { timezone } = req.query;
 
         // 1. Récupérer le teamId de l'utilisateur
-        const userProfile = await db.getUser(userId);
-        if (!userProfile || !userProfile.team_id) {
-            return res.status(404).send({ error: 'Impossible de trouver votre équipe.' });
-        }
-        const teamId = userProfile.team_id;
+        const { teamId } = await getOrInitializeTeamId(userId);
 
         // 2. Déterminer la fenêtre temporelle (24h glissantes)
         const now = new Date();
@@ -4297,11 +4291,7 @@ app.get('/api/reports/positioning', authenticateToken, async (req, res) => {
         }
 
         // 1. Récupérer le teamId et les propriétés
-        const userProfile = await db.getUser(userId);
-        if (!userProfile || !userProfile.team_id) {
-            return res.status(404).send({ error: 'Impossible de trouver votre équipe.' });
-        }
-        const teamId = userProfile.team_id;
+        const { teamId, userProfile } = await getOrInitializeTeamId(userId);
 
         const propertiesList = await db.getPropertiesByTeam(teamId);
         if (propertiesList.length === 0) {
@@ -4492,11 +4482,7 @@ app.get('/api/reports/performance-over-time', authenticateToken, async (req, res
         }
 
         // 1. Find teamId and total properties
-        const userProfile = await db.getUser(userId);
-        if (!userProfile || !userProfile.team_id) {
-            return res.status(404).send({ error: 'Impossible de trouver votre équipe.' });
-        }
-        const teamId = userProfile.team_id;
+        const { teamId } = await getOrInitializeTeamId(userId);
 
         const propertiesList = await db.getPropertiesByTeam(teamId);
         const totalPropertiesInTeam = propertiesList.length;
@@ -4709,11 +4695,7 @@ app.get('/api/reports/forecast-revenue', authenticateToken, async (req, res) => 
         }
 
         // 1. Récupérer le teamId et le nombre de propriétés
-        const userProfile = await db.getUser(userId);
-        if (!userProfile || !userProfile.team_id) {
-            return res.status(404).send({ error: 'Impossible de trouver votre équipe.' });
-        }
-        const teamId = userProfile.team_id;
+        const { teamId, userProfile } = await getOrInitializeTeamId(userId);
 
         const properties = await db.getPropertiesByTeam(teamId);
         const totalPropertiesInTeam = properties.length;
@@ -4895,11 +4877,7 @@ app.get('/api/reports/forecast-scenarios', authenticateToken, async (req, res) =
         }
 
         // 1. Récupérer le teamId et le nombre de propriétés
-        const userProfile = await db.getUser(userId);
-        if (!userProfile || !userProfile.team_id) {
-            return res.status(404).send({ error: 'Impossible de trouver votre équipe.' });
-        }
-        const teamId = userProfile.team_id;
+        const { teamId, userProfile } = await getOrInitializeTeamId(userId);
 
         const properties = await db.getPropertiesByTeam(teamId);
         const totalPropertiesInTeam = properties.length;
@@ -5029,11 +5007,7 @@ app.get('/api/reports/forecast-radar', authenticateToken, async (req, res) => {
         }
 
         // 1. Récupérer le teamId
-        const userProfile = await db.getUser(userId);
-        if (!userProfile || !userProfile.team_id) {
-            return res.status(404).send({ error: 'Impossible de trouver votre équipe.' });
-        }
-        const teamId = userProfile.team_id;
+        const { teamId, userProfile } = await getOrInitializeTeamId(userId);
 
         const properties = await db.getPropertiesByTeam(teamId);
         if (properties.length === 0) {
@@ -5213,11 +5187,7 @@ app.get('/api/reports/revenue-vs-target', authenticateToken, async (req, res) =>
         }
 
         // 1. Récupérer le teamId
-        const userProfile = await db.getUser(userId);
-        if (!userProfile || !userProfile.team_id) {
-            return res.status(404).send({ error: 'Impossible de trouver votre équipe.' });
-        }
-        const teamId = userProfile.team_id;
+        const { teamId, userProfile } = await getOrInitializeTeamId(userId);
 
         const properties = await db.getPropertiesByTeam(teamId);
         if (properties.length === 0) {
@@ -5324,11 +5294,7 @@ app.get('/api/reports/gross-margin', authenticateToken, async (req, res) => {
         }
 
         // 1. Récupérer le teamId
-        const userProfile = await db.getUser(userId);
-        if (!userProfile || !userProfile.team_id) {
-            return res.status(404).send({ error: 'Impossible de trouver votre équipe.' });
-        }
-        const teamId = userProfile.team_id;
+        const { teamId, userProfile } = await getOrInitializeTeamId(userId);
 
         const properties = await db.getPropertiesByTeam(teamId);
         if (properties.length === 0) {
@@ -5489,11 +5455,7 @@ app.get('/api/reports/adr-by-channel', authenticateToken, async (req, res) => {
         }
 
         // 1. Récupérer le teamId
-        const userProfile = await db.getUser(userId);
-        if (!userProfile || !userProfile.team_id) {
-            return res.status(404).send({ error: 'Impossible de trouver votre équipe.' });
-        }
-        const teamId = userProfile.team_id;
+        const { teamId, userProfile } = await getOrInitializeTeamId(userId);
 
         const properties = await db.getPropertiesByTeam(teamId);
         if (properties.length === 0) {
@@ -5788,11 +5750,7 @@ app.get('/api/recommendations/group-candidates', authenticateToken, async (req, 
         const userId = req.user.uid;
 
         // 1. Trouver le teamId de l'utilisateur
-        const userProfile = await db.getUser(userId);
-        if (!userProfile || !userProfile.team_id) {
-             return res.status(404).send({ error: 'Impossible de trouver votre équipe.' });
-        }
-        const teamId = userProfile.team_id;
+        const { teamId, userProfile } = await getOrInitializeTeamId(userId);
 
         // 2. Récupérer toutes les propriétés de l'équipe
         const properties = await db.getPropertiesByTeam(teamId);
@@ -8611,11 +8569,7 @@ app.get('/api/reports/market-kpis', authenticateToken, async (req, res) => {
         }
 
         // 1. Récupérer le teamId et les propriétés de l'utilisateur
-        const userProfile = await db.getUser(userId);
-        if (!userProfile || !userProfile.team_id) {
-            return res.status(404).send({ error: 'Impossible de trouver votre équipe.' });
-        }
-        const teamId = userProfile.team_id;
+        const { teamId, userProfile } = await getOrInitializeTeamId(userId);
 
         // 2. Récupérer les propriétés actives pour obtenir leurs villes/pays
         const properties = await db.getPropertiesByTeam(teamId);
