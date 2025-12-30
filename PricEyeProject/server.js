@@ -1242,13 +1242,15 @@ app.post('/api/subscriptions/create', authenticateToken, async (req, res) => {
         const stripeManager = require('./integrations/stripeManager');
         const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
         
-        // Vérifier si l'utilisateur a déjà un abonnement actif
+        // Vérifier si l'utilisateur a déjà un abonnement actif (payant)
+        // On autorise les utilisateurs en période d'essai ('trialing') à créer une session checkout
         if (userProfile.stripe_subscription_id) {
             try {
                 const existingSubscription = await stripe.subscriptions.retrieve(userProfile.stripe_subscription_id);
                 
-                // Vérifier si l'abonnement est actif ou en période d'essai
-                if (existingSubscription.status === 'active' || existingSubscription.status === 'trialing') {
+                // Ne bloquer que si l'abonnement est actif (payant)
+                // Les utilisateurs en période d'essai ('trialing') peuvent créer une session checkout
+                if (existingSubscription.status === 'active') {
                     return res.status(400).send({ error: 'Vous avez déjà un abonnement actif.' });
                 }
             } catch (error) {
@@ -1509,12 +1511,15 @@ app.post('/api/checkout/create-session', authenticateToken, async (req, res) => 
             return res.status(404).send({ error: 'Profil utilisateur non trouvé.' });
         }
         
-        // Vérifier si l'utilisateur a déjà un abonnement actif
+        // Vérifier si l'utilisateur a déjà un abonnement actif (payant)
+        // On autorise les utilisateurs en période d'essai ('trialing') à créer une session checkout
         const subscriptionId = userProfile.stripe_subscription_id || userProfile.subscription_id;
         if (subscriptionId) {
             try {
                 const existingSubscription = await stripe.subscriptions.retrieve(subscriptionId);
-                if (existingSubscription.status === 'active' || existingSubscription.status === 'trialing') {
+                // Ne bloquer que si l'abonnement est actif (payant)
+                // Les utilisateurs en période d'essai ('trialing') peuvent créer une session checkout
+                if (existingSubscription.status === 'active') {
                     return res.status(400).send({ error: 'Vous avez déjà un abonnement actif.' });
                 }
             } catch (error) {

@@ -37,7 +37,7 @@ function TrialLimitModal({ isOpen, onClose, currentCount, maxAllowed, token }) {
   };
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-90 flex items-center justify-center p-4 z-50">
+    <div className="fixed inset-0 bg-black bg-opacity-90 flex items-center justify-center p-4 z-[60]">
       <div className="bg-global-bg-box border border-global-stroke-box rounded-[14px] shadow-xl w-full max-w-md p-6">
         <div className="text-center mb-6">
           <div className="text-6xl mb-4">🔒</div>
