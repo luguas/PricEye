@@ -1,5 +1,19 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { getProperties, getReportKpis, getRevenueOverTime, getPerformanceOverTime, getMarketDemandSnapshot, getPositioningReport, getMarketKpis } from '../services/api.js'; // Importer getPerformanceOverTime
+import { 
+  getProperties, 
+  getReportKpis, 
+  getRevenueOverTime, 
+  getPerformanceOverTime, 
+  getMarketDemandSnapshot, 
+  getPositioningReport, 
+  getMarketKpis,
+  getForecastRevenue,
+  getForecastScenarios,
+  getForecastRadar,
+  getRevenueVsTarget,
+  getAdrByChannel,
+  getGrossMargin
+} from '../services/api.js';
 import { exportToExcel } from '../utils/exportUtils.js';
 import Chart from 'chart.js/auto'; 
 import { getDatesFromRange, getPreviousDates } from '../utils/dateUtils.js'; // Importer les deux fonctions
@@ -300,7 +314,7 @@ function ReportPage({ token, userProfile }) {
     return { labels, adrData, revparData, occupancyData };
   };
 
-  const transformToMonthlyIaData = (revenueData, perfData, language = 'en') => {
+  const transformToMonthlyIaData = (revenueData, perfData, language = 'en', properties = []) => {
     const prompts = getAIPrompts(language);
     if (!revenueData || !revenueData.labels || !Array.isArray(revenueData.labels) || revenueData.labels.length === 0) {
       return null;
@@ -308,6 +322,16 @@ function ReportPage({ token, userProfile }) {
     
     if (!revenueData.revenueData || !Array.isArray(revenueData.revenueData) || revenueData.revenueData.length === 0) {
       return null;
+    }
+    
+    // Calculer le base_price moyen des propriétés si disponible
+    let averageBasePrice = null;
+    if (properties && properties.length > 0) {
+      const propertiesWithBasePrice = properties.filter(p => p.base_price && p.base_price > 0);
+      if (propertiesWithBasePrice.length > 0) {
+        const sumBasePrice = propertiesWithBasePrice.reduce((sum, p) => sum + (p.base_price || 0), 0);
+        averageBasePrice = sumBasePrice / propertiesWithBasePrice.length;
+      }
     }
     
     // Group data by month
@@ -357,8 +381,15 @@ function ReportPage({ token, userProfile }) {
         
         monthData.revenue += revenueValue;
         monthData.nightsBooked += nightsBookedValue;
-        // Base revenue estimation (to be adjusted according to your data)
-        monthData.baseRevenue += revenueValue * 0.8; // Approximation
+        
+        // Calculer le base revenue avec les vraies données si disponibles
+        if (averageBasePrice && averageBasePrice > 0 && nightsBookedValue > 0) {
+          // Utiliser le base_price moyen multiplié par le nombre de nuits réservées
+          monthData.baseRevenue += averageBasePrice * nightsBookedValue;
+        } else {
+          // Fallback : approximation à 80% si pas de base_price disponible
+          monthData.baseRevenue += revenueValue * 0.8;
+        }
       } catch (err) {
         console.error(`${prompts.errorProcessingDate}:`, dateStr, err);
         // Continue with next date
@@ -495,61 +526,13 @@ function ReportPage({ token, userProfile }) {
     };
   };
 
-  // Transformer les données pour les graphiques de prévisions
-  const transformToForecastData = () => {
-    // Données de test basées sur le design Figma
-    return {
-      // Revenus futurs & Occupation prévue
-      revenueForecast: {
-        labels: ['Sem 1', 'Sem 2', 'Sem 3', 'Sem 4'],
-        revenueData: [4000, 8000, 12000, 14000],
-        occupancyData: [25, 50, 75, 85]
-      },
-      // ADR, RevPAR & Occupation prévus
-      adrForecast: {
-        labels: ['Sem 1', 'Sem 2', 'Sem 3', 'Sem 4'],
-        adrData: [55, 110, 165, 200],
-        revparData: [50, 100, 150, 180],
-        occupancyData: [25, 50, 75, 90]
-      },
-      // Scénarios de prévision
-      scenarios: {
-        labels: ['Sem 1', 'Sem 2', 'Sem 3', 'Sem 4'],
-        baselineData: [4500, 9000, 13500, 16000],
-        optimisticData: [4950, 9900, 14850, 17600],
-        pessimisticData: [4050, 8100, 12150, 14400]
-      },
-      // Prévisions synthétiques par propriété (radar)
-      radar: {
-        labels: ['Revenue', 'Occupancy', 'ADR', 'AI Score', 'ROI'],
-        data: [75, 60, 80, 70, 65]
-      }
-    };
-  };
-
-  // Transformer les données pour les graphiques de performance financière
-  const transformToFinancialData = () => {
-    // Données de test basées sur le design Figma
-    return {
-      // Revenu total vs Objectif
-      revenueVsTarget: {
-        labels: ['Jan', 'Fév', 'Mar', 'Avr', 'Mai', 'Juin'],
-        targetData: [20000, 25000, 30000, 35000, 40000, 45000],
-        revenueData: [18000, 23000, 28000, 32000, 38000, 42000]
-      },
-      // ADR par canal
-      adrByChannel: {
-        labels: ['Airbnb', 'Booking.com', 'VRBO', 'Direct'],
-        data: [150, 140, 130, 160],
-        variations: [5.2, 3.1, 7.8, 9.2] // Pourcentages de variation
-      },
-      // Marge brute (%)
-      grossMargin: {
-        labels: ['Jan', 'Fév', 'Mar', 'Avr', 'Mai', 'Juin'],
-        data: [45, 50, 55, 58, 62, 65]
-      }
-    };
-  };
+  // NOTE: Les fonctions transformToForecastData() et transformToFinancialData() ont été supprimées
+  // car les données sont maintenant récupérées directement depuis l'API via les nouveaux endpoints:
+  // - getForecastRevenue() pour les prévisions de revenus
+  // - getForecastScenarios() pour les scénarios de prévision
+  // - getForecastRadar() pour les prévisions radar
+  // - getRevenueVsTarget() pour revenu vs objectif
+  // - getGrossMargin() pour la marge brute
 
   // Fetch all properties (pour les filtres)
   const fetchAllProperties = useCallback(async () => {
@@ -569,36 +552,9 @@ function ReportPage({ token, userProfile }) {
     fetchAllProperties();
   }, [fetchAllProperties]);
 
-  // Initialiser les données ADR vs Marché et Distribution prix quand les propriétés sont chargées
-  useEffect(() => {
-    if (allProperties.length > 0) {
-      const adrData = transformToAdrVsMarketData(allProperties);
-      setAdrVsMarketData(adrData);
-    } else {
-      // Données par défaut si aucune propriété
-      setAdrVsMarketData({
-        labels: ['Villa Luxe', 'Chalet Alpes', 'Villa Sunset', 'Appart Centre'],
-        marketAdrData: [120, 95, 140, 80],
-        yourAdrData: [150, 110, 165, 100]
-      });
-    }
-    // Initialiser les données de distribution des prix
-    const distributionData = transformToPriceDistributionData();
-    setPriceDistributionData(distributionData);
-    
-    // Initialiser les données de prévisions
-    const forecastData = transformToForecastData();
-    setForecastRevenueData(forecastData.revenueForecast);
-    setForecastAdrData(forecastData.adrForecast);
-    setForecastScenariosData(forecastData.scenarios);
-    setForecastRadarData(forecastData.radar);
-    
-    // Initialiser les données de performance financière
-    const financialData = transformToFinancialData();
-    setRevenueVsTargetData(financialData.revenueVsTarget);
-    setAdrByChannelData(financialData.adrByChannel);
-    setGrossMarginData(financialData.grossMargin);
-  }, [allProperties]);
+  // NOTE: Les données ADR vs Marché et Distribution prix sont maintenant chargées via getPositioningReport dans fetchKpisAndCharts
+  // NOTE: Les données de prévisions et financières sont maintenant chargées via les nouveaux endpoints dans fetchKpisAndCharts
+  // Ce useEffect a été supprimé car les données sont maintenant réelles et chargées depuis l'API
 
   // Fetch KPIs (Données Réelles)
   const fetchKpisAndCharts = useCallback(async () => {
@@ -612,15 +568,38 @@ function ReportPage({ token, userProfile }) {
           const { startDate: prevStartDate, endDate: prevEndDate } = getPreviousDates(currentStartDate, currentEndDate);
 
           // 2. Appeler l'API pour les deux périodes en parallèle
-          const [currentData, prevData, currentMarketKpisData, prevMarketKpisData, revenueData, perfData, marketSnapshotData, positioningReport] = await Promise.all([
+          const [
+              currentData, 
+              prevData, 
+              currentMarketKpisData, 
+              prevMarketKpisData, 
+              revenueData, 
+              perfData, 
+              marketSnapshotData, 
+              positioningReport,
+              // NOUVEAUX APPELS pour les prévisions et données financières
+              forecastRevenueData,
+              forecastScenariosData,
+              forecastRadarData,
+              revenueVsTargetData,
+              adrByChannelData,
+              grossMarginData
+          ] = await Promise.all([
               getReportKpis(token, currentStartDate, currentEndDate),
               getReportKpis(token, prevStartDate, prevEndDate),
               getMarketKpis(token, currentStartDate, currentEndDate),
               getMarketKpis(token, prevStartDate, prevEndDate),
               getRevenueOverTime(token, currentStartDate, currentEndDate),
-              getPerformanceOverTime(token, currentStartDate, currentEndDate), // NOUVEL APPEL
+              getPerformanceOverTime(token, currentStartDate, currentEndDate),
               getMarketDemandSnapshot(token, userProfile.timezone || 'Europe/Paris'),
-              getPositioningReport(token, currentStartDate, currentEndDate)
+              getPositioningReport(token, currentStartDate, currentEndDate),
+              // NOUVEAUX APPELS
+              getForecastRevenue(token, currentStartDate, currentEndDate),
+              getForecastScenarios(token, currentStartDate, currentEndDate),
+              getForecastRadar(token, currentStartDate, currentEndDate),
+              getRevenueVsTarget(token, currentStartDate, currentEndDate),
+              getAdrByChannel(token, currentStartDate, currentEndDate),
+              getGrossMargin(token, currentStartDate, currentEndDate)
           ]);
           
           setKpis(currentData);
@@ -650,7 +629,8 @@ function ReportPage({ token, userProfile }) {
               }
               
               // Create data for AI Gain & AI Score (grouped by month)
-              const iaChartData = transformToMonthlyIaData(revenueData, perfData, currentLanguage);
+              // Passer allProperties pour améliorer le calcul du Gain IA avec les base_price réels
+              const iaChartData = transformToMonthlyIaData(revenueData, perfData, currentLanguage, allProperties);
               if (iaChartData) {
                 setIaData(iaChartData);
               } else {
@@ -676,6 +656,80 @@ function ReportPage({ token, userProfile }) {
             setMarketData(null);
           }
           
+          // NOUVEAU: Mettre à jour les données de prévisions avec les vraies données
+          if (forecastRevenueData) {
+            // Format: { labels, revenueData, occupancyData, adrData, revparData }
+            setForecastRevenueData({
+              labels: forecastRevenueData.labels || [],
+              revenueData: forecastRevenueData.revenueData || [],
+              occupancyData: forecastRevenueData.occupancyData || []
+            });
+            // ADR forecast utilise les mêmes données mais avec adrData et revparData
+            setForecastAdrData({
+              labels: forecastRevenueData.labels || [],
+              adrData: forecastRevenueData.adrData || [],
+              revparData: forecastRevenueData.revparData || [],
+              occupancyData: forecastRevenueData.occupancyData || []
+            });
+          } else {
+            setForecastRevenueData(null);
+            setForecastAdrData(null);
+          }
+          
+          // NOUVEAU: Mettre à jour les scénarios de prévision
+          if (forecastScenariosData) {
+            setForecastScenariosData({
+              labels: forecastScenariosData.labels || [],
+              baselineData: forecastScenariosData.baselineData || [],
+              optimisticData: forecastScenariosData.optimisticData || [],
+              pessimisticData: forecastScenariosData.pessimisticData || []
+            });
+          } else {
+            setForecastScenariosData(null);
+          }
+          
+          // NOUVEAU: Mettre à jour les prévisions radar
+          if (forecastRadarData) {
+            setForecastRadarData({
+              labels: forecastRadarData.labels || [],
+              data: forecastRadarData.data || []
+            });
+          } else {
+            setForecastRadarData(null);
+          }
+          
+          // NOUVEAU: Mettre à jour les données revenu vs objectif
+          if (revenueVsTargetData) {
+            setRevenueVsTargetData({
+              labels: revenueVsTargetData.labels || [],
+              targetData: revenueVsTargetData.targetData || [],
+              revenueData: revenueVsTargetData.revenueData || []
+            });
+          } else {
+            setRevenueVsTargetData(null);
+          }
+          
+          // NOUVEAU: Mettre à jour les données ADR par canal
+          if (adrByChannelData) {
+            setAdrByChannelData({
+              labels: adrByChannelData.labels || [],
+              data: adrByChannelData.data || [],
+              variations: adrByChannelData.variations || []
+            });
+          } else {
+            setAdrByChannelData(null);
+          }
+          
+          // NOUVEAU: Mettre à jour les données de marge brute
+          if (grossMarginData) {
+            setGrossMarginData({
+              labels: grossMarginData.labels || [],
+              data: grossMarginData.data || []
+            });
+          } else {
+            setGrossMarginData(null);
+          }
+          
       } catch (err) {
           console.error('Error loading KPIs:', err);
           setError(`Error loading KPIs: ${err.message || 'Unknown error'}`);
@@ -689,6 +743,14 @@ function ReportPage({ token, userProfile }) {
           setMarketSnapshot(null);
           setAdrVsMarketData(null);
           setPriceDistributionData(null);
+          // NOUVEAU: Réinitialiser les nouvelles données en cas d'erreur
+          setForecastRevenueData(null);
+          setForecastAdrData(null);
+          setForecastScenariosData(null);
+          setForecastRadarData(null);
+          setRevenueVsTargetData(null);
+          setAdrByChannelData(null);
+          setGrossMarginData(null);
       } finally {
           setIsKpiLoading(false);
       }

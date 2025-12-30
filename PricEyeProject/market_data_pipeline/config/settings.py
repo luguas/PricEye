@@ -40,7 +40,7 @@ class Settings:
     target_cities: Optional[List[str]] = None
     
     # Configuration des jobs
-    collect_competitors: bool = True
+    collect_competitors: bool = False  # DÉSACTIVÉ temporairement - scraping désactivé
     collect_weather: bool = True
     collect_events: bool = True
     collect_news: bool = True

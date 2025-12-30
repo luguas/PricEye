@@ -533,6 +533,59 @@ export function getMarketKpis(token, startDate, endDate, city = null, country = 
     });
 }
 
+export function getForecastRevenue(token, startDate, endDate, forecastPeriod = 4) {
+    const params = new URLSearchParams({ startDate, endDate });
+    if (forecastPeriod) params.append('forecastPeriod', forecastPeriod);
+    return apiRequest(`/api/reports/forecast-revenue?${params.toString()}`, {
+        token,
+    });
+}
+
+export function getForecastScenarios(token, startDate, endDate, forecastPeriod = 4) {
+    const params = new URLSearchParams({ startDate, endDate });
+    if (forecastPeriod) params.append('forecastPeriod', forecastPeriod);
+    return apiRequest(`/api/reports/forecast-scenarios?${params.toString()}`, {
+        token,
+    });
+}
+
+export function getForecastRadar(token, startDate, endDate, propertyId = null) {
+    const params = new URLSearchParams({ startDate, endDate });
+    if (propertyId) params.append('propertyId', propertyId);
+    return apiRequest(`/api/reports/forecast-radar?${params.toString()}`, {
+        token,
+    });
+}
+
+export function getRevenueVsTarget(token, startDate, endDate) {
+    const params = new URLSearchParams({ startDate, endDate });
+    return apiRequest(`/api/reports/revenue-vs-target?${params.toString()}`, {
+        token,
+    });
+}
+
+export function getGrossMargin(token, startDate, endDate) {
+    const params = new URLSearchParams({ startDate, endDate });
+    return apiRequest(`/api/reports/gross-margin?${params.toString()}`, {
+        token,
+    });
+}
+
+export function getAdrByChannel(token, startDate, endDate) {
+    const params = new URLSearchParams({ startDate, endDate });
+    return apiRequest(`/api/reports/adr-by-channel?${params.toString()}`, {
+        token,
+    });
+}
+
+export function updateRevenueTargets(token, revenueTargets) {
+    return apiRequest('/api/users/revenue-targets', {
+        method: 'PUT',
+        token,
+        body: JSON.stringify({ revenueTargets }),
+    });
+}
+
 export function getDateAnalysis(propertyId, date, token) {
     return apiRequest(`/api/reports/analyze-date`, {
         method: 'POST',

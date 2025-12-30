@@ -4589,6 +4589,1093 @@ app.get('/api/reports/performance-over-time', authenticateToken, async (req, res
     }
 });
 
+// Fonctions utilitaires pour les prévisions
+/**
+ * Calcule la moyenne mobile d'un tableau de valeurs
+ * @param {Array<number>} data - Tableau de valeurs
+ * @param {number} window - Taille de la fenêtre (nombre d'éléments)
+ * @returns {number} - Moyenne mobile
+ */
+function calculateMovingAverage(data, window) {
+    if (!data || data.length === 0) return 0;
+    if (data.length < window) {
+        // Si pas assez de données, retourner la moyenne simple
+        const sum = data.reduce((acc, val) => acc + val, 0);
+        return sum / data.length;
+    }
+    // Prendre les N derniers éléments
+    const recentData = data.slice(-window);
+    const sum = recentData.reduce((acc, val) => acc + val, 0);
+    return sum / window;
+}
+
+/**
+ * Calcule la tendance linéaire (pente) d'un tableau de valeurs
+ * @param {Array<number>} data - Tableau de valeurs
+ * @returns {number} - Pente de la tendance (peut être négative)
+ */
+function calculateLinearTrend(data) {
+    if (!data || data.length < 2) return 0;
+    
+    const n = data.length;
+    let sumX = 0;
+    let sumY = 0;
+    let sumXY = 0;
+    let sumX2 = 0;
+    
+    // Calculer les sommes pour la régression linéaire
+    for (let i = 0; i < n; i++) {
+        const x = i + 1; // Position (1, 2, 3, ...)
+        const y = data[i];
+        sumX += x;
+        sumY += y;
+        sumXY += x * y;
+        sumX2 += x * x;
+    }
+    
+    // Formule de la pente: slope = (n*ΣXY - ΣX*ΣY) / (n*ΣX² - (ΣX)²)
+    const denominator = (n * sumX2) - (sumX * sumX);
+    if (denominator === 0) return 0;
+    
+    const slope = ((n * sumXY) - (sumX * sumY)) / denominator;
+    return slope;
+}
+
+/**
+ * Groupe les données journalières par semaine
+ * @param {Object} dailyData - Objet avec labels (dates) et data (valeurs)
+ * @returns {Object} - Objet avec labels (semaines) et data (valeurs agrégées)
+ */
+function groupByWeek(dailyData) {
+    if (!dailyData || !dailyData.labels || !dailyData.data || dailyData.labels.length === 0) {
+        return { labels: [], data: [] };
+    }
+    
+    const weeklyData = new Map();
+    
+    dailyData.labels.forEach((dateStr, index) => {
+        const date = new Date(dateStr + 'T00:00:00Z');
+        const weekId = getWeekId(date);
+        const value = dailyData.data[index] || 0;
+        
+        if (!weeklyData.has(weekId)) {
+            weeklyData.set(weekId, { sum: 0, count: 0 });
+        }
+        
+        const week = weeklyData.get(weekId);
+        week.sum += value;
+        week.count += 1;
+    });
+    
+    // Convertir en tableaux triés
+    const sortedWeeks = Array.from(weeklyData.keys()).sort();
+    const labels = sortedWeeks;
+    const data = sortedWeeks.map(weekId => {
+        const week = weeklyData.get(weekId);
+        return week.count > 0 ? week.sum / week.count : 0; // Moyenne par semaine
+    });
+    
+    return { labels, data };
+}
+
+/**
+ * Calcule l'ADR à partir du revenu, de l'occupation et du nombre de propriétés
+ * @param {number} revenue - Revenu total
+ * @param {number} occupancy - Taux d'occupation (en pourcentage)
+ * @param {number} totalProperties - Nombre total de propriétés
+ * @returns {number} - ADR calculé
+ */
+function calculateAdr(revenue, occupancy, totalProperties) {
+    if (!totalProperties || totalProperties === 0) return 0;
+    const occupancyDecimal = occupancy / 100;
+    const nightsBooked = occupancyDecimal * totalProperties * 7; // Pour une semaine
+    if (nightsBooked === 0) return 0;
+    return revenue / nightsBooked;
+}
+
+// GET /api/reports/forecast-revenue
+app.get('/api/reports/forecast-revenue', authenticateToken, async (req, res) => {
+    try {
+        const userId = req.user.uid;
+        const { startDate, endDate, forecastPeriod = 4 } = req.query;
+
+        if (!startDate || !endDate) {
+            return res.status(400).send({ error: 'Les dates de début et de fin sont requises.' });
+        }
+
+        const forecastWeeks = parseInt(forecastPeriod, 10) || 4;
+        if (forecastWeeks < 1 || forecastWeeks > 12) {
+            return res.status(400).send({ error: 'Le nombre de semaines à prévoir doit être entre 1 et 12.' });
+        }
+
+        // 1. Récupérer le teamId et le nombre de propriétés
+        const userProfile = await db.getUser(userId);
+        if (!userProfile || !userProfile.team_id) {
+            return res.status(404).send({ error: 'Impossible de trouver votre équipe.' });
+        }
+        const teamId = userProfile.team_id;
+
+        const properties = await db.getPropertiesByTeam(teamId);
+        const totalPropertiesInTeam = properties.length;
+
+        if (totalPropertiesInTeam === 0) {
+            return res.status(200).json({
+                labels: Array.from({ length: forecastWeeks }, (_, i) => `Sem ${i + 1}`),
+                revenueData: Array(forecastWeeks).fill(0),
+                occupancyData: Array(forecastWeeks).fill(0),
+                adrData: Array(forecastWeeks).fill(0),
+                revparData: Array(forecastWeeks).fill(0),
+                metadata: {
+                    forecastMethod: 'no_data',
+                    historicalWeeks: 0,
+                    confidence: 'none'
+                }
+            });
+        }
+
+        // 2. Récupérer les données historiques de revenus
+        const start = new Date(startDate + 'T00:00:00Z');
+        const end = new Date(endDate + 'T00:00:00Z');
+        
+        // Initialiser une carte de dates pour les revenus
+        const datesMap = new Map();
+        let currentDate = new Date(start);
+        while (currentDate <= end) {
+            datesMap.set(currentDate.toISOString().split('T')[0], { revenue: 0, nightsBooked: 0 });
+            currentDate.setUTCDate(currentDate.getUTCDate() + 1);
+        }
+
+        // Récupérer les réservations
+        const bookings = await db.getBookingsByTeamAndDateRange(teamId, startDate, endDate);
+
+        // Calculer les revenus par jour
+        bookings.forEach(booking => {
+            const pricePerNight = booking.price_per_night || 
+                (booking.revenue ? booking.revenue / Math.ceil((new Date(booking.end_date) - new Date(booking.start_date)) / (1000 * 60 * 60 * 24)) : 0);
+            
+            let bookingDay = new Date(booking.start_date + 'T00:00:00Z');
+            const bookingEnd = new Date(booking.end_date + 'T00:00:00Z');
+
+            while (bookingDay < bookingEnd) {
+                const dateStr = bookingDay.toISOString().split('T')[0];
+                if (datesMap.has(dateStr)) {
+                    const current = datesMap.get(dateStr);
+                    current.revenue += pricePerNight;
+                    current.nightsBooked += 1;
+                }
+                bookingDay.setUTCDate(bookingDay.getUTCDate() + 1);
+            }
+        });
+
+        // 3. Grouper les données par semaine
+        const dailyRevenueData = {
+            labels: Array.from(datesMap.keys()),
+            data: Array.from(datesMap.values()).map(d => d.revenue)
+        };
+
+        const dailyOccupancyData = {
+            labels: Array.from(datesMap.keys()),
+            data: Array.from(datesMap.values()).map(d => {
+                return totalPropertiesInTeam > 0 ? (d.nightsBooked / totalPropertiesInTeam) * 100 : 0;
+            })
+        };
+
+        const weeklyRevenue = groupByWeek(dailyRevenueData);
+        const weeklyOccupancy = groupByWeek(dailyOccupancyData);
+
+        // 4. Vérifier si on a assez de données
+        if (weeklyRevenue.data.length < 2) {
+            // Pas assez de données historiques, utiliser la moyenne simple
+            const avgRevenue = weeklyRevenue.data.length > 0 
+                ? weeklyRevenue.data[0] 
+                : 0;
+            const avgOccupancy = weeklyOccupancy.data.length > 0 
+                ? weeklyOccupancy.data[0] 
+                : 0;
+
+            const forecasts = [];
+            for (let week = 1; week <= forecastWeeks; week++) {
+                forecasts.push({
+                    label: `Sem ${week}`,
+                    revenue: Math.max(0, avgRevenue),
+                    occupancy: Math.min(100, Math.max(0, avgOccupancy)),
+                    adr: calculateAdr(avgRevenue, avgOccupancy, totalPropertiesInTeam),
+                    revpar: totalPropertiesInTeam > 0 ? avgRevenue / (totalPropertiesInTeam * 7) : 0
+                });
+            }
+
+            return res.status(200).json({
+                labels: forecasts.map(f => f.label),
+                revenueData: forecasts.map(f => f.revenue),
+                occupancyData: forecasts.map(f => f.occupancy),
+                adrData: forecasts.map(f => f.adr),
+                revparData: forecasts.map(f => f.revpar),
+                metadata: {
+                    forecastMethod: 'simple_average',
+                    historicalWeeks: weeklyRevenue.data.length,
+                    confidence: 'low'
+                }
+            });
+        }
+
+        // 5. Calculer les moyennes mobiles (4 semaines ou toutes les semaines disponibles si moins)
+        const movingAvgWindow = Math.min(4, weeklyRevenue.data.length);
+        const movingAvgRevenue = calculateMovingAverage(weeklyRevenue.data, movingAvgWindow);
+        const movingAvgOccupancy = calculateMovingAverage(weeklyOccupancy.data, movingAvgWindow);
+
+        // 6. Calculer les tendances linéaires
+        const revenueTrend = calculateLinearTrend(weeklyRevenue.data);
+        const occupancyTrend = calculateLinearTrend(weeklyOccupancy.data);
+
+        // 7. Générer les prévisions
+        const forecasts = [];
+        for (let week = 1; week <= forecastWeeks; week++) {
+            // Prévision basée sur moyenne mobile + tendance
+            let forecastRevenue = movingAvgRevenue + (revenueTrend * week);
+            let forecastOccupancy = movingAvgOccupancy + (occupancyTrend * week);
+
+            // Validation et limites
+            forecastRevenue = Math.max(0, forecastRevenue);
+            forecastOccupancy = Math.min(100, Math.max(0, forecastOccupancy));
+
+            const forecastAdr = calculateAdr(forecastRevenue, forecastOccupancy, totalPropertiesInTeam);
+            const forecastRevpar = totalPropertiesInTeam > 0 
+                ? forecastRevenue / (totalPropertiesInTeam * 7) 
+                : 0;
+
+            forecasts.push({
+                label: `Sem ${week}`,
+                revenue: forecastRevenue,
+                occupancy: forecastOccupancy,
+                adr: forecastAdr,
+                revpar: forecastRevpar
+            });
+        }
+
+        // 8. Déterminer le niveau de confiance
+        let confidence = 'medium';
+        if (weeklyRevenue.data.length >= 8) {
+            confidence = 'high';
+        } else if (weeklyRevenue.data.length < 4) {
+            confidence = 'low';
+        }
+
+        res.status(200).json({
+            labels: forecasts.map(f => f.label),
+            revenueData: forecasts.map(f => f.revenue),
+            occupancyData: forecasts.map(f => f.occupancy),
+            adrData: forecasts.map(f => f.adr),
+            revparData: forecasts.map(f => f.revpar),
+            metadata: {
+                forecastMethod: 'linear_trend',
+                historicalWeeks: weeklyRevenue.data.length,
+                confidence: confidence
+            }
+        });
+
+    } catch (error) {
+        console.error('Erreur lors du calcul des prévisions de revenus:', error);
+        res.status(500).send({ error: 'Erreur serveur lors du calcul des prévisions de revenus.' });
+    }
+});
+
+// GET /api/reports/forecast-scenarios
+app.get('/api/reports/forecast-scenarios', authenticateToken, async (req, res) => {
+    try {
+        const userId = req.user.uid;
+        const { startDate, endDate, forecastPeriod = 4 } = req.query;
+
+        if (!startDate || !endDate) {
+            return res.status(400).send({ error: 'Les dates de début et de fin sont requises.' });
+        }
+
+        const forecastWeeks = parseInt(forecastPeriod, 10) || 4;
+        if (forecastWeeks < 1 || forecastWeeks > 12) {
+            return res.status(400).send({ error: 'Le nombre de semaines à prévoir doit être entre 1 et 12.' });
+        }
+
+        // 1. Récupérer le teamId et le nombre de propriétés
+        const userProfile = await db.getUser(userId);
+        if (!userProfile || !userProfile.team_id) {
+            return res.status(404).send({ error: 'Impossible de trouver votre équipe.' });
+        }
+        const teamId = userProfile.team_id;
+
+        const properties = await db.getPropertiesByTeam(teamId);
+        const totalPropertiesInTeam = properties.length;
+
+        if (totalPropertiesInTeam === 0) {
+            return res.status(200).json({
+                labels: Array.from({ length: forecastWeeks }, (_, i) => `Sem ${i + 1}`),
+                baselineData: Array(forecastWeeks).fill(0),
+                optimisticData: Array(forecastWeeks).fill(0),
+                pessimisticData: Array(forecastWeeks).fill(0),
+                metadata: {
+                    forecastMethod: 'no_data',
+                    historicalWeeks: 0,
+                    confidence: 'none'
+                }
+            });
+        }
+
+        // 2. Récupérer les données historiques de revenus (même logique que forecast-revenue)
+        const start = new Date(startDate + 'T00:00:00Z');
+        const end = new Date(endDate + 'T00:00:00Z');
+        
+        const datesMap = new Map();
+        let currentDate = new Date(start);
+        while (currentDate <= end) {
+            datesMap.set(currentDate.toISOString().split('T')[0], { revenue: 0, nightsBooked: 0 });
+            currentDate.setUTCDate(currentDate.getUTCDate() + 1);
+        }
+
+        const bookings = await db.getBookingsByTeamAndDateRange(teamId, startDate, endDate);
+
+        bookings.forEach(booking => {
+            const pricePerNight = booking.price_per_night || 
+                (booking.revenue ? booking.revenue / Math.ceil((new Date(booking.end_date) - new Date(booking.start_date)) / (1000 * 60 * 60 * 24)) : 0);
+            
+            let bookingDay = new Date(booking.start_date + 'T00:00:00Z');
+            const bookingEnd = new Date(booking.end_date + 'T00:00:00Z');
+
+            while (bookingDay < bookingEnd) {
+                const dateStr = bookingDay.toISOString().split('T')[0];
+                if (datesMap.has(dateStr)) {
+                    const current = datesMap.get(dateStr);
+                    current.revenue += pricePerNight;
+                    current.nightsBooked += 1;
+                }
+                bookingDay.setUTCDate(bookingDay.getUTCDate() + 1);
+            }
+        });
+
+        // 3. Grouper par semaine
+        const dailyRevenueData = {
+            labels: Array.from(datesMap.keys()),
+            data: Array.from(datesMap.values()).map(d => d.revenue)
+        };
+
+        const weeklyRevenue = groupByWeek(dailyRevenueData);
+
+        // 4. Calculer le baseline (scénario de base)
+        let baselineForecasts = [];
+        let movingAvgRevenue = 0;
+        let revenueTrend = 0;
+
+        if (weeklyRevenue.data.length < 2) {
+            // Pas assez de données, utiliser moyenne simple
+            const avgRevenue = weeklyRevenue.data.length > 0 ? weeklyRevenue.data[0] : 0;
+            for (let week = 1; week <= forecastWeeks; week++) {
+                baselineForecasts.push(Math.max(0, avgRevenue));
+            }
+        } else {
+            // Calculer moyenne mobile et tendance
+            const movingAvgWindow = Math.min(4, weeklyRevenue.data.length);
+            movingAvgRevenue = calculateMovingAverage(weeklyRevenue.data, movingAvgWindow);
+            revenueTrend = calculateLinearTrend(weeklyRevenue.data);
+
+            // Générer prévisions baseline
+            for (let week = 1; week <= forecastWeeks; week++) {
+                const forecastRevenue = movingAvgRevenue + (revenueTrend * week);
+                baselineForecasts.push(Math.max(0, forecastRevenue));
+            }
+        }
+
+        // 5. Calculer les scénarios optimiste et pessimiste
+        // Optimiste : +10% par rapport au baseline
+        // Pessimiste : -10% par rapport au baseline
+        const optimisticForecasts = baselineForecasts.map(revenue => Math.round(revenue * 1.1));
+        const pessimisticForecasts = baselineForecasts.map(revenue => Math.round(revenue * 0.9));
+
+        // 6. Générer les labels
+        const labels = Array.from({ length: forecastWeeks }, (_, i) => `Sem ${i + 1}`);
+
+        // 7. Déterminer le niveau de confiance
+        let confidence = 'medium';
+        if (weeklyRevenue.data.length >= 8) {
+            confidence = 'high';
+        } else if (weeklyRevenue.data.length < 4) {
+            confidence = 'low';
+        }
+
+        res.status(200).json({
+            labels: labels,
+            baselineData: baselineForecasts,
+            optimisticData: optimisticForecasts,
+            pessimisticData: pessimisticForecasts,
+            metadata: {
+                forecastMethod: weeklyRevenue.data.length < 2 ? 'simple_average' : 'linear_trend',
+                historicalWeeks: weeklyRevenue.data.length,
+                confidence: confidence,
+                optimisticMultiplier: 1.1,
+                pessimisticMultiplier: 0.9
+            }
+        });
+
+    } catch (error) {
+        console.error('Erreur lors du calcul des scénarios de prévision:', error);
+        res.status(500).send({ error: 'Erreur serveur lors du calcul des scénarios de prévision.' });
+    }
+});
+
+// GET /api/reports/forecast-radar
+app.get('/api/reports/forecast-radar', authenticateToken, async (req, res) => {
+    try {
+        const userId = req.user.uid;
+        const { startDate, endDate, propertyId } = req.query;
+
+        if (!startDate || !endDate) {
+            return res.status(400).send({ error: 'Les dates de début et de fin sont requises.' });
+        }
+
+        // 1. Récupérer le teamId
+        const userProfile = await db.getUser(userId);
+        if (!userProfile || !userProfile.team_id) {
+            return res.status(404).send({ error: 'Impossible de trouver votre équipe.' });
+        }
+        const teamId = userProfile.team_id;
+
+        const properties = await db.getPropertiesByTeam(teamId);
+        if (properties.length === 0) {
+            return res.status(200).json({
+                labels: ['Revenue', 'Occupancy', 'ADR', 'AI Score', 'ROI'],
+                data: [0, 0, 0, 0, 0]
+            });
+        }
+
+        // 2. Récupérer les KPIs pour la période
+        const start = new Date(startDate + 'T00:00:00Z');
+        const end = new Date(endDate + 'T00:00:00Z');
+        const daysInPeriod = Math.round((end - start) / (1000 * 60 * 60 * 24)) + 1;
+        const totalPropertiesInTeam = properties.length;
+
+        // Calculer les KPIs (même logique que /api/reports/kpis)
+        const propertyBasePrices = new Map();
+        properties.forEach(prop => {
+            propertyBasePrices.set(prop.id, prop.base_price || 0);
+        });
+
+        const bookings = await db.getBookingsByTeamAndDateRange(teamId, startDate, endDate);
+
+        let totalRevenue = 0;
+        let totalNightsBooked = 0;
+        let totalBaseRevenue = 0;
+        let premiumNights = 0;
+
+        bookings.forEach(booking => {
+            const propertyId = booking.property_id;
+            const basePrice = propertyBasePrices.get(propertyId) || 0;
+
+            const bookingStart = new Date(booking.start_date);
+            const bookingEnd = new Date(booking.end_date);
+
+            const effectiveStart = new Date(Math.max(bookingStart.getTime(), start.getTime()));
+            const effectiveEnd = new Date(Math.min(bookingEnd.getTime(), end.getTime()));
+            
+            let nightsInPeriod = 0;
+            let currentDate = new Date(effectiveStart);
+            while(currentDate < effectiveEnd && currentDate <= end) { 
+                nightsInPeriod++;
+                currentDate.setDate(currentDate.getDate() + 1);
+            }
+            
+            const pricePerNight = booking.price_per_night || (booking.revenue ? booking.revenue / Math.ceil((bookingEnd - bookingStart) / (1000 * 60 * 60 * 24)) : 0);
+            
+            totalNightsBooked += nightsInPeriod;
+            totalRevenue += pricePerNight * nightsInPeriod;
+            totalBaseRevenue += (basePrice || 0) * nightsInPeriod;
+            if (pricePerNight > basePrice) {
+                premiumNights += nightsInPeriod;
+            }
+        });
+
+        const adr = totalNightsBooked > 0 ? totalRevenue / totalNightsBooked : 0;
+        const occupancy = totalPropertiesInTeam > 0 ? (totalNightsBooked / (totalPropertiesInTeam * daysInPeriod)) * 100 : 0;
+        const iaScore = totalNightsBooked > 0 ? (premiumNights / totalNightsBooked) * 100 : 0;
+
+        // 3. Calculer les scores normalisés (0-100)
+
+        // Score Revenue: basé sur revenu vs objectif (ou heuristique)
+        let revenueScore = 50; // Par défaut
+        if (userProfile.revenue_targets && typeof userProfile.revenue_targets === 'object') {
+            // Calculer l'objectif pour la période (approximation mensuelle)
+            const monthKey = `${start.getFullYear()}-${String(start.getMonth() + 1).padStart(2, '0')}`;
+            const monthlyTarget = userProfile.revenue_targets[monthKey] || 0;
+            if (monthlyTarget > 0) {
+                // Projeter l'objectif mensuel sur la période
+                const daysInMonth = new Date(start.getFullYear(), start.getMonth() + 1, 0).getDate();
+                const periodTarget = (monthlyTarget / daysInMonth) * daysInPeriod;
+                revenueScore = Math.min(100, (totalRevenue / periodTarget) * 100);
+            }
+        } else {
+            // Heuristique: comparer avec la moyenne historique (si disponible)
+            // Pour l'instant, utiliser une estimation basée sur le revenu moyen par nuit
+            const avgRevenuePerNight = totalRevenue / Math.max(1, daysInPeriod);
+            // Estimation: objectif = 150€/nuit/propriété (ajustable)
+            const estimatedTarget = 150 * totalPropertiesInTeam * daysInPeriod;
+            if (estimatedTarget > 0) {
+                revenueScore = Math.min(100, (totalRevenue / estimatedTarget) * 100);
+            }
+        }
+
+        // Score Occupancy: déjà en pourcentage (0-100)
+        const occupancyScore = Math.min(100, Math.max(0, occupancy));
+
+        // Score ADR: comparer avec l'ADR marché
+        let adrScore = 50; // Par défaut
+        try {
+            // Essayer de récupérer les données de positionnement
+            // Note: On pourrait optimiser en réutilisant les données déjà calculées
+            const positioningData = await new Promise((resolve) => {
+                // Simuler un appel interne (pour éviter la complexité, on calcule directement)
+                resolve(null);
+            });
+
+            // Calculer l'ADR marché moyen (heuristique basée sur l'ADR actuel)
+            // En production, on utiliserait les données de getPositioningReport
+            const estimatedMarketAdr = adr > 0 ? adr * 0.9 : 100; // Estimation: marché à 90% de notre ADR
+            if (estimatedMarketAdr > 0) {
+                adrScore = Math.min(100, (adr / estimatedMarketAdr) * 100);
+            }
+        } catch (e) {
+            // Fallback: utiliser une heuristique simple
+            adrScore = adr > 0 ? Math.min(100, (adr / 150) * 100) : 0; // 150€ = référence
+        }
+
+        // Score AI Score: déjà en pourcentage (0-100)
+        const aiScoreValue = Math.min(100, Math.max(0, iaScore));
+
+        // Score ROI: basé sur revenus vs coûts
+        let roiScore = 50; // Par défaut
+        let totalCosts = 0;
+        
+        // Essayer de calculer les coûts si disponibles
+        properties.forEach(prop => {
+            // Si la propriété a un coût par nuit défini
+            if (prop.operating_cost || prop.cost_per_night) {
+                const costPerNight = prop.operating_cost || prop.cost_per_night || 0;
+                totalCosts += costPerNight * daysInPeriod;
+            }
+        });
+
+        if (totalCosts > 0) {
+            const roi = ((totalRevenue - totalCosts) / totalCosts) * 100;
+            // Normaliser ROI sur 0-100 (ROI de 0% = 50, ROI de 100% = 100, ROI négatif = 0-50)
+            roiScore = Math.min(100, Math.max(0, 50 + (roi / 2))); // ROI de 100% = score de 100
+        } else {
+            // Heuristique: estimer les coûts à 30% des revenus
+            const estimatedCosts = totalRevenue * 0.3;
+            if (estimatedCosts > 0) {
+                const estimatedRoi = ((totalRevenue - estimatedCosts) / estimatedCosts) * 100;
+                roiScore = Math.min(100, Math.max(0, 50 + (estimatedRoi / 2)));
+            }
+        }
+
+        // 4. Arrondir les scores
+        const scores = [
+            Math.round(revenueScore),
+            Math.round(occupancyScore),
+            Math.round(adrScore),
+            Math.round(aiScoreValue),
+            Math.round(roiScore)
+        ];
+
+        res.status(200).json({
+            labels: ['Revenue', 'Occupancy', 'ADR', 'AI Score', 'ROI'],
+            data: scores,
+            metadata: {
+                rawValues: {
+                    revenue: totalRevenue,
+                    occupancy: occupancy,
+                    adr: adr,
+                    aiScore: iaScore,
+                    roi: totalCosts > 0 ? ((totalRevenue - totalCosts) / totalCosts) * 100 : null
+                },
+                hasRevenueTarget: !!userProfile.revenue_targets,
+                hasCosts: totalCosts > 0
+            }
+        });
+
+    } catch (error) {
+        console.error('Erreur lors du calcul des prévisions radar:', error);
+        res.status(500).send({ error: 'Erreur serveur lors du calcul des prévisions radar.' });
+    }
+});
+
+// GET /api/reports/revenue-vs-target
+app.get('/api/reports/revenue-vs-target', authenticateToken, async (req, res) => {
+    try {
+        const userId = req.user.uid;
+        const { startDate, endDate } = req.query;
+
+        if (!startDate || !endDate) {
+            return res.status(400).send({ error: 'Les dates de début et de fin sont requises.' });
+        }
+
+        // 1. Récupérer le teamId
+        const userProfile = await db.getUser(userId);
+        if (!userProfile || !userProfile.team_id) {
+            return res.status(404).send({ error: 'Impossible de trouver votre équipe.' });
+        }
+        const teamId = userProfile.team_id;
+
+        const properties = await db.getPropertiesByTeam(teamId);
+        if (properties.length === 0) {
+            return res.status(200).json({
+                labels: [],
+                targetData: [],
+                revenueData: []
+            });
+        }
+
+        // 2. Récupérer les objectifs de revenus
+        const revenueTargets = userProfile.revenue_targets || {};
+        
+        // 3. Calculer les revenus réels par mois
+        const start = new Date(startDate + 'T00:00:00Z');
+        const end = new Date(endDate + 'T00:00:00Z');
+
+        // Initialiser une carte pour les revenus par mois
+        const monthlyRevenue = new Map();
+        let currentMonth = new Date(start);
+        
+        while (currentMonth <= end) {
+            const monthKey = `${currentMonth.getUTCFullYear()}-${String(currentMonth.getUTCMonth() + 1).padStart(2, '0')}`;
+            monthlyRevenue.set(monthKey, 0);
+            // Passer au mois suivant
+            currentMonth = new Date(currentMonth.getUTCFullYear(), currentMonth.getUTCMonth() + 1, 1);
+        }
+
+        // 4. Récupérer les réservations et calculer les revenus par mois
+        const bookings = await db.getBookingsByTeamAndDateRange(teamId, startDate, endDate);
+
+        bookings.forEach(booking => {
+            const pricePerNight = booking.price_per_night || 
+                (booking.revenue ? booking.revenue / Math.ceil((new Date(booking.end_date) - new Date(booking.start_date)) / (1000 * 60 * 60 * 24)) : 0);
+            
+            let bookingDay = new Date(booking.start_date + 'T00:00:00Z');
+            const bookingEnd = new Date(booking.end_date + 'T00:00:00Z');
+
+            while (bookingDay < bookingEnd) {
+                // Vérifier si le jour est dans la plage de dates
+                if (bookingDay >= start && bookingDay <= end) {
+                    const monthKey = `${bookingDay.getUTCFullYear()}-${String(bookingDay.getUTCMonth() + 1).padStart(2, '0')}`;
+                    if (monthlyRevenue.has(monthKey)) {
+                        monthlyRevenue.set(monthKey, monthlyRevenue.get(monthKey) + pricePerNight);
+                    }
+                }
+                bookingDay.setUTCDate(bookingDay.getUTCDate() + 1);
+            }
+        });
+
+        // 5. Générer les labels et les données
+        const sortedMonths = Array.from(monthlyRevenue.keys()).sort();
+        const labels = [];
+        const targetData = [];
+        const revenueData = [];
+
+        // Déterminer la locale selon la langue de l'utilisateur
+        const language = userProfile.language || 'fr';
+        const locale = language === 'fr' || language === 'fr-FR' ? 'fr-FR' : 'en-US';
+
+        sortedMonths.forEach(monthKey => {
+            const [year, month] = monthKey.split('-');
+            const monthIndex = parseInt(month, 10) - 1;
+            const date = new Date(parseInt(year, 10), monthIndex, 1);
+            
+            // Générer le label du mois (format court)
+            const monthLabel = date.toLocaleDateString(locale, { month: 'short' });
+            labels.push(monthLabel.charAt(0).toUpperCase() + monthLabel.slice(1));
+
+            // Récupérer l'objectif pour ce mois
+            const target = revenueTargets[monthKey] || 0;
+            targetData.push(target);
+
+            // Récupérer le revenu réel
+            const revenue = monthlyRevenue.get(monthKey) || 0;
+            revenueData.push(Math.round(revenue));
+        });
+
+        res.status(200).json({
+            labels: labels,
+            targetData: targetData,
+            revenueData: revenueData,
+            metadata: {
+                hasTargets: Object.keys(revenueTargets).length > 0,
+                monthsWithTargets: Object.keys(revenueTargets).length,
+                totalMonths: sortedMonths.length
+            }
+        });
+
+    } catch (error) {
+        console.error('Erreur lors du calcul du revenu vs objectif:', error);
+        res.status(500).send({ error: 'Erreur serveur lors du calcul du revenu vs objectif.' });
+    }
+});
+
+// GET /api/reports/gross-margin
+app.get('/api/reports/gross-margin', authenticateToken, async (req, res) => {
+    try {
+        const userId = req.user.uid;
+        const { startDate, endDate } = req.query;
+
+        if (!startDate || !endDate) {
+            return res.status(400).send({ error: 'Les dates de début et de fin sont requises.' });
+        }
+
+        // 1. Récupérer le teamId
+        const userProfile = await db.getUser(userId);
+        if (!userProfile || !userProfile.team_id) {
+            return res.status(404).send({ error: 'Impossible de trouver votre équipe.' });
+        }
+        const teamId = userProfile.team_id;
+
+        const properties = await db.getPropertiesByTeam(teamId);
+        if (properties.length === 0) {
+            return res.status(200).json({
+                labels: [],
+                data: [],
+                metadata: {
+                    hasCosts: false,
+                    message: 'Aucune propriété trouvée'
+                }
+            });
+        }
+
+        // 2. Calculer les revenus et coûts par mois
+        const start = new Date(startDate + 'T00:00:00Z');
+        const end = new Date(endDate + 'T00:00:00Z');
+
+        // Initialiser une carte pour les revenus et coûts par mois
+        const monthlyData = new Map();
+        let currentMonth = new Date(start);
+        
+        while (currentMonth <= end) {
+            const monthKey = `${currentMonth.getUTCFullYear()}-${String(currentMonth.getUTCMonth() + 1).padStart(2, '0')}`;
+            monthlyData.set(monthKey, { revenue: 0, costs: 0 });
+            // Passer au mois suivant
+            currentMonth = new Date(currentMonth.getUTCFullYear(), currentMonth.getUTCMonth() + 1, 1);
+        }
+
+        // 3. Récupérer les réservations et calculer les revenus par mois
+        const bookings = await db.getBookingsByTeamAndDateRange(teamId, startDate, endDate);
+
+        bookings.forEach(booking => {
+            const pricePerNight = booking.price_per_night || 
+                (booking.revenue ? booking.revenue / Math.ceil((new Date(booking.end_date) - new Date(booking.start_date)) / (1000 * 60 * 60 * 24)) : 0);
+            
+            let bookingDay = new Date(booking.start_date + 'T00:00:00Z');
+            const bookingEnd = new Date(booking.end_date + 'T00:00:00Z');
+
+            while (bookingDay < bookingEnd) {
+                if (bookingDay >= start && bookingDay <= end) {
+                    const monthKey = `${bookingDay.getUTCFullYear()}-${String(bookingDay.getUTCMonth() + 1).padStart(2, '0')}`;
+                    if (monthlyData.has(monthKey)) {
+                        monthlyData.get(monthKey).revenue += pricePerNight;
+                    }
+                }
+                bookingDay.setUTCDate(bookingDay.getUTCDate() + 1);
+            }
+        });
+
+        // 4. Calculer les coûts par mois
+        let hasCosts = false;
+        const propertyCosts = new Map();
+        
+        properties.forEach(prop => {
+            // Vérifier si la propriété a un coût défini
+            const costPerNight = prop.operating_cost || prop.cost_per_night || 0;
+            if (costPerNight > 0) {
+                hasCosts = true;
+                propertyCosts.set(prop.id, costPerNight);
+            }
+        });
+
+        // Si des coûts sont disponibles, les calculer par mois
+        if (hasCosts) {
+            monthlyData.forEach((data, monthKey) => {
+                const [year, month] = monthKey.split('-');
+                const monthIndex = parseInt(month, 10) - 1;
+                const monthStart = new Date(parseInt(year, 10), monthIndex, 1);
+                const monthEnd = new Date(parseInt(year, 10), monthIndex + 1, 0);
+                
+                // Calculer le nombre de jours dans le mois qui sont dans la plage
+                const effectiveStart = monthStart < start ? start : monthStart;
+                const effectiveEnd = monthEnd > end ? end : monthEnd;
+                const daysInMonth = Math.max(0, Math.round((effectiveEnd - effectiveStart) / (1000 * 60 * 60 * 24)) + 1);
+                
+                // Calculer les coûts totaux pour ce mois
+                let totalCosts = 0;
+                propertyCosts.forEach((costPerNight, propertyId) => {
+                    totalCosts += costPerNight * daysInMonth;
+                });
+                
+                data.costs = totalCosts;
+            });
+        }
+
+        // 5. Calculer les marges brutes par mois
+        const sortedMonths = Array.from(monthlyData.keys()).sort();
+        const labels = [];
+        const marginData = [];
+
+        // Déterminer la locale selon la langue de l'utilisateur
+        const language = userProfile.language || 'fr';
+        const locale = language === 'fr' || language === 'fr-FR' ? 'fr-FR' : 'en-US';
+
+        sortedMonths.forEach(monthKey => {
+            const [year, month] = monthKey.split('-');
+            const monthIndex = parseInt(month, 10) - 1;
+            const date = new Date(parseInt(year, 10), monthIndex, 1);
+            
+            // Générer le label du mois (format court)
+            const monthLabel = date.toLocaleDateString(locale, { month: 'short' });
+            labels.push(monthLabel.charAt(0).toUpperCase() + monthLabel.slice(1));
+
+            const data = monthlyData.get(monthKey);
+            const revenue = data.revenue;
+            const costs = data.costs;
+
+            // Calculer la marge brute: (revenus - coûts) / revenus * 100
+            let margin = null;
+            if (hasCosts && revenue > 0) {
+                margin = ((revenue - costs) / revenue) * 100;
+                margin = Math.max(0, Math.min(100, margin)); // Limiter entre 0 et 100%
+            } else if (!hasCosts) {
+                // Si pas de coûts, on ne peut pas calculer la marge
+                margin = null;
+            }
+
+            marginData.push(margin);
+        });
+
+        // 6. Retourner les résultats
+        if (!hasCosts) {
+            // Si pas de coûts disponibles, retourner null pour indiquer que les données ne sont pas disponibles
+            return res.status(200).json({
+                labels: labels,
+                data: marginData, // Tous null
+                metadata: {
+                    hasCosts: false,
+                    message: 'Les coûts opérationnels ne sont pas configurés. Veuillez ajouter operating_cost ou cost_per_night dans les propriétés.'
+                }
+            });
+        }
+
+        res.status(200).json({
+            labels: labels,
+            data: marginData.map(m => m !== null ? Math.round(m) : null),
+            metadata: {
+                hasCosts: true,
+                totalProperties: properties.length,
+                propertiesWithCosts: propertyCosts.size
+            }
+        });
+
+    } catch (error) {
+        console.error('Erreur lors du calcul de la marge brute:', error);
+        res.status(500).send({ error: 'Erreur serveur lors du calcul de la marge brute.' });
+    }
+});
+
+// GET /api/reports/adr-by-channel
+app.get('/api/reports/adr-by-channel', authenticateToken, async (req, res) => {
+    try {
+        const userId = req.user.uid;
+        const { startDate, endDate } = req.query;
+
+        if (!startDate || !endDate) {
+            return res.status(400).send({ error: 'Les dates de début et de fin sont requises.' });
+        }
+
+        // 1. Récupérer le teamId
+        const userProfile = await db.getUser(userId);
+        if (!userProfile || !userProfile.team_id) {
+            return res.status(404).send({ error: 'Impossible de trouver votre équipe.' });
+        }
+        const teamId = userProfile.team_id;
+
+        const properties = await db.getPropertiesByTeam(teamId);
+        if (properties.length === 0) {
+            return res.status(200).json({
+                labels: [],
+                data: [],
+                variations: []
+            });
+        }
+
+        // 2. Calculer les dates de la période précédente pour les variations
+        const start = new Date(startDate + 'T00:00:00Z');
+        const end = new Date(endDate + 'T00:00:00Z');
+        const periodDuration = end - start;
+        const prevStart = new Date(start.getTime() - periodDuration);
+        const prevEnd = new Date(start);
+        const prevStartDate = prevStart.toISOString().split('T')[0];
+        const prevEndDate = prevEnd.toISOString().split('T')[0];
+
+        // 3. Récupérer les réservations pour la période actuelle et précédente
+        const [currentBookings, prevBookings] = await Promise.all([
+            db.getBookingsByTeamAndDateRange(teamId, startDate, endDate),
+            db.getBookingsByTeamAndDateRange(teamId, prevStartDate, prevEndDate)
+        ]);
+
+        // 4. Grouper les réservations par canal pour la période actuelle
+        const channelStats = new Map(); // channel -> { revenue: 0, nights: 0 }
+
+        currentBookings.forEach(booking => {
+            const channel = booking.channel || booking.source || 'Unknown';
+            const pricePerNight = booking.price_per_night || 
+                (booking.revenue ? booking.revenue / Math.ceil((new Date(booking.end_date) - new Date(booking.start_date)) / (1000 * 60 * 60 * 24)) : 0);
+            
+            const bookingStart = new Date(booking.start_date + 'T00:00:00Z');
+            const bookingEnd = new Date(booking.end_date + 'T00:00:00Z');
+            
+            const effectiveStart = bookingStart < start ? start : bookingStart;
+            const effectiveEnd = bookingEnd > end ? end : bookingEnd;
+            
+            let nightsInPeriod = 0;
+            let currentDate = new Date(effectiveStart);
+            while (currentDate < effectiveEnd && currentDate <= end) {
+                nightsInPeriod++;
+                currentDate.setUTCDate(currentDate.getUTCDate() + 1);
+            }
+            
+            if (!channelStats.has(channel)) {
+                channelStats.set(channel, { revenue: 0, nights: 0 });
+            }
+            
+            const stats = channelStats.get(channel);
+            stats.revenue += pricePerNight * nightsInPeriod;
+            stats.nights += nightsInPeriod;
+        });
+
+        // 5. Grouper les réservations par canal pour la période précédente
+        const prevChannelStats = new Map();
+
+        prevBookings.forEach(booking => {
+            const channel = booking.channel || booking.source || 'Unknown';
+            const pricePerNight = booking.price_per_night || 
+                (booking.revenue ? booking.revenue / Math.ceil((new Date(booking.end_date) - new Date(booking.start_date)) / (1000 * 60 * 60 * 24)) : 0);
+            
+            const bookingStart = new Date(booking.start_date + 'T00:00:00Z');
+            const bookingEnd = new Date(booking.end_date + 'T00:00:00Z');
+            
+            const effectiveStart = bookingStart < prevStart ? prevStart : bookingStart;
+            const effectiveEnd = bookingEnd > prevEnd ? prevEnd : bookingEnd;
+            
+            let nightsInPeriod = 0;
+            let currentDate = new Date(effectiveStart);
+            while (currentDate < effectiveEnd && currentDate <= prevEnd) {
+                nightsInPeriod++;
+                currentDate.setUTCDate(currentDate.getUTCDate() + 1);
+            }
+            
+            if (!prevChannelStats.has(channel)) {
+                prevChannelStats.set(channel, { revenue: 0, nights: 0 });
+            }
+            
+            const stats = prevChannelStats.get(channel);
+            stats.revenue += pricePerNight * nightsInPeriod;
+            stats.nights += nightsInPeriod;
+        });
+
+        // 6. Calculer l'ADR pour chaque canal et les variations
+        const labels = [];
+        const data = [];
+        const variations = [];
+
+        // Trier les canaux par ADR décroissant
+        const sortedChannels = Array.from(channelStats.entries())
+            .map(([channel, stats]) => {
+                const adr = stats.nights > 0 ? stats.revenue / stats.nights : 0;
+                return { channel, adr, stats };
+            })
+            .sort((a, b) => b.adr - a.adr);
+
+        sortedChannels.forEach(({ channel, adr, stats }) => {
+            labels.push(channel);
+            data.push(Math.round(adr));
+
+            // Calculer la variation vs période précédente
+            const prevStats = prevChannelStats.get(channel);
+            const prevAdr = prevStats && prevStats.nights > 0 ? prevStats.revenue / prevStats.nights : 0;
+            
+            let variation = 0;
+            if (prevAdr > 0) {
+                variation = ((adr - prevAdr) / prevAdr) * 100;
+            } else if (adr > 0) {
+                variation = 100; // Nouveau canal ou augmentation significative
+            }
+            
+            variations.push(parseFloat(variation.toFixed(1)));
+        });
+
+        res.status(200).json({
+            labels: labels,
+            data: data,
+            variations: variations,
+            metadata: {
+                currentPeriod: { startDate, endDate },
+                previousPeriod: { startDate: prevStartDate, endDate: prevEndDate },
+                totalChannels: labels.length
+            }
+        });
+
+    } catch (error) {
+        console.error('Erreur lors du calcul de l\'ADR par canal:', error);
+        res.status(500).send({ error: 'Erreur serveur lors du calcul de l\'ADR par canal.' });
+    }
+});
+
+// PUT /api/users/revenue-targets
+app.put('/api/users/revenue-targets', authenticateToken, async (req, res) => {
+    try {
+        const userId = req.user.uid;
+        const { revenueTargets } = req.body;
+
+        if (!revenueTargets || typeof revenueTargets !== 'object') {
+            return res.status(400).send({ error: 'Les objectifs de revenus doivent être un objet JSON valide.' });
+        }
+
+        // Valider le format : { "2025-01": 20000, "2025-02": 25000, ... }
+        const validKeys = Object.keys(revenueTargets).every(key => {
+            // Format attendu : YYYY-MM
+            const monthPattern = /^\d{4}-\d{2}$/;
+            if (!monthPattern.test(key)) {
+                return false;
+            }
+            // Vérifier que la valeur est un nombre positif
+            const value = revenueTargets[key];
+            return typeof value === 'number' && value >= 0 && !isNaN(value);
+        });
+
+        if (!validKeys) {
+            return res.status(400).send({ 
+                error: 'Format invalide. Les clés doivent être au format YYYY-MM (ex: "2025-01") et les valeurs doivent être des nombres positifs.' 
+            });
+        }
+
+        // Récupérer le profil utilisateur actuel
+        const userProfile = await db.getUser(userId);
+        if (!userProfile) {
+            return res.status(404).send({ error: 'Utilisateur non trouvé.' });
+        }
+
+        // Mettre à jour les objectifs de revenus
+        await db.updateUser(userId, {
+            revenue_targets: revenueTargets
+        });
+
+        res.status(200).json({
+            message: 'Objectifs de revenus mis à jour avec succès.',
+            revenueTargets: revenueTargets
+        });
+
+    } catch (error) {
+        console.error('Erreur lors de la mise à jour des objectifs de revenus:', error);
+        res.status(500).send({ error: 'Erreur serveur lors de la mise à jour des objectifs de revenus.' });
+    }
+});
 
 // POST /api/reports/analyze-date
 app.post('/api/reports/analyze-date', authenticateToken, async (req, res) => {
@@ -4999,10 +6086,58 @@ async function callGeminiWithSearch(prompt, maxRetries = 10, language = 'fr') {
                 throw new Error(`Réponse de l'API ${apiName} (Search) malformée ou vide.`);
             }
         } catch (error) {
+            const apiName = usePerplexity ? "Perplexity" : "ChatGPT";
+            
+            // Extraire le statut HTTP de l'erreur
+            const errorStatus = error.status || error.response?.status || error.statusCode;
+            // Essayer plusieurs façons d'extraire le message d'erreur
+            let errorMessage = error.message || error.toString() || String(error) || '';
+            // Si l'erreur est directement une string (peut arriver avec certains SDK)
+            if (typeof error === 'string') {
+                errorMessage = error;
+            }
+            
+            // Debug : logger l'erreur complète pour les erreurs suspectes
+            if (attempt === 1 || errorMessage.includes('401') || errorMessage.includes('<html>')) {
+                console.error(`[DEBUG ${apiName}] Type d'erreur:`, typeof error);
+                console.error(`[DEBUG ${apiName}] error.status:`, error.status);
+                console.error(`[DEBUG ${apiName}] error.message (premiers 200 chars):`, errorMessage.substring(0, 200));
+            }
+            
+            // Détecter si c'est une réponse HTML (comme les pages Cloudflare 401)
+            const isHtmlResponse = typeof errorMessage === 'string' && 
+                (errorMessage.includes('<html>') || errorMessage.includes('<title>') || 
+                 errorMessage.includes('openresty') || errorMessage.includes('Cloudflare') ||
+                 errorMessage.includes('<head>') || errorMessage.includes('Authorization Required'));
+            
+            // Détecter spécifiquement les erreurs 401 dans le message (même si errorStatus n'est pas défini)
+            // DÉTECTION ULTRA-SIMPLIFIÉE : Si "401" est présent dans le message, c'est une 401
+            const errorMsgStr = String(errorMessage);
+            const has401InMessage = errorMsgStr.includes('401');
+            const hasAuthRequired = errorMsgStr.toLowerCase().includes('authorization required');
+            
+            // Gérer les erreurs d'authentification (401) - ARRÊTER IMMÉDIATEMENT, ne pas retry
+            // Si on voit "401" dans le message OU "Authorization Required", c'est une 401 - POINT FINAL
+            // Plus de conditions complexes - si "401" est là, on arrête
+            if (errorStatus === 401 || has401InMessage || hasAuthRequired) {
+                const authErrorMsg = usePerplexity
+                    ? `ERREUR D'AUTHENTIFICATION PERPLEXITY (401): La clé API PERPLEXITY_API_KEY est invalide, manquante ou expirée. Vérifiez votre fichier .env et votre compte Perplexity.`
+                    : `ERREUR D'AUTHENTIFICATION OPENAI (401): La clé API OPENAI_API_KEY est invalide, manquante ou expirée. Vérifiez votre fichier .env et votre compte OpenAI.`;
+                
+                console.error(`[${apiName} (Search)] ${authErrorMsg}`);
+                if (isHtmlResponse) {
+                    console.error(`[${apiName} (Search)] Réponse HTML 401 détectée - blocage d'authentification. Arrêt immédiat des tentatives.`);
+                    // Logger un extrait du HTML pour debug
+                    const htmlPreview = errorMessage.substring(0, 300).replace(/\n/g, ' ');
+                    console.error(`[${apiName} (Search)] Extrait de la réponse: ${htmlPreview}...`);
+                }
+                // Arrêter immédiatement - ne pas faire de retry
+                throw new Error(authErrorMsg);
+            }
+            
             // Gérer les erreurs de rate limit (429)
-            if (error.status === 429 || (error.response && error.response.status === 429)) {
+            if (errorStatus === 429) {
                 const waitTime = Math.min(Math.pow(2, attempt - 1) * 1000, 60000);
-                const apiName = usePerplexity ? "Perplexity" : "ChatGPT";
                 console.warn(`Tentative ${attempt}/${maxRetries}: API ${apiName} (Search) surchargée (429). Nouvel essai dans ${waitTime / 1000} seconde(s)...`);
                 if (attempt < maxRetries) {
                     await delay(waitTime);
@@ -5010,13 +6145,23 @@ async function callGeminiWithSearch(prompt, maxRetries = 10, language = 'fr') {
                 }
             }
             
-            if (attempt === maxRetries) {
-                const apiName = usePerplexity ? "Perplexity" : "ChatGPT";
-                console.error(`Erreur API ${apiName} (Search) (Tentative ${attempt}):`, error.message);
-                throw new Error(`Échec de l'appel à l'API ${apiName} (Search) après ${maxRetries} tentatives. ${error.message}`);
+            // Ne pas retry sur les erreurs 4xx (sauf 429) - erreurs client
+            if (errorStatus && errorStatus >= 400 && errorStatus < 500 && errorStatus !== 429) {
+                const clientErrorMsg = `Erreur client ${apiName} (${errorStatus}): ${isHtmlResponse ? 'Réponse HTML reçue (possible blocage ou clé API invalide)' : errorMessage}`;
+                console.error(`[${apiName} (Search)] ${clientErrorMsg}`);
+                throw new Error(clientErrorMsg);
             }
             
-            console.error(`Erreur (Search) Tentative ${attempt}:`, error.message);
+            if (attempt === maxRetries) {
+                console.error(`Erreur API ${apiName} (Search) (Tentative ${attempt}):`, errorMessage.substring(0, 200));
+                throw new Error(`Échec de l'appel à l'API ${apiName} (Search) après ${maxRetries} tentatives. ${isHtmlResponse ? 'Réponse HTML reçue au lieu de JSON.' : errorMessage.substring(0, 200)}`);
+            }
+            
+            // Pour les autres erreurs (5xx, réseau, etc.), retry avec backoff
+            console.error(`Erreur (Search) Tentative ${attempt}:`, errorMessage.substring(0, 200));
+            if (isHtmlResponse) {
+                console.error(`[${apiName} (Search)] Réponse HTML détectée - possible problème d'authentification ou blocage.`);
+            }
             // Backoff exponentiel: 2^(attempt-1) secondes, avec un maximum de 60 secondes
             const waitTime = Math.min(Math.pow(2, attempt - 1) * 1000, 60000);
             console.log(`Nouvelle tentative dans ${waitTime / 1000} seconde(s)...`);

@@ -66,6 +66,7 @@ function PropertyModal({ token, onClose, onSave, property, initialStep = 1 }) {
     weekend_surcharge: '',
     cleaning_fee: '',
     deposit: '',
+    cost_per_night: '',
     min_stay: '',
     max_stay: '',
     check_in_time: '',
@@ -127,6 +128,7 @@ function PropertyModal({ token, onClose, onSave, property, initialStep = 1 }) {
         weekend_surcharge: property.weekend_surcharge || '',
         cleaning_fee: property.cleaning_fee || '',
         deposit: property.deposit || '',
+        cost_per_night: property.cost_per_night || property.operating_cost || '',
         min_stay: property.min_stay || '',
         max_stay: property.max_stay || '',
         check_in_time: property.check_in_time || '',
@@ -154,7 +156,7 @@ function PropertyModal({ token, onClose, onSave, property, initialStep = 1 }) {
         surface: '', bedrooms: '', bathrooms: '', floor: '', construction_year: '', renovation_year: '', view_type: '',
         neighborhood: '', city_center_distance: '', noise_level: '', public_transport: '', nearby_attractions: '',
         amenities: [], kitchen_amenities: [], security_amenities: [],
-        base_price: '100', weekend_surcharge: '', cleaning_fee: '', deposit: '', min_stay: '2', max_stay: '',
+        base_price: '100', weekend_surcharge: '', cleaning_fee: '', deposit: '', cost_per_night: '', min_stay: '2', max_stay: '',
         check_in_time: '', check_out_time: '',
         weekly_discount_percent: '', monthly_discount_percent: '', weekend_markup_percent: '',
         strategy: 'Équilibré', floor_price: '', ceiling_price: '',
@@ -251,6 +253,7 @@ function PropertyModal({ token, onClose, onSave, property, initialStep = 1 }) {
         weekend_surcharge: formData.weekend_surcharge ? parseFloat(formData.weekend_surcharge) : null,
         cleaning_fee: formData.cleaning_fee ? parseFloat(formData.cleaning_fee) : null,
         deposit: formData.deposit ? parseFloat(formData.deposit) : null,
+        cost_per_night: formData.cost_per_night ? parseFloat(formData.cost_per_night) : null,
         min_stay: parseInt(formData.min_stay, 10) || 1,
         max_stay: formData.max_stay ? parseInt(formData.max_stay, 10) : null,
         check_in_time: formData.check_in_time || null,
@@ -601,6 +604,13 @@ function PropertyModal({ token, onClose, onSave, property, initialStep = 1 }) {
                 <label htmlFor="deposit" className="block text-sm font-medium text-global-inactive">{t('propertyModal.deposit')}</label>
                 <input name="deposit" id="deposit" type="number" step="0.01" placeholder={t('propertyModal.deposit')} value={formData.deposit} onChange={handleChange} className="w-full bg-global-bg-small-box border border-global-stroke-box text-global-blanc p-2.5 rounded-[8px] mt-1 focus:outline-none focus:border-global-content-highlight-2nd transition-colors" />
               </div>
+            </div>
+            <div>
+              <label htmlFor="cost_per_night" className="block text-sm font-medium text-global-inactive">
+                Coût opérationnel par nuit <span className="text-xs text-global-inactive">({t('propertyModal.optional')})</span>
+              </label>
+              <input name="cost_per_night" id="cost_per_night" type="number" step="0.01" placeholder="Ex: 25.00" value={formData.cost_per_night} onChange={handleChange} className="w-full bg-global-bg-small-box border border-global-stroke-box text-global-blanc p-2.5 rounded-[8px] mt-1 focus:outline-none focus:border-global-content-highlight-2nd transition-colors" />
+              <p className="text-xs text-global-inactive mt-1">Utilisé pour calculer la marge brute dans les rapports</p>
             </div>
             <div className="grid grid-cols-2 gap-4">
               <div>
