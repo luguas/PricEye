@@ -1434,30 +1434,55 @@ app.post('/api/subscriptions/end-trial-and-bill', authenticateToken, async (req,
         } else if (quantities.quantityPrincipal > 0) {
             // Si l'item n'existe pas, on doit trouver un prix compatible avec la devise de l'abonnement
             let priceToUse = null;
+            let productIdToSearch = parentProductId;
             
-            if (parentProductId) {
+            // Si pas de Product ID mais qu'on a un Price ID, récupérer le produit depuis le prix
+            if (!productIdToSearch && parentPriceId) {
+                try {
+                    const defaultPrice = await stripe.prices.retrieve(parentPriceId);
+                    productIdToSearch = typeof defaultPrice.product === 'string' 
+                        ? defaultPrice.product 
+                        : defaultPrice.product.id;
+                    console.log(`[End Trial] Product ID récupéré depuis le prix par défaut: ${productIdToSearch}`);
+                } catch (err) {
+                    console.warn(`[End Trial] Erreur lors de la récupération du produit depuis le prix par défaut:`, err.message);
+                }
+            }
+            
+            // Chercher tous les prix du produit avec la bonne devise
+            if (productIdToSearch) {
                 try {
                     // Récupérer tous les prix du produit parent
                     const allParentPrices = await stripe.prices.list({
-                        product: parentProductId,
+                        product: productIdToSearch,
                         limit: 100
                     });
                     
+                    console.log(`[End Trial] Trouvé ${allParentPrices.data.length} prix pour le produit parent. Recherche d'un prix en ${subscriptionCurrency}...`);
+                    
                     // Trouver un prix avec la même devise que l'abonnement
                     priceToUse = allParentPrices.data.find(price => 
-                        price.currency.toLowerCase() === subscriptionCurrency.toLowerCase()
+                        price.currency.toLowerCase() === subscriptionCurrency.toLowerCase() && price.active
                     );
+                    
+                    if (priceToUse) {
+                        console.log(`[End Trial] Prix compatible trouvé: ${priceToUse.id} (${priceToUse.currency})`);
+                    } else {
+                        console.warn(`[End Trial] Aucun prix actif en ${subscriptionCurrency} trouvé pour le produit parent. Prix disponibles:`, 
+                            allParentPrices.data.map(p => `${p.id} (${p.currency}, active: ${p.active})`).join(', '));
+                    }
                 } catch (err) {
                     console.warn(`[End Trial] Erreur lors de la récupération des prix du produit parent:`, err.message);
                 }
             }
             
-            // Si pas de prix trouvé par Product ID, vérifier le prix par défaut
+            // Si pas de prix trouvé, vérifier le prix par défaut (fallback)
             if (!priceToUse && parentPriceId) {
                 try {
                     const defaultPrice = await stripe.prices.retrieve(parentPriceId);
                     if (defaultPrice.currency.toLowerCase() === subscriptionCurrency.toLowerCase()) {
                         priceToUse = defaultPrice;
+                        console.log(`[End Trial] Utilisation du prix par défaut compatible: ${parentPriceId}`);
                     } else {
                         console.warn(`[End Trial] Le prix par défaut (${parentPriceId}) est en ${defaultPrice.currency}, mais l'abonnement est en ${subscriptionCurrency}`);
                     }
@@ -1472,7 +1497,7 @@ app.post('/api/subscriptions/end-trial-and-bill', authenticateToken, async (req,
                     quantity: quantities.quantityPrincipal
                 });
             } else {
-                throw new Error(`Impossible de trouver un prix compatible pour le produit parent avec la devise ${subscriptionCurrency}. Veuillez configurer les prix Stripe correctement.`);
+                throw new Error(`Impossible de trouver un prix compatible pour le produit parent avec la devise ${subscriptionCurrency}. Veuillez créer un prix EUR pour ce produit dans Stripe.`);
             }
         }
         
@@ -1484,35 +1509,60 @@ app.post('/api/subscriptions/end-trial-and-bill', authenticateToken, async (req,
         } else if (quantities.quantityChild > 0) {
             // Si l'item n'existe pas, on doit trouver un prix compatible avec la devise de l'abonnement
             let priceToUse = null;
+            let productIdToSearch = childProductId;
             
-            if (childProductId) {
+            // Si pas de Product ID mais qu'on a un Price ID, récupérer le produit depuis le prix
+            if (!productIdToSearch && childPriceId) {
+                try {
+                    const defaultPrice = await stripe.prices.retrieve(childPriceId);
+                    productIdToSearch = typeof defaultPrice.product === 'string' 
+                        ? defaultPrice.product 
+                        : defaultPrice.product.id;
+                    console.log(`[End Trial] Product ID récupéré depuis le prix enfant par défaut: ${productIdToSearch}`);
+                } catch (err) {
+                    console.warn(`[End Trial] Erreur lors de la récupération du produit depuis le prix enfant par défaut:`, err.message);
+                }
+            }
+            
+            // Chercher tous les prix du produit avec la bonne devise
+            if (productIdToSearch) {
                 try {
                     // Récupérer tous les prix du produit enfant
                     const allChildPrices = await stripe.prices.list({
-                        product: childProductId,
+                        product: productIdToSearch,
                         limit: 100
                     });
                     
+                    console.log(`[End Trial] Trouvé ${allChildPrices.data.length} prix pour le produit enfant. Recherche d'un prix en ${subscriptionCurrency}...`);
+                    
                     // Trouver un prix avec la même devise que l'abonnement
                     priceToUse = allChildPrices.data.find(price => 
-                        price.currency.toLowerCase() === subscriptionCurrency.toLowerCase()
+                        price.currency.toLowerCase() === subscriptionCurrency.toLowerCase() && price.active
                     );
+                    
+                    if (priceToUse) {
+                        console.log(`[End Trial] Prix compatible trouvé: ${priceToUse.id} (${priceToUse.currency})`);
+                    } else {
+                        console.warn(`[End Trial] Aucun prix actif en ${subscriptionCurrency} trouvé pour le produit enfant. Prix disponibles:`, 
+                            allChildPrices.data.map(p => `${p.id} (${p.currency}, active: ${p.active})`).join(', '));
+                    }
                 } catch (err) {
                     console.warn(`[End Trial] Erreur lors de la récupération des prix du produit enfant:`, err.message);
                 }
             }
             
-            // Si pas de prix trouvé par Product ID, vérifier le prix par défaut
+            // Si pas de prix trouvé, vérifier le prix par défaut (fallback)
             if (!priceToUse && childPriceId) {
                 try {
                     const defaultPrice = await stripe.prices.retrieve(childPriceId);
                     if (defaultPrice.currency.toLowerCase() === subscriptionCurrency.toLowerCase()) {
                         priceToUse = defaultPrice;
+                        console.log(`[End Trial] Utilisation du prix enfant par défaut compatible: ${childPriceId}`);
                     } else {
-                        console.warn(`[End Trial] Le prix par défaut (${childPriceId}) est en ${defaultPrice.currency}, mais l'abonnement est en ${subscriptionCurrency}`);
+                        console.warn(`[End Trial] Le prix enfant par défaut (${childPriceId}) est en ${defaultPrice.currency}, mais l'abonnement est en ${subscriptionCurrency}`);
                     }
                 } catch (err) {
-                    console.warn(`[End Trial] Erreur lors de la récupération du prix par défaut:`, err.message);
+                    console.warn(`[End Trial] Erreur lors de la récupération du prix enfant par défaut:`, err.message);
                 }
             }
             
@@ -1522,7 +1572,7 @@ app.post('/api/subscriptions/end-trial-and-bill', authenticateToken, async (req,
                     quantity: quantities.quantityChild
                 });
             } else {
-                throw new Error(`Impossible de trouver un prix compatible pour le produit enfant avec la devise ${subscriptionCurrency}. Veuillez configurer les prix Stripe correctement.`);
+                throw new Error(`Impossible de trouver un prix compatible pour le produit enfant avec la devise ${subscriptionCurrency}. Veuillez créer un prix EUR pour ce produit dans Stripe.`);
             }
         }
         
