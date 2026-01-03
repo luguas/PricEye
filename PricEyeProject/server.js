@@ -6631,28 +6631,29 @@ RAPPEL CRITIQUE : La réponse finale doit être UNIQUEMENT ce JSON, sans texte a
                     } catch (fallbackError) {
                         throw new Error("La réponse de l'IA est invalide ou ne contient pas de calendrier de prix.");
                     }
-                }
+                } else {
+                    // Adapter le nouveau format (calendar) en daily_prices pour le reste du backend
+                    const daily_prices = iaResult.calendar.map(day => {
+                        const rawPrice = day.final_suggested_price;
+                        let priceNum = Number(rawPrice);
+                        if (isNaN(priceNum)) {
+                            priceNum = property.base_price;
+                        }
+                        return {
+                            date: day.date,
+                            price: priceNum,
+                            reason: day.reasoning || "Tarification IA dynamique"
+                        };
+                    });
 
-            // Adapter le nouveau format (calendar) en daily_prices pour le reste du backend
-            const daily_prices = iaResult.calendar.map(day => {
-                const rawPrice = day.final_suggested_price;
-                let priceNum = Number(rawPrice);
-                if (isNaN(priceNum)) {
-                    priceNum = property.base_price;
+                    strategyResult = {
+                        strategy_summary: iaResult.audit_metadata?.market_sentiment || "Stratégie IA dynamique générée.",
+                        daily_prices,
+                        method: 'ai',
+                        raw: iaResult
+                    };
                 }
-                return {
-                    date: day.date,
-                    price: priceNum,
-                    reason: day.reasoning || "Tarification IA dynamique"
-                };
-            });
-
-            strategyResult = {
-                strategy_summary: iaResult.audit_metadata?.market_sentiment || "Stratégie IA dynamique générée.",
-                daily_prices,
-                method: 'ai',
-                raw: iaResult
-            };
+            }
         }
 
         // --- NOUVELLE ÉTAPE: Synchronisation PMS (AVANT la sauvegarde Firestore) ---
@@ -6666,27 +6667,26 @@ RAPPEL CRITIQUE : La réponse finale doit être UNIQUEMENT ce JSON, sans texte a
                 try {
                     // 1. Récupérer le client PMS
                     const client = await getUserPMSClient(req.user.uid);
-                
-                // 2. Appeler updateBatchRates
-                // Nous filtrons les prix verrouillés localement AVANT de les envoyer au PMS
-                // (Bien que la logique de verrouillage soit gérée côté Priceye)
-                const allOverrides = await db.getPriceOverrides(id);
-                const lockedDates = new Set();
-                allOverrides.forEach(override => {
-                    if (override.is_locked) {
-                        lockedDates.add(override.date);
-                    }
-                });
-                
-                const pricesToSync = strategyResult.daily_prices.filter(day => !lockedDates.has(day.date));
-                
+                    
+                    // 2. Appeler updateBatchRates
+                    // Nous filtrons les prix verrouillés localement AVANT de les envoyer au PMS
+                    // (Bien que la logique de verrouillage soit gérée côté Priceye)
+                    const allOverrides = await db.getPriceOverrides(id);
+                    const lockedDates = new Set();
+                    allOverrides.forEach(override => {
+                        if (override.is_locked) {
+                            lockedDates.add(override.date);
+                        }
+                    });
+                    
+                    const pricesToSync = strategyResult.daily_prices.filter(day => !lockedDates.has(day.date));
+                    
                     if (pricesToSync.length > 0) {
                         await client.updateBatchRates(property.pmsId, pricesToSync);
                         console.log(`[PMS Sync] Stratégie IA (${pricesToSync.length} jours) synchronisée avec ${property.pmsType} pour ${id}.`);
                     } else {
                         console.log(`[PMS Sync] Aucun prix à synchroniser (tous les jours générés étaient peut-être verrouillés).`);
                     }
-
                 } catch (pmsError) {
                     console.error(`[PMS Sync] ERREUR FATALE: Échec de la synchronisation de la stratégie IA pour ${id}. Raison: ${pmsError.message}`);
                     // 3. Bloquer la sauvegarde Firestore et renvoyer une erreur
