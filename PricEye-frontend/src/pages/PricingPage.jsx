@@ -4,7 +4,8 @@ import { jwtDecode } from 'jwt-decode';
 // Firebase n'est plus utilisé directement 
 import Bouton from '../components/Bouton.jsx';
 import AlertModal from '../components/AlertModal.jsx';
-import { useLanguage } from '../contexts/LanguageContext.jsx'; 
+import { useLanguage } from '../contexts/LanguageContext.jsx';
+import { handleQuotaError, checkQuotaStatus } from '../utils/quotaErrorHandler.js'; 
 
 // Firebase n'est plus utilisé directement côté client pour les price_overrides
 // On utilise maintenant l'API backend
@@ -29,7 +30,8 @@ function PricingPage({ token, userProfile }) {
   const [autoPricingLastRun, setAutoPricingLastRun] = useState(null);
   const [isLoadingAutoPricing, setIsLoadingAutoPricing] = useState(true);
   const [autoPricingSuccess, setAutoPricingSuccess] = useState('');
-  const [autoPricingError, setAutoPricingError] = useState(''); 
+  const [autoPricingError, setAutoPricingError] = useState('');
+  const [isQuotaReached, setIsQuotaReached] = useState(false); 
 
   const [selectionStart, setSelectionStart] = useState(null);
   const [selectionEnd, setSelectionEnd] = useState(null);
@@ -137,6 +139,31 @@ function PricingPage({ token, userProfile }) {
 
     loadAutoPricingStatus();
   }, [token, userProfile, t]);
+
+  // Vérifier le quota IA au chargement et après chaque appel
+  useEffect(() => {
+    const checkQuota = async () => {
+      if (!token) return;
+      const { isQuotaReached: quotaReached } = await checkQuotaStatus(token);
+      setIsQuotaReached(quotaReached);
+    };
+    checkQuota();
+    
+    // Écouter les événements de mise à jour du quota
+    const handleQuotaUpdate = () => {
+      checkQuota();
+    };
+    
+    window.addEventListener('aiCallCompleted', handleQuotaUpdate);
+    window.addEventListener('aiCallFailed', handleQuotaUpdate);
+    window.addEventListener('aiQuotaExceeded', handleQuotaUpdate);
+    
+    return () => {
+      window.removeEventListener('aiCallCompleted', handleQuotaUpdate);
+      window.removeEventListener('aiCallFailed', handleQuotaUpdate);
+      window.removeEventListener('aiQuotaExceeded', handleQuotaUpdate);
+    };
+  }, [token]);
 
   // Mettre à jour le fuseau horaire si le profil utilisateur change et que la génération automatique est activée
   useEffect(() => {
@@ -319,9 +346,22 @@ function PricingPage({ token, userProfile }) {
       }
       
       fetchCalendarData(); // Recharger le calendrier
+      // Déclencher un événement pour mettre à jour l'indicateur de quota
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('aiCallCompleted'));
+      }
       return { success: true, propertyCount: propertyIdsToUpdate.length, summary: strategy.strategy_summary };
     } catch (err) {
       console.error("Erreur lors de l'application de la stratégie:", err);
+      // Gérer les erreurs de quota IA
+      const isQuotaError = handleQuotaError(err, setError, setAlertModal, userProfile, null);
+      if (isQuotaError) {
+        setIsQuotaReached(true);
+      }
+      // Déclencher un événement pour mettre à jour l'indicateur de quota
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('aiCallFailed'));
+      }
       throw err;
     } finally {
       setIaLoading(false);
@@ -333,6 +373,23 @@ function PricingPage({ token, userProfile }) {
     // Réinitialiser les messages
     setAutoPricingSuccess('');
     setAutoPricingError('');
+
+    // Si on active la génération automatique, vérifier le quota
+    if (newEnabled) {
+      const { isQuotaReached: quotaReached } = await checkQuotaStatus(token);
+      if (quotaReached) {
+        setIsQuotaReached(true);
+        setAutoPricingError(t('pricing.autoPricing.quotaReached'));
+        handleQuotaError(
+          new Error('Quota IA atteint'),
+          null,
+          setAlertModal,
+          userProfile,
+          null
+        );
+        return; // Ne pas activer si le quota est atteint
+      }
+    }
 
     const newTimezone = autoPricingTimezone || userProfile?.timezone || 'Europe/Paris';
     
@@ -678,11 +735,31 @@ function PricingPage({ token, userProfile }) {
        return;
     }
 
+    // Vérifier le quota avant de générer la stratégie
+    const { isQuotaReached: quotaReached } = await checkQuotaStatus(token);
+    if (quotaReached) {
+      setIsQuotaReached(true);
+      handleQuotaError(
+        new Error('Quota IA atteint'),
+        setError,
+        setAlertModal,
+        userProfile,
+        null
+      );
+      return;
+    }
+
     try {
       const result = await applyPricingStrategy(propertyIdToAnalyze, groupToSync);
       setAlertModal({ isOpen: true, message: t('pricing.errors.strategySuccess', { count: result.propertyCount, summary: result.summary || '' }), title: t('pricing.modal.success') });
+      // Vérifier le quota après l'appel
+      const { isQuotaReached: quotaReachedAfter } = await checkQuotaStatus(token);
+      setIsQuotaReached(quotaReachedAfter);
     } catch (err) {
-      setError(t('pricing.errors.strategyError', { message: err.message }));
+      // handleQuotaError a déjà été appelé dans applyPricingStrategy si c'était une erreur de quota
+      if (!err.isQuotaExceeded) {
+        setError(t('pricing.errors.strategyError', { message: err.message }));
+      }
     }
   };
 
@@ -1509,8 +1586,8 @@ function PricingPage({ token, userProfile }) {
             
             {/* Toggle "Automatiser le pricing" */}
             <div 
-              className={`bg-global-stroke-highlight-2nd rounded-[10px] border border-solid border-global-content-highlight-2nd pt-2 pr-3 pb-2 pl-3 flex flex-row gap-3 items-center justify-center self-stretch shrink-0 h-[46px] relative transition-opacity ${iaLoading ? 'opacity-50 cursor-not-allowed' : isAutoGenerationEnabled ? 'opacity-100 cursor-pointer hover:opacity-90' : 'opacity-70 cursor-pointer hover:opacity-90'}`}
-              onClick={iaLoading ? undefined : () => handleToggleAutoGeneration(!isAutoGenerationEnabled)}
+              className={`bg-global-stroke-highlight-2nd rounded-[10px] border border-solid border-global-content-highlight-2nd pt-2 pr-3 pb-2 pl-3 flex flex-row gap-3 items-center justify-center self-stretch shrink-0 h-[46px] relative transition-opacity ${iaLoading || isQuotaReached ? 'opacity-50 cursor-not-allowed' : isAutoGenerationEnabled ? 'opacity-100 cursor-pointer hover:opacity-90' : 'opacity-70 cursor-pointer hover:opacity-90'}`}
+              onClick={iaLoading || isQuotaReached ? undefined : () => handleToggleAutoGeneration(!isAutoGenerationEnabled)}
             >
               <div className={`relative w-5 h-5 shrink-0`}>
                 {isAutoGenerationEnabled ? (

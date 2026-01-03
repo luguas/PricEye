@@ -224,6 +224,71 @@ function ReportPage({ token, userProfile }) {
       return `${(amount || 0).toFixed(0)}%`;
   };
 
+  // Fonction utilitaire pour calculer les graduations dynamiques
+  const calculateScaleConfig = (dataArray, defaultMax = null, defaultStepSize = null) => {
+    if (!dataArray || dataArray.length === 0) {
+      return { max: defaultMax || 100, stepSize: defaultStepSize || 25 };
+    }
+    
+    const validValues = dataArray.filter(v => typeof v === 'number' && !isNaN(v) && v >= 0);
+    if (validValues.length === 0) {
+      return { max: defaultMax || 100, stepSize: defaultStepSize || 25 };
+    }
+    
+    const maxValue = Math.max(...validValues);
+    if (maxValue <= 0) {
+      return { max: defaultMax || 100, stepSize: defaultStepSize || 25 };
+    }
+    
+    // Calculer un max arrondi vers le haut avec une marge de 10%
+    const roundedMax = Math.ceil(maxValue * 1.1);
+    
+    // Calculer un stepSize approprié pour avoir environ 4-6 graduations
+    let stepSize;
+    if (defaultStepSize) {
+      stepSize = defaultStepSize;
+    } else {
+      const range = roundedMax;
+      // Amélioration de la logique pour des graduations plus fines et cohérentes
+      if (range <= 10) {
+        stepSize = 2;
+      } else if (range <= 25) {
+        stepSize = 5;
+      } else if (range <= 50) {
+        stepSize = 10;
+      } else if (range <= 100) {
+        stepSize = 20;
+      } else if (range <= 200) {
+        stepSize = 50;
+      } else if (range <= 500) {
+        stepSize = 100;
+      } else if (range <= 1000) {
+        stepSize = 200;
+      } else if (range <= 2000) {
+        stepSize = 500;
+      } else if (range <= 5000) {
+        stepSize = 1000;
+      } else if (range <= 10000) {
+        stepSize = 2000;
+      } else if (range <= 20000) {
+        stepSize = 5000;
+      } else if (range <= 50000) {
+        stepSize = 10000;
+      } else {
+        // Pour les très grandes valeurs, calculer pour avoir environ 5 graduations
+        stepSize = Math.ceil(range / 5);
+        // Arrondir à une valeur "ronde"
+        const magnitude = Math.pow(10, Math.floor(Math.log10(stepSize)));
+        stepSize = Math.ceil(stepSize / magnitude) * magnitude;
+      }
+    }
+    
+    // Arrondir le max au stepSize supérieur
+    const adjustedMax = Math.ceil(roundedMax / stepSize) * stepSize;
+    
+    return { max: adjustedMax, stepSize };
+  };
+
   // Fonctions de transformation des données pour les nouveaux graphiques
   const transformToMonthlyRevparData = (revenueData, perfData, language = 'en') => {
     const prompts = getAIPrompts(language);
@@ -766,7 +831,12 @@ function ReportPage({ token, userProfile }) {
     let filtered = allProperties;
 
     if (propertyType) filtered = filtered.filter(p => p.property_type === propertyType);
-    if (channel) filtered = filtered.filter(p => p.channel === channel);
+    if (channel) {
+      filtered = filtered.filter(p => {
+        const propChannel = p.channel || '';
+        return propChannel === channel;
+      });
+    }
     if (status) filtered = filtered.filter(p => p.status === status);
     if (location) {
         const locLower = location.toLowerCase();
@@ -868,6 +938,7 @@ function ReportPage({ token, userProfile }) {
       // Graphique des Revenus (RÉEL)
       if (revenueChartRef.current && isValidData(chartData, ['labels', 'revenueData'])) {
         try {
+          const revenueScale = calculateScaleConfig(chartData.revenueData);
           const ctxRevenue = revenueChartRef.current.getContext('2d');
           revenueChartInstance.current = new Chart(ctxRevenue, { 
             type: 'line', 
@@ -885,10 +956,15 @@ function ReportPage({ token, userProfile }) {
             options: { 
               scales: { 
                 y: { 
-                  beginAtZero: true, 
+                  beginAtZero: true,
+                  max: revenueScale.max,
                   ticks: { 
                     color: '#9ca3af',
-                    maxTicksLimit: 5
+                    stepSize: revenueScale.stepSize,
+                    precision: 0,
+                    callback: function(value) {
+                      return value.toFixed(0);
+                    }
                   }
                 },
                 x: { 
@@ -909,6 +985,7 @@ function ReportPage({ token, userProfile }) {
       // NOUVEAU: Graphique Performance (RÉEL)
       if (marketChartRef.current && isValidData(performanceData, ['labels', 'bookingCounts', 'occupancyRates'])) {
         try {
+          const bookingScale = calculateScaleConfig(performanceData.bookingCounts);
           const ctxMarket = marketChartRef.current.getContext('2d');
           marketChartInstance.current = new Chart(ctxMarket, {
         type: 'bar', // Type principal en barres
@@ -953,14 +1030,18 @@ function ReportPage({ token, userProfile }) {
                 },
                 // Axe Y gauche (Barres - Nb Réservations)
                 y: { 
-                    beginAtZero: true, 
+                    beginAtZero: true,
+                    max: bookingScale.max,
                     position: 'left',
                     ticks: { 
                       color: '#94a3b8', 
                       font: { family: 'Inter-Regular, sans-serif', size: 12 },
-                      stepSize: 5,
-                      maxTicksLimit: 5,
-                      padding: 4
+                      stepSize: bookingScale.stepSize,
+                      precision: 0,
+                      padding: 4,
+                      callback: function(value) {
+                        return value.toFixed(0);
+                      }
                     },
                     grid: { 
                       color: 'rgba(148, 163, 184, 0.2)',
@@ -978,7 +1059,7 @@ function ReportPage({ token, userProfile }) {
                       color: '#94a3b8', 
                       font: { family: 'Inter-Regular, sans-serif', size: 12 },
                       stepSize: 25,
-                      maxTicksLimit: 5,
+                      precision: 0,
                       callback: (value) => `${value}`,
                       padding: 4
                     },
@@ -1004,6 +1085,9 @@ function ReportPage({ token, userProfile }) {
       // Graphique RevPAR, ADR & Occupation
       if (revparChartRef.current && isValidData(revparData, ['labels', 'adrData', 'revparData', 'occupancyData'])) {
         try {
+          // Calculer le max pour ADR et RevPAR (utiliser le max des deux)
+          const adrRevparData = [...(revparData.adrData || []), ...(revparData.revparData || [])];
+          const adrRevparScale = calculateScaleConfig(adrRevparData);
           const ctxRevpar = revparChartRef.current.getContext('2d');
           revparChartInstance.current = new Chart(ctxRevpar, {
         type: 'line',
@@ -1061,11 +1145,13 @@ function ReportPage({ token, userProfile }) {
             },
             y: {
               beginAtZero: true,
+              max: adrRevparScale.max,
               position: 'left',
               ticks: {
                 color: '#94a3b8',
                 font: { family: 'Inter-Regular, sans-serif', size: 12 },
-                maxTicksLimit: 5,
+                stepSize: adrRevparScale.stepSize,
+                precision: 0,
                 padding: 4,
                 callback: function(value) {
                   return value.toFixed(0);
@@ -1086,7 +1172,7 @@ function ReportPage({ token, userProfile }) {
                 color: '#94a3b8',
                 font: { family: 'Inter-Regular, sans-serif', size: 12 },
                 stepSize: 25,
-                maxTicksLimit: 5,
+                precision: 0,
                 padding: 4,
                 callback: function(value) {
                   return value.toFixed(0);
@@ -1114,7 +1200,48 @@ function ReportPage({ token, userProfile }) {
       // Graphique Gain IA & Score IA
       if (iaChartRef.current && isValidData(iaData, ['labels', 'gainIaData', 'scoreIaData'])) {
         try {
-      const ctxIa = iaChartRef.current.getContext('2d');
+          // Calculer l'échelle pour AI Gain
+          const gainScale = calculateScaleConfig(iaData.gainIaData);
+          let gainMax = gainScale.max;
+          let gainStepSize = gainScale.stepSize;
+          let gainMin = 0;
+          let gainBeginAtZero = true;
+          
+          // Calculer l'échelle pour AI Score (0-100)
+          let scoreMax = 100;
+          let scoreStepSize = 25;
+          let scoreMin = 0;
+          let scoreBeginAtZero = true;
+          
+          // Calculer le nombre de graduations pour chaque axe
+          const gainRange = gainMax - gainMin;
+          const gainNumTicks = Math.ceil(gainRange / gainStepSize) + 1;
+          
+          const scoreRange = scoreMax - scoreMin;
+          const scoreNumTicks = Math.ceil(scoreRange / scoreStepSize) + 1;
+          
+          // Forcer le même nombre de graduations sur les deux axes pour l'alignement
+          const targetNumTicks = Math.max(4, Math.min(6, Math.max(gainNumTicks, scoreNumTicks)));
+          
+          // Ajuster l'axe Y gauche (AI Gain) pour avoir exactement targetNumTicks graduations
+          if (gainNumTicks !== targetNumTicks) {
+            gainStepSize = gainRange / (targetNumTicks - 1);
+            // Arrondir à une valeur "ronde"
+            const magnitude = Math.pow(10, Math.floor(Math.log10(gainStepSize)));
+            gainStepSize = Math.ceil(gainStepSize / magnitude) * magnitude;
+            gainMax = gainMin + (targetNumTicks - 1) * gainStepSize;
+          }
+          
+          // Ajuster l'axe Y droit (AI Score) pour avoir exactement targetNumTicks graduations
+          if (scoreNumTicks !== targetNumTicks) {
+            scoreStepSize = scoreRange / (targetNumTicks - 1);
+            // Arrondir à une valeur "ronde"
+            const magnitude = Math.pow(10, Math.floor(Math.log10(scoreStepSize)));
+            scoreStepSize = Math.ceil(scoreStepSize / magnitude) * magnitude;
+            scoreMax = scoreMin + (targetNumTicks - 1) * scoreStepSize;
+          }
+          
+          const ctxIa = iaChartRef.current.getContext('2d');
       iaChartInstance.current = new Chart(ctxIa, {
         type: 'line',
         data: {
@@ -1158,15 +1285,18 @@ function ReportPage({ token, userProfile }) {
               border: { display: false }
             },
             y: {
-              beginAtZero: true,
+              beginAtZero: gainBeginAtZero,
+              min: gainMin,
+              max: gainMax,
               position: 'left',
               ticks: {
                 color: '#94a3b8',
                 font: { family: 'Inter-Regular, sans-serif', size: 12 },
-                maxTicksLimit: 5,
+                stepSize: gainStepSize,
+                precision: gainStepSize < 1 ? 1 : 0,
                 padding: 4,
                 callback: function(value) {
-                  return value.toFixed(0);
+                  return value.toFixed(gainStepSize < 1 ? 1 : 0);
                 }
               },
               grid: {
@@ -1177,17 +1307,18 @@ function ReportPage({ token, userProfile }) {
               border: { display: false }
             },
             y1: {
-              beginAtZero: true,
-              max: 100,
+              beginAtZero: scoreBeginAtZero,
+              min: scoreMin,
+              max: scoreMax,
               position: 'right',
               ticks: {
                 color: '#94a3b8',
                 font: { family: 'Inter-Regular, sans-serif', size: 12 },
-                stepSize: 25,
-                maxTicksLimit: 5,
+                stepSize: scoreStepSize,
+                precision: scoreStepSize < 1 ? 1 : 0,
                 padding: 4,
                 callback: function(value) {
-                  return value.toFixed(0);
+                  return value.toFixed(scoreStepSize < 1 ? 1 : 0);
                 }
               },
               grid: {
@@ -1212,6 +1343,8 @@ function ReportPage({ token, userProfile }) {
       // NOUVEAU: Graphique Tendance marché - Offre vs Demande
       if (marketTrendChartRef.current && isValidData(marketData, ['labels', 'demandeData', 'offreData'])) {
         try {
+          const marketTrendData = [...(marketData.demandeData || []), ...(marketData.offreData || [])];
+          const marketTrendScale = calculateScaleConfig(marketTrendData);
           const ctxMarketTrend = marketTrendChartRef.current.getContext('2d');
       marketTrendChartInstance.current = new Chart(ctxMarketTrend, {
         type: 'line',
@@ -1259,11 +1392,12 @@ function ReportPage({ token, userProfile }) {
             },
             y: {
               beginAtZero: true,
-              max: 600,
+              max: marketTrendScale.max,
               ticks: {
                 color: '#94a3b8',
                 font: { family: 'Inter-Regular, sans-serif', size: 12 },
-                stepSize: 150,
+                stepSize: marketTrendScale.stepSize,
+                precision: 0,
                 padding: 4,
                 callback: function(value) {
                   return value.toFixed(0);
@@ -1291,6 +1425,8 @@ function ReportPage({ token, userProfile }) {
       // Graphique ADR vs Marché
       if (adrVsMarketChartRef.current && isValidData(adrVsMarketData, ['labels', 'marketAdrData', 'yourAdrData'])) {
         try {
+          const adrVsMarketDataCombined = [...(adrVsMarketData.marketAdrData || []), ...(adrVsMarketData.yourAdrData || [])];
+          const adrVsMarketScale = calculateScaleConfig(adrVsMarketDataCombined);
           const ctxAdrVsMarket = adrVsMarketChartRef.current.getContext('2d');
           adrVsMarketChartInstance.current = new Chart(ctxAdrVsMarket, {
         type: 'bar',
@@ -1326,11 +1462,12 @@ function ReportPage({ token, userProfile }) {
             },
             y: {
               beginAtZero: true,
-              max: 220,
+              max: adrVsMarketScale.max,
               ticks: {
                 color: '#94a3b8',
                 font: { family: 'Inter-Regular, sans-serif', size: 12 },
-                stepSize: 55,
+                stepSize: adrVsMarketScale.stepSize,
+                precision: 0,
                 padding: 4,
                 callback: function(value) {
                   return value.toFixed(0);
@@ -1358,6 +1495,7 @@ function ReportPage({ token, userProfile }) {
       // Graphique Distribution prix concurrents
       if (priceDistributionChartRef.current && isValidData(priceDistributionData, ['labels', 'data'])) {
         try {
+          const priceDistributionScale = calculateScaleConfig(priceDistributionData.data);
           const ctxPriceDistribution = priceDistributionChartRef.current.getContext('2d');
           priceDistributionChartInstance.current = new Chart(ctxPriceDistribution, {
         type: 'bar',
@@ -1386,11 +1524,12 @@ function ReportPage({ token, userProfile }) {
             },
             y: {
               beginAtZero: true,
-              max: 24,
+              max: priceDistributionScale.max,
               ticks: {
                 color: '#94a3b8',
                 font: { family: 'Inter-Regular, sans-serif', size: 12 },
-                stepSize: 6,
+                stepSize: priceDistributionScale.stepSize,
+                precision: 0,
                 padding: 4,
                 callback: function(value) {
                   return value.toFixed(0);
@@ -1418,6 +1557,7 @@ function ReportPage({ token, userProfile }) {
       // Graphique Revenus futurs & Occupation prévue
       if (forecastRevenueChartRef.current && isValidData(forecastRevenueData, ['labels', 'revenueData', 'occupancyData'])) {
         try {
+          const forecastRevenueScale = calculateScaleConfig(forecastRevenueData.revenueData);
           const ctxForecastRevenue = forecastRevenueChartRef.current.getContext('2d');
           forecastRevenueChartInstance.current = new Chart(ctxForecastRevenue, {
         type: 'bar',
@@ -1462,12 +1602,13 @@ function ReportPage({ token, userProfile }) {
             },
             y: {
               beginAtZero: true,
-              max: 16000,
+              max: forecastRevenueScale.max,
               position: 'left',
               ticks: {
                 color: '#94a3b8',
                 font: { family: 'Inter-Regular, sans-serif', size: 12 },
-                stepSize: 4000,
+                stepSize: forecastRevenueScale.stepSize,
+                precision: 0,
                 padding: 4,
                 callback: function(value) {
                   return value.toFixed(0);
@@ -1515,6 +1656,79 @@ function ReportPage({ token, userProfile }) {
       // Graphique ADR, RevPAR & Occupation prévus
       if (forecastAdrChartRef.current && isValidData(forecastAdrData, ['labels', 'adrData', 'revparData', 'occupancyData'])) {
         try {
+          // Filtrer les valeurs invalides
+          const adrValues = (forecastAdrData.adrData || []).filter(v => typeof v === 'number' && !isNaN(v) && v >= 0);
+          const revparValues = (forecastAdrData.revparData || []).filter(v => typeof v === 'number' && !isNaN(v) && v >= 0);
+          const occupancyValues = (forecastAdrData.occupancyData || []).filter(v => typeof v === 'number' && !isNaN(v) && v >= 0);
+          
+          // Calculer les max et min pour détecter les grandes différences
+          const maxAdr = adrValues.length > 0 ? Math.max(...adrValues) : 0;
+          const maxRevpar = revparValues.length > 0 ? Math.max(...revparValues) : 0;
+          const minRevpar = revparValues.length > 0 ? Math.min(...revparValues) : 0;
+          
+          // Calculer l'échelle pour ADR et RevPAR
+          const combinedScale = calculateScaleConfig([...adrValues, ...revparValues]);
+          let yAxisMax = combinedScale.max;
+          let yAxisStepSize = combinedScale.stepSize;
+          let yAxisBeginAtZero = true;
+          let yAxisMin = 0;
+          
+          // Calculer l'échelle pour Occupancy de manière adaptative
+          const maxOccupancy = occupancyValues.length > 0 ? Math.max(...occupancyValues) : 100;
+          const minOccupancy = occupancyValues.length > 0 ? Math.min(...occupancyValues) : 0;
+          const occupancyRange = maxOccupancy - minOccupancy;
+          
+          let occupancyMax = 100;
+          let occupancyStepSize = 25;
+          let occupancyBeginAtZero = true;
+          let occupancyMin = 0;
+          
+          if (maxOccupancy < 10 && occupancyRange > 0) {
+            // Échelle adaptée pour les petites valeurs
+            occupancyMax = Math.ceil(maxOccupancy * 1.2);
+            occupancyMin = Math.max(0, Math.floor(minOccupancy * 0.9));
+            
+            const range = occupancyMax - occupancyMin;
+            if (range <= 5) {
+              occupancyStepSize = 1;
+            } else if (range <= 10) {
+              occupancyStepSize = 2;
+            } else {
+              occupancyStepSize = Math.ceil(range / 5);
+            }
+            
+            occupancyMax = Math.ceil(occupancyMax / occupancyStepSize) * occupancyStepSize;
+            occupancyBeginAtZero = false;
+          }
+          
+          // Calculer le nombre de graduations pour chaque axe
+          const yAxisRange = yAxisMax - yAxisMin;
+          const yAxisNumTicks = Math.ceil(yAxisRange / yAxisStepSize) + 1;
+          
+          const occupancyRange2 = occupancyMax - occupancyMin;
+          const occupancyNumTicks = Math.ceil(occupancyRange2 / occupancyStepSize) + 1;
+          
+          // Forcer le même nombre de graduations sur les deux axes pour l'alignement
+          const targetNumTicks = Math.max(4, Math.min(6, Math.max(yAxisNumTicks, occupancyNumTicks)));
+          
+          // Ajuster l'axe Y gauche pour avoir exactement targetNumTicks graduations
+          if (yAxisNumTicks !== targetNumTicks) {
+            yAxisStepSize = yAxisRange / (targetNumTicks - 1);
+            // Arrondir à une valeur "ronde"
+            const magnitude = Math.pow(10, Math.floor(Math.log10(yAxisStepSize)));
+            yAxisStepSize = Math.ceil(yAxisStepSize / magnitude) * magnitude;
+            yAxisMax = yAxisMin + (targetNumTicks - 1) * yAxisStepSize;
+          }
+          
+          // Ajuster l'axe Y droit pour avoir exactement targetNumTicks graduations
+          if (occupancyNumTicks !== targetNumTicks) {
+            occupancyStepSize = occupancyRange2 / (targetNumTicks - 1);
+            // Arrondir à une valeur "ronde"
+            const magnitude = Math.pow(10, Math.floor(Math.log10(occupancyStepSize)));
+            occupancyStepSize = Math.ceil(occupancyStepSize / magnitude) * magnitude;
+            occupancyMax = occupancyMin + (targetNumTicks - 1) * occupancyStepSize;
+          }
+          
           const ctxForecastAdr = forecastAdrChartRef.current.getContext('2d');
           forecastAdrChartInstance.current = new Chart(ctxForecastAdr, {
         type: 'line',
@@ -1531,7 +1745,7 @@ function ReportPage({ token, userProfile }) {
               pointRadius: 4,
               pointBackgroundColor: '#8b5cf6',
               pointBorderColor: '#8b5cf6',
-              yAxisID: 'y',
+              yAxisID: 'y', // Axe Y gauche pour ADR
             },
             {
               label: 'RevPAR (€)',
@@ -1543,7 +1757,7 @@ function ReportPage({ token, userProfile }) {
               pointRadius: 4,
               pointBackgroundColor: '#06b6d4',
               pointBorderColor: '#06b6d4',
-              yAxisID: 'y',
+              yAxisID: 'y', // Même axe que ADR mais avec échelle adaptée
             },
             {
               label: 'Occupation (%)',
@@ -1555,7 +1769,7 @@ function ReportPage({ token, userProfile }) {
               pointRadius: 4,
               pointBackgroundColor: '#10b981',
               pointBorderColor: '#10b981',
-              yAxisID: 'y1',
+              yAxisID: 'y1', // Axe Y droit pour Occupancy
             }
           ]
         },
@@ -1571,16 +1785,18 @@ function ReportPage({ token, userProfile }) {
               border: { display: false }
             },
             y: {
-              beginAtZero: true,
-              max: 220,
+              beginAtZero: yAxisBeginAtZero,
+              min: yAxisMin,
+              max: yAxisMax,
               position: 'left',
               ticks: {
                 color: '#94a3b8',
                 font: { family: 'Inter-Regular, sans-serif', size: 12 },
-                stepSize: 55,
+                stepSize: yAxisStepSize,
+                precision: yAxisStepSize < 1 ? 1 : 0,
                 padding: 4,
                 callback: function(value) {
-                  return value.toFixed(0);
+                  return value.toFixed(yAxisStepSize < 1 ? 1 : 0);
                 }
               },
               grid: {
@@ -1591,16 +1807,18 @@ function ReportPage({ token, userProfile }) {
               border: { display: false }
             },
             y1: {
-              beginAtZero: true,
-              max: 100,
+              beginAtZero: occupancyBeginAtZero,
+              min: occupancyMin,
+              max: occupancyMax,
               position: 'right',
               ticks: {
                 color: '#94a3b8',
                 font: { family: 'Inter-Regular, sans-serif', size: 12 },
-                stepSize: 25,
+                stepSize: occupancyStepSize,
+                precision: occupancyStepSize < 1 ? 1 : 0,
                 padding: 4,
                 callback: function(value) {
-                  return value.toFixed(0);
+                  return value.toFixed(occupancyStepSize < 1 ? 1 : 0);
                 }
               },
               grid: {
@@ -1625,6 +1843,12 @@ function ReportPage({ token, userProfile }) {
       // Graphique Scénarios de prévision
       if (forecastScenariosChartRef.current && isValidData(forecastScenariosData, ['labels', 'baselineData', 'optimisticData', 'pessimisticData'])) {
         try {
+          const forecastScenariosDataCombined = [
+            ...(forecastScenariosData.baselineData || []),
+            ...(forecastScenariosData.optimisticData || []),
+            ...(forecastScenariosData.pessimisticData || [])
+          ];
+          const forecastScenariosScale = calculateScaleConfig(forecastScenariosDataCombined);
           const ctxForecastScenarios = forecastScenariosChartRef.current.getContext('2d');
           forecastScenariosChartInstance.current = new Chart(ctxForecastScenarios, {
         type: 'line',
@@ -1685,11 +1909,12 @@ function ReportPage({ token, userProfile }) {
             },
             y: {
               beginAtZero: true,
-              max: 18000,
+              max: forecastScenariosScale.max,
               ticks: {
                 color: '#94a3b8',
                 font: { family: 'Inter-Regular, sans-serif', size: 12 },
-                stepSize: 4500,
+                stepSize: forecastScenariosScale.stepSize,
+                precision: 0,
                 padding: 4,
                 callback: function(value) {
                   return value.toFixed(0);
@@ -1769,6 +1994,8 @@ function ReportPage({ token, userProfile }) {
       // Graphique Revenu total vs Objectif
       if (revenueVsTargetChartRef.current && isValidData(revenueVsTargetData, ['labels', 'targetData', 'revenueData'])) {
         try {
+          const revenueVsTargetDataCombined = [...(revenueVsTargetData.targetData || []), ...(revenueVsTargetData.revenueData || [])];
+          const revenueVsTargetScale = calculateScaleConfig(revenueVsTargetDataCombined);
           const ctxRevenueVsTarget = revenueVsTargetChartRef.current.getContext('2d');
           revenueVsTargetChartInstance.current = new Chart(ctxRevenueVsTarget, {
         type: 'line',
@@ -1815,11 +2042,12 @@ function ReportPage({ token, userProfile }) {
             },
             y: {
               beginAtZero: true,
-              max: 60000,
+              max: revenueVsTargetScale.max,
               ticks: {
                 color: '#94a3b8',
                 font: { family: 'Inter-Regular, sans-serif', size: 12 },
-                stepSize: 15000,
+                stepSize: revenueVsTargetScale.stepSize,
+                precision: 0,
                 padding: 4,
                 callback: function(value) {
                   return value.toFixed(0);
@@ -1847,6 +2075,7 @@ function ReportPage({ token, userProfile }) {
       // Graphique ADR par canal (barres horizontales)
       if (adrByChannelChartRef.current && isValidData(adrByChannelData, ['labels', 'data'])) {
         try {
+          const adrByChannelScale = calculateScaleConfig(adrByChannelData.data);
           const ctxAdrByChannel = adrByChannelChartRef.current.getContext('2d');
           adrByChannelChartInstance.current = new Chart(ctxAdrByChannel, {
         type: 'bar',
@@ -1867,11 +2096,12 @@ function ReportPage({ token, userProfile }) {
           scales: {
             x: {
               beginAtZero: true,
-              max: 220,
+              max: adrByChannelScale.max,
               ticks: {
                 color: '#94a3b8',
                 font: { family: 'Inter-Regular, sans-serif', size: 12 },
-                stepSize: 55,
+                stepSize: adrByChannelScale.stepSize,
+                precision: 0,
                 padding: 8,
                 callback: function(value) {
                   return value.toFixed(0);
@@ -1908,6 +2138,11 @@ function ReportPage({ token, userProfile }) {
       // Graphique Marge brute (%)
       if (grossMarginChartRef.current && isValidData(grossMarginData, ['labels', 'data'])) {
         try {
+          // Pour les pourcentages, on utilise un max de 100 si les données sont < 100, sinon on calcule dynamiquement
+          const maxMarginValue = Math.max(...(grossMarginData.data || []).filter(v => typeof v === 'number' && !isNaN(v)));
+          const grossMarginScale = maxMarginValue <= 100 
+            ? { max: 100, stepSize: 25 }
+            : calculateScaleConfig(grossMarginData.data);
           const ctxGrossMargin = grossMarginChartRef.current.getContext('2d');
           grossMarginChartInstance.current = new Chart(ctxGrossMargin, {
         type: 'line',
@@ -1942,11 +2177,12 @@ function ReportPage({ token, userProfile }) {
             },
             y: {
               beginAtZero: true,
-              max: 80,
+              max: grossMarginScale.max,
               ticks: {
                 color: '#94a3b8',
                 font: { family: 'Inter-Regular, sans-serif', size: 12 },
-                stepSize: 20,
+                stepSize: grossMarginScale.stepSize,
+                precision: 0,
                 padding: 4,
                 callback: function(value) {
                   return value.toFixed(0);
@@ -2210,9 +2446,12 @@ function ReportPage({ token, userProfile }) {
                 <Filtre
                   text="Channel"
                   text2={channel ? channel : 'All channels'}
-                  value={channel}
-                  onChange={(e) => setChannel(e.target.value)}
-                  options={[...new Set(allProperties.map(p => p.channel))].filter(Boolean)}
+                  value={channel || ''}
+                  onChange={(e) => {
+                    const newValue = e.target.value;
+                    setChannel(newValue === '' ? '' : newValue);
+                  }}
+                  options={[...new Set(allProperties.map(p => p.channel).filter(Boolean))]}
                   className="!shrink-0"
                 />
                 <Filtre

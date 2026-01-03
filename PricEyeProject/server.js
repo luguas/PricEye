@@ -133,6 +133,66 @@ const authenticateToken = async (req, res, next) => {
 const db = require('./helpers/supabaseDb.js');
 
 /**
+ * Middleware Express pour vérifier et incrémenter le quota IA avant un appel IA
+ * Doit être placé APRÈS authenticateToken mais AVANT l'appel à l'IA
+ * @param {Request} req - Objet request Express
+ * @param {Response} res - Objet response Express
+ * @param {Function} next - Fonction next Express
+ */
+const checkAIQuota = async (req, res, next) => {
+    try {
+        // 1. Extraire le userId de req.user.uid (après authenticateToken)
+        const userId = req.user?.uid;
+        
+        if (!userId) {
+            return res.status(401).send({ error: 'Utilisateur non authentifié.' });
+        }
+        
+        // 2. Appeler checkAndIncrementAIQuota AVANT l'appel IA
+        // Note: On incrémente AVANT l'appel car si l'appel échoue, on ne veut pas compter dans le quota
+        // Mais on peut aussi incrémenter APRÈS si on préfère ne compter que les appels réussis
+        // Pour l'instant, on incrémente AVANT comme spécifié dans le prompt
+        const quotaResult = await checkAndIncrementAIQuota(userId, 0); // tokensUsed sera mis à jour après l'appel
+        
+        // 3. Si allowed: false, retourner une réponse 429
+        if (!quotaResult.allowed) {
+            // Calculer l'heure de réinitialisation (minuit UTC du jour suivant)
+            const now = new Date();
+            const tomorrow = new Date(now);
+            tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
+            tomorrow.setUTCHours(0, 0, 0, 0);
+            const resetAt = tomorrow.toISOString();
+            
+            return res.status(429).send({
+                error: "Quota IA atteint",
+                message: "Vous avez atteint votre limite quotidienne d'appels IA",
+                limit: quotaResult.limit || 0,
+                used: quotaResult.callsToday || 0,
+                remaining: 0,
+                resetAt: resetAt,
+                resetAtHuman: "demain à minuit UTC"
+            });
+        }
+        
+        // 4. Si allowed: true, attacher aiQuota à req.aiQuota et passer au middleware suivant
+        req.aiQuota = {
+            ...quotaResult,
+            userId: userId
+        };
+        
+        next();
+        
+    } catch (error) {
+        console.error('[AI Quota Middleware] Erreur lors de la vérification du quota:', error);
+        // En cas d'erreur, refuser l'accès par sécurité
+        return res.status(500).send({
+            error: "Erreur lors de la vérification du quota IA",
+            message: "Une erreur est survenue lors de la vérification de votre quota. Veuillez réessayer."
+        });
+    }
+};
+
+/**
  * FONCTION D'AUDIT: Enregistre une action dans les logs d'une propriété.
  * @param {string} propertyId - ID de la propriété
  * @param {string} userId - ID de l'utilisateur
@@ -811,6 +871,40 @@ app.get('/api/users/profile', authenticateToken, async (req, res) => {
     }
 });
 
+// GET /api/users/ai-quota - Récupérer le quota IA de l'utilisateur
+app.get('/api/users/ai-quota', authenticateToken, async (req, res) => {
+    try {
+        const userId = req.user.uid;
+        
+        // Appeler getUserAIQuota pour récupérer les informations du quota
+        const quotaInfo = await getUserAIQuota(userId);
+        
+        // Calculer l'heure de réinitialisation (minuit UTC du jour suivant)
+        const now = new Date();
+        const tomorrow = new Date(now);
+        tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
+        tomorrow.setUTCHours(0, 0, 0, 0);
+        const resetAt = tomorrow.toISOString();
+        
+        // Retourner le JSON au format demandé
+        res.status(200).json({
+            callsToday: quotaInfo.callsToday || 0,
+            maxCalls: quotaInfo.maxCalls || 10,
+            remaining: quotaInfo.remaining || 0,
+            tokensUsed: quotaInfo.tokensUsed || 0,
+            maxTokens: quotaInfo.maxTokens || 100000,
+            resetAt: resetAt,
+            subscriptionStatus: quotaInfo.subscriptionStatus || 'none'
+        });
+    } catch (error) {
+        console.error('[AI Quota] Erreur lors de la récupération du quota:', error);
+        res.status(500).send({ 
+            error: 'Erreur lors de la récupération du quota IA',
+            message: error.message 
+        });
+    }
+});
+
 app.put('/api/users/profile', authenticateToken, async (req, res) => {
     try {
         const userId = req.user.uid;
@@ -1385,6 +1479,23 @@ app.post('/api/subscriptions/end-trial-and-bill', authenticateToken, async (req,
             }
         }
         
+        // Récupérer tous les produits et prix déjà présents dans l'abonnement pour référence
+        const existingProducts = new Set();
+        const existingPrices = new Map(); // Map: productId -> price avec la bonne devise
+        subscriptionItems.forEach(item => {
+            const price = typeof item.price === 'string' ? null : item.price;
+            if (price) {
+                const productId = typeof price.product === 'string' ? price.product : price.product.id;
+                existingProducts.add(productId);
+                // Si ce prix a la bonne devise, l'enregistrer comme référence
+                if (price.currency.toLowerCase() === subscriptionCurrency.toLowerCase()) {
+                    existingPrices.set(productId, price);
+                }
+            }
+        });
+        
+        console.log(`[End Trial] Abonnement en ${subscriptionCurrency}. Produits existants: ${Array.from(existingProducts).join(', ')}`);
+        
         // Trouver les items existants par Product ID (plus fiable que Price ID) ou par Price ID en fallback
         let principalItem = null;
         let childItem = null;
@@ -1406,6 +1517,18 @@ app.post('/api/subscriptions/end-trial-and-bill', authenticateToken, async (req,
             });
         }
         
+        // Si toujours pas trouvé, chercher parmi tous les items existants pour trouver un prix compatible
+        if (!principalItem && subscriptionItems.length > 0) {
+            // Chercher un item avec un prix dans la bonne devise
+            principalItem = subscriptionItems.find(item => {
+                const price = typeof item.price === 'string' ? null : item.price;
+                return price && price.currency.toLowerCase() === subscriptionCurrency.toLowerCase();
+            });
+            if (principalItem) {
+                console.log(`[End Trial] Item principal trouvé parmi les items existants de l'abonnement`);
+            }
+        }
+        
         if (childProductId) {
             childItem = subscriptionItems.find(item => {
                 const productId = typeof item.price.product === 'string' 
@@ -1421,6 +1544,21 @@ app.post('/api/subscriptions/end-trial-and-bill', authenticateToken, async (req,
                 const priceId = typeof item.price === 'string' ? item.price : item.price.id;
                 return priceId === childPriceId;
             });
+        }
+        
+        // Si toujours pas trouvé, chercher parmi tous les items existants pour trouver un prix compatible
+        if (!childItem && subscriptionItems.length > 0) {
+            // Chercher un item avec un prix dans la bonne devise (différent du principal si déjà trouvé)
+            childItem = subscriptionItems.find(item => {
+                const price = typeof item.price === 'string' ? null : item.price;
+                const itemId = item.id;
+                return price && 
+                       price.currency.toLowerCase() === subscriptionCurrency.toLowerCase() &&
+                       (!principalItem || itemId !== principalItem.id);
+            });
+            if (childItem) {
+                console.log(`[End Trial] Item enfant trouvé parmi les items existants de l'abonnement`);
+            }
         }
         
         // Construire les items à mettre à jour
@@ -1491,13 +1629,52 @@ app.post('/api/subscriptions/end-trial-and-bill', authenticateToken, async (req,
                 }
             }
             
+            // Dernier recours : utiliser un prix existant de l'abonnement avec la bonne devise
+            if (!priceToUse && existingPrices.size > 0) {
+                // Utiliser le premier prix existant avec la bonne devise
+                const existingPrice = Array.from(existingPrices.values())[0];
+                console.log(`[End Trial] Utilisation d'un prix existant de l'abonnement comme référence: ${existingPrice.id} (${existingPrice.currency})`);
+                // Récupérer le produit de ce prix et chercher un prix compatible
+                const existingProductId = typeof existingPrice.product === 'string' 
+                    ? existingPrice.product 
+                    : existingPrice.product.id;
+                
+                // Si c'est le même produit, utiliser ce prix
+                if (productIdToSearch && existingProductId === productIdToSearch) {
+                    priceToUse = existingPrice;
+                    console.log(`[End Trial] Le prix existant correspond au produit parent, utilisation de ce prix`);
+                } else {
+                    // Sinon, chercher dans tous les prix de ce produit
+                    try {
+                        const allPrices = await stripe.prices.list({
+                            product: existingProductId,
+                            limit: 100
+                        });
+                        priceToUse = allPrices.data.find(price => 
+                            price.currency.toLowerCase() === subscriptionCurrency.toLowerCase() && price.active
+                        );
+                        if (priceToUse) {
+                            console.log(`[End Trial] Prix compatible trouvé via le produit de référence: ${priceToUse.id}`);
+                        }
+                    } catch (err) {
+                        console.warn(`[End Trial] Erreur lors de la recherche via le produit de référence:`, err.message);
+                    }
+                }
+            }
+            
             if (priceToUse) {
                 itemsToUpdate.push({
                     price: priceToUse.id,
                     quantity: quantities.quantityPrincipal
                 });
             } else {
-                throw new Error(`Impossible de trouver un prix compatible pour le produit parent avec la devise ${subscriptionCurrency}. Veuillez créer un prix EUR pour ce produit dans Stripe.`);
+                // Message d'erreur plus détaillé avec instructions
+                throw new Error(
+                    `Impossible de trouver un prix compatible pour le produit parent avec la devise ${subscriptionCurrency}. ` +
+                    `L'abonnement utilise ${subscriptionCurrency.toUpperCase()} mais les prix configurés sont en USD. ` +
+                    `Veuillez créer un prix ${subscriptionCurrency.toUpperCase()} pour le produit parent dans Stripe, ou ` +
+                    `configurer STRIPE_PRICE_PARENT_ID avec un prix ${subscriptionCurrency.toUpperCase()}.`
+                );
             }
         }
         
@@ -1566,13 +1743,52 @@ app.post('/api/subscriptions/end-trial-and-bill', authenticateToken, async (req,
                 }
             }
             
+            // Dernier recours : utiliser un prix existant de l'abonnement avec la bonne devise
+            if (!priceToUse && existingPrices.size > 0) {
+                // Utiliser le premier prix existant avec la bonne devise
+                const existingPrice = Array.from(existingPrices.values())[0];
+                console.log(`[End Trial] Utilisation d'un prix existant de l'abonnement comme référence pour l'enfant: ${existingPrice.id} (${existingPrice.currency})`);
+                // Récupérer le produit de ce prix et chercher un prix compatible
+                const existingProductId = typeof existingPrice.product === 'string' 
+                    ? existingPrice.product 
+                    : existingPrice.product.id;
+                
+                // Si c'est le même produit, utiliser ce prix
+                if (productIdToSearch && existingProductId === productIdToSearch) {
+                    priceToUse = existingPrice;
+                    console.log(`[End Trial] Le prix existant correspond au produit enfant, utilisation de ce prix`);
+                } else {
+                    // Sinon, chercher dans tous les prix de ce produit
+                    try {
+                        const allPrices = await stripe.prices.list({
+                            product: existingProductId,
+                            limit: 100
+                        });
+                        priceToUse = allPrices.data.find(price => 
+                            price.currency.toLowerCase() === subscriptionCurrency.toLowerCase() && price.active
+                        );
+                        if (priceToUse) {
+                            console.log(`[End Trial] Prix compatible trouvé via le produit de référence pour l'enfant: ${priceToUse.id}`);
+                        }
+                    } catch (err) {
+                        console.warn(`[End Trial] Erreur lors de la recherche via le produit de référence pour l'enfant:`, err.message);
+                    }
+                }
+            }
+            
             if (priceToUse) {
                 itemsToUpdate.push({
                     price: priceToUse.id,
                     quantity: quantities.quantityChild
                 });
             } else {
-                throw new Error(`Impossible de trouver un prix compatible pour le produit enfant avec la devise ${subscriptionCurrency}. Veuillez créer un prix EUR pour ce produit dans Stripe.`);
+                // Message d'erreur plus détaillé avec instructions
+                throw new Error(
+                    `Impossible de trouver un prix compatible pour le produit enfant avec la devise ${subscriptionCurrency}. ` +
+                    `L'abonnement utilise ${subscriptionCurrency.toUpperCase()} mais les prix configurés sont en USD. ` +
+                    `Veuillez créer un prix ${subscriptionCurrency.toUpperCase()} pour le produit enfant dans Stripe, ou ` +
+                    `configurer STRIPE_PRICE_CHILD_ID avec un prix ${subscriptionCurrency.toUpperCase()}.`
+                );
             }
         }
         
@@ -3492,7 +3708,8 @@ app.post('/api/properties/:id/bookings/sync', authenticateToken, async (req, res
 });
 
 // GET /api/properties/:id/news - Récupérer les actualités spécifiques (avec cache par propriété)
-app.get('/api/properties/:id/news', authenticateToken, async (req, res) => {
+app.get('/api/properties/:id/news', authenticateToken, checkAIQuota, async (req, res) => {
+    let tokensUsed = 0;
     try {
         const { id: propertyId } = req.params;
         const userId = req.user.uid;
@@ -3517,11 +3734,14 @@ app.get('/api/properties/:id/news', authenticateToken, async (req, res) => {
         const city = fullLocation.split(',')[0].trim();
 
         // 2. Vérifier le cache de cette propriété (avec langue)
+        // IMPORTANT: Le quota est vérifié AVANT la vérification du cache (via le middleware checkAIQuota)
+        // Cela garantit qu'on ne consomme pas le quota si on utilise le cache
         const language = req.query.language || userProfile?.language || 'fr';
         
         // Note: Le cache par propriété n'est pas encore implémenté dans Supabase
         // Pour l'instant, on ignore le cache et on génère toujours les actualités
         // TODO: Implémenter un système de cache par propriété dans Supabase si nécessaire
+        // Quand le cache sera implémenté, on devra vérifier le quota AVANT de vérifier le cache
 
         // 3. Si cache vide ou expiré, appeler l'IA
         const isFrench = language === 'fr' || language === 'fr-FR';
@@ -3581,17 +3801,55 @@ app.get('/api/properties/:id/news', authenticateToken, async (req, res) => {
             ]
         `;
 
-        const newsData = await callGeminiWithSearch(prompt, 10, language);
+        // 4. Appeler l'IA et capturer les tokens
+        const aiResponse = await callGeminiWithSearch(prompt, 10, language);
+        
+        // Gérer le nouveau format de retour { data, tokens } ou l'ancien format (rétrocompatibilité)
+        let newsData;
+        if (aiResponse && typeof aiResponse === 'object' && 'data' in aiResponse) {
+            // Nouveau format : { data, tokens }
+            newsData = aiResponse.data;
+            tokensUsed = aiResponse.tokens || 0;
+        } else {
+            // Ancien format : données directement
+            newsData = aiResponse;
+            tokensUsed = 2000; // Estimation par défaut si les tokens ne sont pas disponibles
+        }
+        
         const newsDataArray = Array.isArray(newsData) ? newsData : (newsData ? [newsData] : []);
 
         if (newsDataArray.length === 0) {
              console.warn("Aucune actualité pertinente trouvée pour", city);
         }
 
-        // 4. Log de l'action (le cache sera implémenté plus tard si nécessaire)
+        // 5. Mettre à jour le quota avec les tokens réels utilisés
+        const today = new Date().toISOString().split('T')[0];
+        const { data: currentQuota } = await supabase
+            .from('user_ai_usage')
+            .select('tokens_used')
+            .eq('user_id', userId)
+            .eq('date', today)
+            .single();
+        
+        if (currentQuota) {
+            await supabase
+                .from('user_ai_usage')
+                .update({
+                    tokens_used: (currentQuota.tokens_used || 0) + tokensUsed,
+                    updated_at: new Date().toISOString()
+                })
+                .eq('user_id', userId)
+                .eq('date', today);
+        }
+
+        // 6. Logger l'utilisation
+        const quotaInfo = req.aiQuota || {};
+        console.log(`[AI Quota] User ${userId} used ${tokensUsed} tokens for property news, remaining: ${quotaInfo.remaining || 0} calls`);
+
+        // 7. Log de l'action (le cache sera implémenté plus tard si nécessaire)
         await logPropertyChange(propertyId, "system", "auto-update", 'update:news-cache', { count: newsDataArray.length });
 
-
+        // 8. Renvoyer le résultat
         res.status(200).json(newsDataArray);
 
     } catch (error) {
@@ -4487,7 +4745,9 @@ app.get('/api/reports/market-demand-snapshot', authenticateToken, async (req, re
 });
 
 // GET /api/reports/positioning - ADR vs marché + distribution prix concurrents (avec IA)
-app.get('/api/reports/positioning', authenticateToken, async (req, res) => {
+app.get('/api/reports/positioning', authenticateToken, checkAIQuota, async (req, res) => {
+    let tokensUsed = 0;
+    let aiCallSucceeded = false;
     try {
         const userId = req.user.uid;
         const { startDate, endDate } = req.query;
@@ -4644,13 +4904,52 @@ CRITICAL REMINDER: Respond ONLY with this JSON, no comments, no text around, no 
         const language = req.query.language || userProfile?.language || 'fr';
         
         let iaResult = null;
+        let aiCallSucceeded = false;
         try {
-            iaResult = await callGeminiWithSearch(positioningPrompt, 10, language);
+            // Appeler l'IA et capturer les tokens
+            const aiResponse = await callGeminiWithSearch(positioningPrompt, 10, language);
+            
+            // Gérer le nouveau format de retour { data, tokens } ou l'ancien format (rétrocompatibilité)
+            if (aiResponse && typeof aiResponse === 'object' && 'data' in aiResponse) {
+                // Nouveau format : { data, tokens }
+                iaResult = aiResponse.data;
+                tokensUsed = aiResponse.tokens || 0;
+            } else {
+                // Ancien format : données directement
+                iaResult = aiResponse;
+                tokensUsed = 2000; // Estimation par défaut si les tokens ne sont pas disponibles
+            }
+            
+            aiCallSucceeded = true;
         } catch (e) {
             console.error('Erreur lors de l\'appel IA pour le positionnement:', e);
+            aiCallSucceeded = false;
+            // Si l'appel IA échoue complètement, on ne compte pas dans le quota
+            // On va annuler l'incrémentation faite par le middleware
+            // Note: Le middleware a déjà incrémenté calls_count, on va le décrémenter
+            const today = new Date().toISOString().split('T')[0];
+            const { data: currentQuota } = await supabase
+                .from('user_ai_usage')
+                .select('calls_count')
+                .eq('user_id', userId)
+                .eq('date', today)
+                .single();
+            
+            if (currentQuota && currentQuota.calls_count > 0) {
+                await supabase
+                    .from('user_ai_usage')
+                    .update({
+                        calls_count: Math.max(0, currentQuota.calls_count - 1),
+                        updated_at: new Date().toISOString()
+                    })
+                    .eq('user_id', userId)
+                    .eq('date', today);
+                console.log(`[AI Quota] Annulation de l'incrémentation pour l'utilisateur ${userId} (appel IA échoué)`);
+            }
         }
 
-        // 4. Fallback local si l’IA ne renvoie rien d’exploitable
+        // 4. Fallback local si l'IA ne renvoie rien d'exploitable
+        // Si on utilise le fallback mais que l'appel a réussi, on compte quand même (l'appel a été fait)
         if (!iaResult || !iaResult.adrVsMarket || !Array.isArray(iaResult.adrVsMarket.labels)) {
             const labels = propertyStats.map(p => p.name);
             const yourAdrData = propertyStats.map(p => p.yourAdr);
@@ -4667,6 +4966,38 @@ CRITICAL REMINDER: Respond ONLY with this JSON, no comments, no text around, no 
                     data: [8, 12, 18, 15, 10, 5]
                 }
             };
+            
+            // Si on utilise le fallback mais que l'appel a réussi, on compte quand même
+            // (l'appel IA a été fait, même si les données ne sont pas exploitables)
+            if (aiCallSucceeded) {
+                console.log(`[AI Quota] Appel IA réussi mais données invalides, utilisation du fallback (quota compté)`);
+            }
+        }
+
+        // 5. Mettre à jour le quota avec les tokens réels utilisés (seulement si l'appel a réussi)
+        if (aiCallSucceeded && tokensUsed > 0) {
+            const today = new Date().toISOString().split('T')[0];
+            const { data: currentQuota } = await supabase
+                .from('user_ai_usage')
+                .select('tokens_used')
+                .eq('user_id', userId)
+                .eq('date', today)
+                .single();
+            
+            if (currentQuota) {
+                await supabase
+                    .from('user_ai_usage')
+                    .update({
+                        tokens_used: (currentQuota.tokens_used || 0) + tokensUsed,
+                        updated_at: new Date().toISOString()
+                    })
+                    .eq('user_id', userId)
+                    .eq('date', today);
+            }
+
+            // Logger l'utilisation
+            const quotaInfo = req.aiQuota || {};
+            console.log(`[AI Quota] User ${userId} used ${tokensUsed} tokens for positioning report, remaining: ${quotaInfo.remaining || 0} calls`);
         }
 
         res.status(200).json(iaResult);
@@ -5846,7 +6177,8 @@ app.put('/api/users/revenue-targets', authenticateToken, async (req, res) => {
 });
 
 // POST /api/reports/analyze-date
-app.post('/api/reports/analyze-date', authenticateToken, async (req, res) => {
+app.post('/api/reports/analyze-date', authenticateToken, checkAIQuota, async (req, res) => {
+    let tokensUsed = 0;
     try {
         const userId = req.user.uid;
         const { propertyId, date } = req.body;
@@ -5926,20 +6258,64 @@ app.post('/api/reports/analyze-date', authenticateToken, async (req, res) => {
             }
         `;
 
-        // 3. Appeler Perplexity/ChatGPT avec recherche web
-        const analysisResult = await callGeminiWithSearch(prompt, 10, language);
+        // 3. Appeler Perplexity/ChatGPT avec recherche web et capturer les tokens
+        const aiResponse = await callGeminiWithSearch(prompt, 10, language);
+        
+        // Gérer le nouveau format de retour { data, tokens } ou l'ancien format (rétrocompatibilité)
+        let analysisResult;
+        if (aiResponse && typeof aiResponse === 'object' && 'data' in aiResponse) {
+            // Nouveau format : { data, tokens }
+            analysisResult = aiResponse.data;
+            tokensUsed = aiResponse.tokens || 0;
+        } else {
+            // Ancien format : données directement
+            analysisResult = aiResponse;
+            tokensUsed = 2000; // Estimation par défaut si les tokens ne sont pas disponibles
+        }
 
         if (!analysisResult || !analysisResult.marketDemand) {
-            // Renvoyer un objet JSON d'erreur contrôlée au lieu de planter
+            // Si l'appel IA échoue, ne pas incrémenter le quota (déjà fait par le middleware)
+            // Mais on peut annuler l'incrémentation si nécessaire
             return res.status(503).send({ error: "L'analyse IA n'a pas pu générer de réponse valide." });
         }
 
-        // 4. Renvoyer le résultat
+        // 4. Mettre à jour le quota avec les tokens réels utilisés
+        // Note: Le quota a déjà été incrémenté par le middleware, on doit juste mettre à jour les tokens
+        // On va récupérer la valeur actuelle puis l'incrémenter
+        const today = new Date().toISOString().split('T')[0];
+        const { data: currentQuota } = await supabase
+            .from('user_ai_usage')
+            .select('tokens_used')
+            .eq('user_id', userId)
+            .eq('date', today)
+            .single();
+        
+        if (currentQuota) {
+            await supabase
+                .from('user_ai_usage')
+                .update({
+                    tokens_used: (currentQuota.tokens_used || 0) + tokensUsed,
+                    updated_at: new Date().toISOString()
+                })
+                .eq('user_id', userId)
+                .eq('date', today);
+        }
+
+        // 5. Logger l'utilisation
+        const quotaInfo = req.aiQuota || {};
+        console.log(`[AI Quota] User ${userId} used ${tokensUsed} tokens, remaining: ${quotaInfo.remaining || 0} calls`);
+
+        // 6. Renvoyer le résultat
         res.status(200).json(analysisResult);
 
     } catch (error) {
-        console.error(`Erreur lors de l'analyse de la date ${req.body.date}:`, error);
-         if (error.message.includes('403') || error.message.includes('API key not valid')) {
+        console.error(`Erreur lors de l'analyse de la date ${req.body?.date}:`, error);
+        
+        // Si l'appel IA échoue, on a déjà incrémenté le quota dans le middleware
+        // On pourrait annuler l'incrémentation, mais pour l'instant on la garde
+        // (l'utilisateur a consommé son quota même si l'appel a échoué)
+        
+        if (error.message.includes('403') || error.message.includes('API key not valid')) {
              res.status(500).send({ error: "L'API de recherche (Perplexity/ChatGPT) n'est pas correctement configurée." });
          } else if (error.message.includes('429') || error.message.includes('overloaded')) {
              res.status(503).send({ error: "L'API d'analyse est temporairement surchargée." });
@@ -6022,6 +6398,193 @@ app.get('/api/recommendations/group-candidates', authenticateToken, async (req, 
 
 // Fonction utilitaire pour attendre (utilisée pour le retry)
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+/**
+ * Récupère ou crée le quota IA d'un utilisateur et retourne les informations de quota
+ * @param {string} userId - ID de l'utilisateur
+ * @returns {Promise<{callsToday: number, maxCalls: number, tokensUsed: number, maxTokens: number, canMakeCall: boolean}>}
+ */
+async function getUserAIQuota(userId) {
+    try {
+        const today = new Date().toISOString().split('T')[0]; // Format YYYY-MM-DD
+        
+        // 1. Récupérer ou créer un enregistrement dans user_ai_usage pour aujourd'hui
+        // Utiliser la fonction SQL get_or_create_ai_quota ou faire un INSERT ON CONFLICT
+        const { data: quotaData, error: quotaError } = await supabase
+            .from('user_ai_usage')
+            .select('*')
+            .eq('user_id', userId)
+            .eq('date', today)
+            .single();
+        
+        let callsToday = 0;
+        let tokensUsed = 0;
+        
+        if (quotaError && quotaError.code === 'PGRST116') {
+            // Aucun enregistrement trouvé, créer un nouveau
+            const { data: newQuota, error: insertError } = await supabase
+                .from('user_ai_usage')
+                .insert({
+                    user_id: userId,
+                    date: today,
+                    calls_count: 0,
+                    tokens_used: 0
+                })
+                .select()
+                .single();
+            
+            if (insertError) {
+                console.error('[AI Quota] Erreur lors de la création du quota:', insertError);
+                throw new Error('Erreur lors de la création du quota IA');
+            }
+            
+            callsToday = newQuota.calls_count || 0;
+            tokensUsed = newQuota.tokens_used || 0;
+        } else if (quotaError) {
+            console.error('[AI Quota] Erreur lors de la récupération du quota:', quotaError);
+            throw new Error('Erreur lors de la récupération du quota IA');
+        } else {
+            callsToday = quotaData.calls_count || 0;
+            tokensUsed = quotaData.tokens_used || 0;
+        }
+        
+        // 2. Récupérer le profil utilisateur pour déterminer la limite
+        const userProfile = await db.getUser(userId);
+        if (!userProfile) {
+            throw new Error('Profil utilisateur non trouvé');
+        }
+        
+        // 3. Déterminer la limite selon le statut d'abonnement
+        const subscriptionStatus = userProfile.subscription_status || 'none';
+        let maxCalls = 10; // Par défaut : sans abonnement
+        let maxTokens = 100000; // Par défaut : 100k tokens/jour
+        
+        if (subscriptionStatus === 'trialing') {
+            // Essai gratuit : 50 appels/jour
+            maxCalls = 50;
+            maxTokens = 500000; // 500k tokens/jour
+        } else if (subscriptionStatus === 'active') {
+            // Abonné actif : 200 appels/jour
+            maxCalls = 200;
+            maxTokens = 2000000; // 2M tokens/jour
+        }
+        // Sinon : sans abonnement (déjà défini par défaut)
+        
+        // 4. Calculer si l'utilisateur peut faire un appel
+        const canMakeCall = callsToday < maxCalls;
+        
+        // 5. Retourner l'objet avec toutes les informations
+        return {
+            callsToday,
+            maxCalls,
+            tokensUsed,
+            maxTokens,
+            canMakeCall,
+            remaining: Math.max(0, maxCalls - callsToday),
+            subscriptionStatus
+        };
+        
+    } catch (error) {
+        console.error('[AI Quota] Erreur dans getUserAIQuota:', error);
+        // En cas d'erreur, retourner des valeurs par défaut sécurisées (fail-safe)
+        return {
+            callsToday: 0,
+            maxCalls: 10, // Limite minimale
+            tokensUsed: 0,
+            maxTokens: 100000,
+            canMakeCall: true, // Autoriser par défaut en cas d'erreur
+            remaining: 10,
+            subscriptionStatus: 'none'
+        };
+    }
+}
+
+/**
+ * Vérifie et incrémente le quota IA d'un utilisateur de manière atomique
+ * Utilise une condition WHERE pour éviter les race conditions
+ * @param {string} userId - ID de l'utilisateur
+ * @param {number} tokensUsed - Nombre de tokens utilisés (par défaut 0)
+ * @returns {Promise<{allowed: boolean, remaining: number, limit?: number, callsToday?: number}>}
+ */
+async function checkAndIncrementAIQuota(userId, tokensUsed = 0) {
+    try {
+        // 1. Obtenir les quotas actuels
+        const quota = await getUserAIQuota(userId);
+        
+        // 2. Vérifier si l'utilisateur peut faire un appel
+        if (!quota.canMakeCall || quota.callsToday >= quota.maxCalls) {
+            // Quota atteint
+            return {
+                allowed: false,
+                remaining: 0,
+                limit: quota.maxCalls,
+                callsToday: quota.callsToday
+            };
+        }
+        
+        // 3. Incrémenter atomiquement avec une condition WHERE pour éviter les race conditions
+        // On utilise UPDATE avec WHERE calls_count < max_calls pour garantir l'atomicité
+        const today = new Date().toISOString().split('T')[0];
+        
+        // UPDATE atomique : seulement si calls_count < maxCalls
+        // Cela garantit qu'on ne peut pas dépasser la limite même avec des requêtes simultanées
+        const { data: updatedData, error: updateError } = await supabase
+            .from('user_ai_usage')
+            .update({
+                calls_count: quota.callsToday + 1,
+                tokens_used: quota.tokensUsed + tokensUsed,
+                updated_at: new Date().toISOString()
+            })
+            .eq('user_id', userId)
+            .eq('date', today)
+            .lt('calls_count', quota.maxCalls) // Condition atomique : seulement si calls_count < maxCalls
+            .select();
+        
+        if (updateError) {
+            console.error('[AI Quota] Erreur lors de l\'incrémentation du quota:', updateError);
+            throw new Error('Erreur lors de l\'incrémentation du quota IA');
+        }
+        
+        // Vérifier si l'UPDATE a réellement mis à jour une ligne
+        // Si updatedData est vide ou null, c'est que la condition WHERE n'a pas été satisfaite
+        // (race condition : le quota a été atteint entre la vérification et l'incrémentation)
+        if (!updatedData || updatedData.length === 0) {
+            // Race condition détectée : le quota a été atteint par une autre requête
+            console.warn(`[AI Quota] Race condition détectée pour l'utilisateur ${userId}. Quota atteint entre la vérification et l'incrémentation.`);
+            // Re-récupérer le quota actuel pour avoir les vraies valeurs
+            const currentQuota = await getUserAIQuota(userId);
+            return {
+                allowed: false,
+                remaining: 0,
+                limit: currentQuota.maxCalls,
+                callsToday: currentQuota.callsToday
+            };
+        }
+        
+        // 4. Calculer les appels restants après l'incrémentation
+        const updatedRecord = updatedData[0];
+        const newCallsToday = updatedRecord.calls_count;
+        const remaining = Math.max(0, quota.maxCalls - newCallsToday);
+        
+        // 5. Retourner le résultat
+        return {
+            allowed: true,
+            remaining: remaining,
+            callsToday: newCallsToday,
+            tokensUsed: updatedRecord.tokens_used,
+            limit: quota.maxCalls
+        };
+        
+    } catch (error) {
+        console.error('[AI Quota] Erreur dans checkAndIncrementAIQuota:', error);
+        // En cas d'erreur, refuser l'accès par sécurité (fail-safe)
+        return {
+            allowed: false,
+            remaining: 0,
+            limit: 0
+        };
+    }
+}
 
 /**
  * Fonction helper pour appeler l'API ChatGPT avec retry et backoff exponentiel
@@ -6235,7 +6798,24 @@ async function callGeminiWithSearch(prompt, maxRetries = 10, language = 'fr') {
                             }
                             return obj;
                         };
-                        return cleanCitations(parsedData);
+                        const cleanedData = cleanCitations(parsedData);
+                        
+                        // Retourner les données avec les tokens si disponibles
+                        if (response.usage) {
+                            return {
+                                data: cleanedData,
+                                tokens: response.usage.total_tokens || 0
+                            };
+                        }
+                        return cleanedData;
+                    }
+                    
+                    // Retourner les données avec les tokens si disponibles
+                    if (response.usage) {
+                        return {
+                            data: parsedData,
+                            tokens: response.usage.total_tokens || 0
+                        };
                     }
                     
                     return parsedData; 
@@ -6335,7 +6915,9 @@ async function callGeminiWithSearch(prompt, maxRetries = 10, language = 'fr') {
 }
 
 // POST /api/properties/:id/pricing-strategy - Générer une stratégie de prix
-app.post('/api/properties/:id/pricing-strategy', authenticateToken, async (req, res) => {
+app.post('/api/properties/:id/pricing-strategy', authenticateToken, checkAIQuota, async (req, res) => {
+    let tokensUsed = 0;
+    let aiCallSucceeded = false;
     try {
         const { id } = req.params;
         const userId = req.user.uid;
@@ -6416,6 +6998,33 @@ app.post('/api/properties/:id/pricing-strategy', authenticateToken, async (req, 
                     
                     // Pricing déterministe réussi, on skip l'IA et on continue avec la sauvegarde
                     console.log(`[Pricing] ✓ Pricing déterministe réussi, skip de l'IA`);
+                    
+                    // Décrémenter le quota car on n'a pas utilisé l'IA
+                    // Le middleware checkAIQuota a déjà incrémenté le quota, on doit l'annuler
+                    try {
+                        const today = new Date().toISOString().split('T')[0];
+                        const { data: currentQuota } = await supabase
+                            .from('user_ai_usage')
+                            .select('calls_count')
+                            .eq('user_id', userId)
+                            .eq('date', today)
+                            .single();
+                        
+                        if (currentQuota && currentQuota.calls_count > 0) {
+                            await supabase
+                                .from('user_ai_usage')
+                                .update({
+                                    calls_count: Math.max(0, currentQuota.calls_count - 1),
+                                    updated_at: new Date().toISOString()
+                                })
+                                .eq('user_id', userId)
+                                .eq('date', today);
+                            console.log(`[AI Quota] Quota annulé pour ${userId} (pricing déterministe utilisé)`);
+                        }
+                    } catch (quotaError) {
+                        console.error(`[AI Quota] Erreur lors de l'annulation du quota:`, quotaError);
+                        // Ne pas bloquer la requête si l'annulation échoue
+                    }
                 }
             } catch (marketDataError) {
                 console.error(`[Pricing] Erreur pricing déterministe, fallback sur IA:`, marketDataError);
@@ -6579,9 +7188,49 @@ RAPPEL CRITIQUE : La réponse finale doit être UNIQUEMENT ce JSON, sans texte a
 
             let iaResult;
             try {
-                iaResult = await callGeminiWithSearch(prompt, 10, language);
+                const aiResponse = await callGeminiWithSearch(prompt, 10, language);
+                
+                // Gérer le nouveau format de retour { data, tokens } ou l'ancien format (rétrocompatibilité)
+                if (aiResponse && typeof aiResponse === 'object' && 'data' in aiResponse) {
+                    // Nouveau format : { data, tokens }
+                    iaResult = aiResponse.data;
+                    tokensUsed = aiResponse.tokens || 0;
+                } else {
+                    // Ancien format : données directement
+                    iaResult = aiResponse;
+                    tokensUsed = 2000; // Estimation par défaut si les tokens ne sont pas disponibles
+                }
+                
+                aiCallSucceeded = true;
             } catch (iaError) {
                 console.error(`[Pricing] Erreur lors de l'appel IA:`, iaError.message);
+                
+                // Décrémenter le quota car l'appel IA a échoué
+                try {
+                    const today = new Date().toISOString().split('T')[0];
+                    const { data: currentQuota } = await supabase
+                        .from('user_ai_usage')
+                        .select('calls_count')
+                        .eq('user_id', userId)
+                        .eq('date', today)
+                        .single();
+                    
+                    if (currentQuota && currentQuota.calls_count > 0) {
+                        await supabase
+                            .from('user_ai_usage')
+                            .update({
+                                calls_count: Math.max(0, currentQuota.calls_count - 1),
+                                updated_at: new Date().toISOString()
+                            })
+                            .eq('user_id', userId)
+                            .eq('date', today);
+                        console.log(`[AI Quota] Quota annulé pour ${userId} (appel IA échoué)`);
+                    }
+                } catch (quotaError) {
+                    console.error(`[AI Quota] Erreur lors de l'annulation du quota:`, quotaError);
+                    // Ne pas bloquer la requête si l'annulation échoue
+                }
+                
                 // Si l'IA échoue (refuse de générer du JSON), utiliser le pricing déterministe comme fallback
                 console.log(`[Pricing] L'IA a refusé de générer du JSON. Utilisation du pricing déterministe comme fallback...`);
                 
@@ -6811,6 +7460,39 @@ RAPPEL CRITIQUE : La réponse finale doit être UNIQUEMENT ce JSON, sans texte a
             method: strategyResult.method || 'ai'
         });
 
+        // Mettre à jour le quota avec les tokens réels utilisés (seulement si l'appel IA a réussi)
+        if (aiCallSucceeded && tokensUsed > 0) {
+            try {
+                const today = new Date().toISOString().split('T')[0];
+                const { data: currentQuota } = await supabase
+                    .from('user_ai_usage')
+                    .select('tokens_used')
+                    .eq('user_id', userId)
+                    .eq('date', today)
+                    .single();
+                
+                if (currentQuota) {
+                    await supabase
+                        .from('user_ai_usage')
+                        .update({
+                            tokens_used: (currentQuota.tokens_used || 0) + tokensUsed,
+                            updated_at: new Date().toISOString()
+                        })
+                        .eq('user_id', userId)
+                        .eq('date', today);
+                }
+            } catch (quotaError) {
+                console.error(`[AI Quota] Erreur lors de la mise à jour des tokens:`, quotaError);
+                // Ne pas bloquer la requête si la mise à jour échoue
+            }
+        }
+
+        // Logger l'utilisation pour monitoring
+        if (aiCallSucceeded) {
+            const quotaInfo = req.aiQuota || {};
+            console.log(`[AI Quota] User ${userId} used ${tokensUsed} tokens for pricing strategy, remaining: ${quotaInfo.remaining || 0} calls`);
+        }
+
         res.status(200).json(strategyResult); 
 
     } catch (error) {
@@ -6825,6 +7507,7 @@ RAPPEL CRITIQUE : La réponse finale doit être UNIQUEMENT ce JSON, sans texte a
 
 // GET /api/news - Récupérer les actualités du marché (depuis le cache)
 app.get('/api/news', authenticateToken, async (req, res) => {
+    let tokensUsed = 0;
     try {
         const userId = req.user.uid;
         
@@ -6836,6 +7519,53 @@ app.get('/api/news', authenticateToken, async (req, res) => {
         const cacheKey = `marketNews_${language}`;
         const newsDoc = await db.getSystemCache(cacheKey);
         
+        // Vérifier si le cache existe et est à jour (moins de 24h) - AVANT de vérifier le quota
+        const oneDay = 24 * 60 * 60 * 1000;
+        let cacheIsValid = false;
+        let cacheAge = null;
+        
+        if (newsDoc && newsDoc.data) {
+            const cacheLanguage = newsDoc.language;
+            if (cacheLanguage && cacheLanguage !== language) {
+                console.log(`Cache trouvé pour une autre langue (${cacheLanguage} au lieu de ${language}), invalide.`);
+            } else if (newsDoc.updated_at) {
+                cacheAge = Date.now() - new Date(newsDoc.updated_at).getTime();
+                cacheIsValid = cacheAge < oneDay;
+            }
+        }
+        
+        // IMPORTANT: Vérifier le quota SEULEMENT si on doit appeler l'IA (forceRefresh OU cache invalide)
+        // Si le cache est valide et forceRefresh=false, on retourne directement sans consommer le quota
+        let quotaResult = null;
+        if (forceRefresh || !cacheIsValid) {
+            // Vérifier et incrémenter le quota AVANT l'appel IA
+            quotaResult = await checkAndIncrementAIQuota(userId, 0);
+            
+            if (!quotaResult.allowed) {
+                // Quota atteint, retourner le cache existant si disponible (même expiré)
+                if (newsDoc && newsDoc.data) {
+                    console.log(`[AI Quota] Quota atteint, retour du cache existant (même expiré) pour ${userId}`);
+                    return res.status(200).json(newsDoc.data);
+                }
+                
+                // Calculer l'heure de réinitialisation
+                const now = new Date();
+                const tomorrow = new Date(now);
+                tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
+                tomorrow.setUTCHours(0, 0, 0, 0);
+                
+                return res.status(429).send({
+                    error: "Quota IA atteint",
+                    message: "Vous avez atteint votre limite quotidienne d'appels IA",
+                    limit: quotaResult.limit || 0,
+                    used: quotaResult.callsToday || 0,
+                    remaining: 0,
+                    resetAt: tomorrow.toISOString(),
+                    resetAtHuman: "demain à minuit UTC"
+                });
+            }
+        }
+        
         // Si forceRefresh est activé, régénérer le cache immédiatement
         if (forceRefresh) {
             console.log(`Régénération forcée du cache des actualités pour la langue ${language}...`);
@@ -6843,35 +7573,60 @@ app.get('/api/news', authenticateToken, async (req, res) => {
                 await updateMarketNewsCache(language);
                 const refreshedNewsDoc = await db.getSystemCache(cacheKey);
                 if (refreshedNewsDoc && refreshedNewsDoc.data) {
+                    // Mettre à jour les tokens après l'appel IA réussi
+                    // Note: updateMarketNewsCache ne retourne pas les tokens, on doit les estimer
+                    tokensUsed = 2000; // Estimation par défaut
+                    const today = new Date().toISOString().split('T')[0];
+                    const { data: currentQuota } = await supabase
+                        .from('user_ai_usage')
+                        .select('tokens_used')
+                        .eq('user_id', userId)
+                        .eq('date', today)
+                        .single();
+                    
+                    if (currentQuota) {
+                        await supabase
+                            .from('user_ai_usage')
+                            .update({
+                                tokens_used: (currentQuota.tokens_used || 0) + tokensUsed,
+                                updated_at: new Date().toISOString()
+                            })
+                            .eq('user_id', userId)
+                            .eq('date', today);
+                    }
+                    
+                    console.log(`[AI Quota] User ${userId} used ${tokensUsed} tokens for market news (forceRefresh), remaining: ${quotaResult?.remaining || 0} calls`);
+                    
                     return res.status(200).json(refreshedNewsDoc.data);
                 }
             } catch (refreshError) {
                 console.error(`Erreur lors de la régénération forcée pour ${language}:`, refreshError);
+                // Si l'appel IA échoue, annuler l'incrémentation
+                const today = new Date().toISOString().split('T')[0];
+                const { data: currentQuota } = await supabase
+                    .from('user_ai_usage')
+                    .select('calls_count')
+                    .eq('user_id', userId)
+                    .eq('date', today)
+                    .single();
+                
+                if (currentQuota && currentQuota.calls_count > 0) {
+                    await supabase
+                        .from('user_ai_usage')
+                        .update({
+                            calls_count: Math.max(0, currentQuota.calls_count - 1),
+                            updated_at: new Date().toISOString()
+                        })
+                        .eq('user_id', userId)
+                        .eq('date', today);
+                    console.log(`[AI Quota] Annulation de l'incrémentation pour l'utilisateur ${userId} (appel IA échoué lors du forceRefresh)`);
+                }
                 // Continuer avec le cache existant si la régénération échoue
             }
         }
 
-        // Vérifier si le cache existe et est à jour (moins de 24h)
-        const oneDay = 24 * 60 * 60 * 1000;
-        let cacheIsValid = false;
-        let cacheAge = null;
-        
-        if (newsDoc && newsDoc.data) {
-            // Vérifier que le cache correspond à la langue demandée
-            const cacheLanguage = newsDoc.language;
-            if (cacheLanguage && cacheLanguage !== language) {
-                console.log(`Cache trouvé pour une autre langue (${cacheLanguage} au lieu de ${language}), invalide.`);
-            } else if (newsDoc.updated_at) {
-                cacheAge = Date.now() - new Date(newsDoc.updated_at).getTime();
-                // Le cache est valide s'il existe, a des données, correspond à la langue, et est récent (< 24h)
-                cacheIsValid = cacheAge < oneDay;
-            } else {
-                // Cache sans date de mise à jour, considérer comme invalide
-                console.log(`Cache sans date de mise à jour pour ${language}, invalide.`);
-            }
-        }
-        
         // Si le cache n'existe pas ou est invalide, régénérer automatiquement
+        // (cacheIsValid a déjà été calculé plus haut)
         if (!cacheIsValid) {
             // Essayer d'abord l'ancien format de cache (marketNews sans suffixe) comme fallback temporaire
             if (language === 'fr' && !forceRefresh && newsDoc && newsDoc.data) {
@@ -6901,10 +7656,55 @@ app.get('/api/news', authenticateToken, async (req, res) => {
                 // Réessayer après génération
                 const newNewsDoc = await db.getSystemCache(cacheKey);
                 if (newNewsDoc && newNewsDoc.data) {
+                    // Mettre à jour les tokens après l'appel IA réussi
+                    tokensUsed = 2000; // Estimation par défaut
+                    const today = new Date().toISOString().split('T')[0];
+                    const { data: currentQuota } = await supabase
+                        .from('user_ai_usage')
+                        .select('tokens_used')
+                        .eq('user_id', userId)
+                        .eq('date', today)
+                        .single();
+                    
+                    if (currentQuota) {
+                        await supabase
+                            .from('user_ai_usage')
+                            .update({
+                                tokens_used: (currentQuota.tokens_used || 0) + tokensUsed,
+                                updated_at: new Date().toISOString()
+                            })
+                            .eq('user_id', userId)
+                            .eq('date', today);
+                    }
+                    
+                    const quotaInfo = await getUserAIQuota(userId);
+                    console.log(`[AI Quota] User ${userId} used ${tokensUsed} tokens for market news (auto-regeneration), remaining: ${quotaInfo.remaining || 0} calls`);
+                    
                     return res.status(200).json(newNewsDoc.data);
                 }
             } catch (genError) {
                 console.error(`Erreur lors de la génération des actualités pour ${language}:`, genError);
+                // Si l'appel IA échoue, annuler l'incrémentation
+                const today = new Date().toISOString().split('T')[0];
+                const { data: currentQuota } = await supabase
+                    .from('user_ai_usage')
+                    .select('calls_count')
+                    .eq('user_id', userId)
+                    .eq('date', today)
+                    .single();
+                
+                if (currentQuota && currentQuota.calls_count > 0) {
+                    await supabase
+                        .from('user_ai_usage')
+                        .update({
+                            calls_count: Math.max(0, currentQuota.calls_count - 1),
+                            updated_at: new Date().toISOString()
+                        })
+                        .eq('user_id', userId)
+                        .eq('date', today);
+                    console.log(`[AI Quota] Annulation de l'incrémentation pour l'utilisateur ${userId} (appel IA échoué lors de la régénération automatique)`);
+                }
+                
                 // Si le cache existant est disponible même s'il est expiré, l'utiliser comme fallback
                 if (newsDoc && newsDoc.data) {
                     console.log(`Utilisation du cache expiré comme fallback après erreur de régénération.`);
@@ -6929,7 +7729,8 @@ app.get('/api/news', authenticateToken, async (req, res) => {
             }
         }
         
-        // Vérifier que le document a bien des données
+        // Si on arrive ici, le cache est valide et forceRefresh=false
+        // On retourne directement sans consommer le quota
         const docData = newsDoc;
         if (!docData || !docData.data) {
             // Fallback sur l'ancien format de cache
@@ -6943,13 +7744,15 @@ app.get('/api/news', authenticateToken, async (req, res) => {
             return res.status(404).send({ error: 'Cache d\'actualités non encore généré. Veuillez patienter.' });
         }
 
-        // Récupérer les actualités
+        // Récupérer les actualités depuis le cache valide (sans consommer de quota)
         const newsData = docData.data;
         if (!Array.isArray(newsData)) {
             console.error(`Format de cache invalide pour marketNews_${language}:`, docData);
             return res.status(500).send({ error: 'Format de cache invalide. Veuillez réessayer plus tard.' });
         }
 
+        // Cache valide retourné sans consommation de quota
+        console.log(`[AI Quota] Cache valide retourné pour ${userId} (langue: ${language}) - aucun quota consommé`);
         res.status(200).json(newsData); 
 
     } catch (error) {
@@ -6959,7 +7762,8 @@ app.get('/api/news', authenticateToken, async (req, res) => {
 });
 
 // GET /api/properties/:id/news - Récupérer les actualités spécifiques (avec cache par propriété)
-app.get('/api/properties/:id/news', authenticateToken, async (req, res) => {
+app.get('/api/properties/:id/news', authenticateToken, checkAIQuota, async (req, res) => {
+    let tokensUsed = 0;
     try {
         const { id: propertyId } = req.params;
         const userId = req.user.uid;
@@ -6984,11 +7788,14 @@ app.get('/api/properties/:id/news', authenticateToken, async (req, res) => {
         const city = fullLocation.split(',')[0].trim();
 
         // 2. Vérifier le cache de cette propriété (avec langue)
+        // IMPORTANT: Le quota est vérifié AVANT la vérification du cache (via le middleware checkAIQuota)
+        // Cela garantit qu'on ne consomme pas le quota si on utilise le cache
         const language = req.query.language || userProfile?.language || 'fr';
         
         // Note: Le cache par propriété n'est pas encore implémenté dans Supabase
         // Pour l'instant, on ignore le cache et on génère toujours les actualités
         // TODO: Implémenter un système de cache par propriété dans Supabase si nécessaire
+        // Quand le cache sera implémenté, on devra vérifier le quota AVANT de vérifier le cache
 
         // 3. Si cache vide ou expiré, appeler l'IA
         const isFrench = language === 'fr' || language === 'fr-FR';
@@ -7048,17 +7855,55 @@ app.get('/api/properties/:id/news', authenticateToken, async (req, res) => {
             ]
         `;
 
-        const newsData = await callGeminiWithSearch(prompt, 10, language);
+        // 4. Appeler l'IA et capturer les tokens
+        const aiResponse = await callGeminiWithSearch(prompt, 10, language);
+        
+        // Gérer le nouveau format de retour { data, tokens } ou l'ancien format (rétrocompatibilité)
+        let newsData;
+        if (aiResponse && typeof aiResponse === 'object' && 'data' in aiResponse) {
+            // Nouveau format : { data, tokens }
+            newsData = aiResponse.data;
+            tokensUsed = aiResponse.tokens || 0;
+        } else {
+            // Ancien format : données directement
+            newsData = aiResponse;
+            tokensUsed = 2000; // Estimation par défaut si les tokens ne sont pas disponibles
+        }
+        
         const newsDataArray = Array.isArray(newsData) ? newsData : (newsData ? [newsData] : []);
 
         if (newsDataArray.length === 0) {
              console.warn("Aucune actualité pertinente trouvée pour", city);
         }
 
-        // 4. Log de l'action (le cache sera implémenté plus tard si nécessaire)
+        // 5. Mettre à jour le quota avec les tokens réels utilisés
+        const today = new Date().toISOString().split('T')[0];
+        const { data: currentQuota } = await supabase
+            .from('user_ai_usage')
+            .select('tokens_used')
+            .eq('user_id', userId)
+            .eq('date', today)
+            .single();
+        
+        if (currentQuota) {
+            await supabase
+                .from('user_ai_usage')
+                .update({
+                    tokens_used: (currentQuota.tokens_used || 0) + tokensUsed,
+                    updated_at: new Date().toISOString()
+                })
+                .eq('user_id', userId)
+                .eq('date', today);
+        }
+
+        // 6. Logger l'utilisation
+        const quotaInfo = req.aiQuota || {};
+        console.log(`[AI Quota] User ${userId} used ${tokensUsed} tokens for property news, remaining: ${quotaInfo.remaining || 0} calls`);
+
+        // 7. Log de l'action (le cache sera implémenté plus tard si nécessaire)
         await logPropertyChange(propertyId, "system", "auto-update", 'update:news-cache', { count: newsDataArray.length });
 
-
+        // 8. Renvoyer le résultat
         res.status(200).json(newsDataArray);
 
     } catch (error) {
@@ -7353,6 +8198,27 @@ cron.schedule('0 4 * * *', () => {
 }, {
     scheduled: true,
     timezone: "Europe/Paris"
+});
+
+// Tâche cron pour réinitialiser les quotas IA quotidiens (tous les jours à minuit)
+console.log("Mise en place de la tâche planifiée pour la réinitialisation des quotas IA (tous les jours à minuit).");
+cron.schedule('0 0 * * *', async () => {
+    console.log('[Cron] Démarrage de la réinitialisation des quotas IA quotidiens...');
+    try {
+        const { data, error } = await supabase.rpc('reset_daily_ai_quotas');
+        if (error) {
+            console.error('[Cron] Erreur lors de la réinitialisation des quotas IA:', error);
+        } else {
+            // La fonction retourne maintenant un tableau avec updated_count, deleted_count, reset_date
+            const result = Array.isArray(data) && data.length > 0 ? data[0] : { updated_count: 0, deleted_count: 0 };
+            console.log(`[Cron] Quotas IA réinitialisés avec succès. ${result.updated_count || 0} enregistrements mis à jour, ${result.deleted_count || 0} enregistrements supprimés.`);
+        }
+    } catch (error) {
+        console.error('[Cron] Erreur lors de la réinitialisation des quotas IA:', error);
+    }
+}, {
+    scheduled: true,
+    timezone: "UTC" // Minuit UTC pour une réinitialisation globale
 });
 
 

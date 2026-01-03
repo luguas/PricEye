@@ -93,6 +93,20 @@ input:disabled, select:disabled {
     @apply opacity-50 cursor-not-allowed;
 }
 
+/* Styles pour les options des selects (menu déroulant) */
+select option {
+    background-color: rgba(29, 41, 61, 1) !important;
+    color: #90a1b9 !important;
+    padding: 8px 12px;
+}
+
+select option:hover,
+select option:checked,
+select option:focus {
+    background-color: rgba(0, 184, 219, 0.2) !important;
+    color: #00d3f2 !important;
+}
+
 
 @layer components {
   input[type="checkbox"] {

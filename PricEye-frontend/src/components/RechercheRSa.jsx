@@ -2,6 +2,7 @@ import React from 'react';
 import IconsStateFiltre from './IconsStateFiltre.jsx';
 import IconsStateFlCheBas from './IconsStateFlCheBas.jsx';
 import BoutonStateSecondaire from './BoutonStateSecondaire.jsx';
+import { useLanguage } from '../contexts/LanguageContext.jsx';
 
 const SearchIcon = ({ className = '' }) => (
   <svg width="16" height="16" viewBox="0 0 16 16" fill="none" className={className}>
@@ -11,6 +12,8 @@ const SearchIcon = ({ className = '' }) => (
 );
 
 function RechercheRSa({ className = '', value = '', onChange, onFilterClick, ...props }) {
+  const { t } = useLanguage();
+  
   return (
     <div
       className={`bg-global-bg-box rounded-[14px] border border-solid border-global-stroke-box p-6 flex flex-col gap-6 items-start justify-start flex-1 relative ${className}`}
@@ -23,7 +26,7 @@ function RechercheRSa({ className = '', value = '', onChange, onFilterClick, ...
             type="text"
             value={value}
             onChange={(e) => onChange && onChange(e.target.value)}
-            placeholder="Rechercher par nom, ID ou propriété..."
+            placeholder={t('bookings.searchPlaceholder')}
             className="flex-1 bg-transparent border-none outline-none text-global-inactive font-h4-font-family text-h4-font-size leading-h4-line-height font-h4-font-weight placeholder:text-global-inactive"
           />
         </div>

@@ -179,6 +179,46 @@ export function updateUserProfile(profileData, token) {
   });
 }
 
+/**
+ * Récupère le quota IA de l'utilisateur
+ * @param {string} token - Jeton d'authentification Priceye
+ * @returns {Promise<{callsToday: number, maxCalls: number, remaining: number, tokensUsed: number, maxTokens: number, resetAt: string, subscriptionStatus: string}>}
+ * @throws {Error} Si le quota est atteint (429) ou en cas d'autre erreur
+ */
+export async function getAIQuota(token) {
+  try {
+    const quotaData = await apiRequest('/api/users/ai-quota', {
+      token,
+    });
+    return quotaData;
+  } catch (error) {
+    // Gérer spécifiquement l'erreur 429 (quota atteint)
+    // Vérifier soit le message d'erreur, soit les données d'erreur
+    const isQuotaExceeded = error.errorData && (
+      error.errorData.error === 'Quota IA atteint' ||
+      error.errorData.message?.includes('limite quotidienne') ||
+      error.message?.includes('429') ||
+      error.message?.includes('Quota IA atteint')
+    );
+    
+    if (isQuotaExceeded) {
+      // Attacher les informations du quota à l'erreur pour que le frontend puisse les afficher
+      error.quotaInfo = {
+        limit: error.errorData?.limit || 0,
+        used: error.errorData?.used || 0,
+        remaining: error.errorData?.remaining || 0,
+        resetAt: error.errorData?.resetAt,
+        resetAtHuman: error.errorData?.resetAtHuman || 'demain à minuit UTC'
+      };
+      // Marquer l'erreur comme étant une erreur de quota
+      error.isQuotaExceeded = true;
+      throw error;
+    }
+    // Propager les autres erreurs telles quelles
+    throw error;
+  }
+}
+
 // --- Fonctions d'intégration PMS ---
 
 /**

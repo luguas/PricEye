@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { getDateAnalysis } from '../services/api.js';
 import { useLanguage } from '../contexts/LanguageContext.jsx';
+import { handleQuotaError } from '../utils/quotaErrorHandler.js';
 
 /**
  * Affiche l'analyse du marché (événements, demande, prix) pour une date spécifique.
@@ -32,8 +33,21 @@ function DateAnalysis({ token, propertyId, date, currentPrice, userProfile }) {
       try {
         const data = await getDateAnalysis(propertyId, date, token);
         setAnalysis(data);
+        // Déclencher un événement pour mettre à jour l'indicateur de quota
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('aiCallCompleted'));
+        }
       } catch (err) {
-        setError(err.message);
+        // Gérer les erreurs de quota IA
+        const isQuotaError = handleQuotaError(err, setError, null, userProfile, null);
+        if (!isQuotaError) {
+          // Si ce n'est pas une erreur de quota, afficher le message d'erreur standard
+          setError(err.message || 'Erreur lors de l\'analyse de la date');
+        }
+        // Déclencher un événement pour mettre à jour l'indicateur de quota
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('aiCallFailed'));
+        }
       } finally {
         setIsLoading(false);
       }

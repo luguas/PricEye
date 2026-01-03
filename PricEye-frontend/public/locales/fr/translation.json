@@ -392,11 +392,20 @@
   },
   "newsFeed": {
     "title": "Actualités du Marché",
+    "insights": "Insights",
     "loading": "Chargement...",
     "noNews": "Aucune actualité pertinente trouvée.",
     "loadError": "Impossible de charger les actualités: {{message}}",
     "estimatedImpact": "Impact estimé",
-    "source": "Source"
+    "source": "Source",
+    "impactCategories": {
+      "high": "Élevé",
+      "medium": "Modéré",
+      "low": "Faible",
+      "élevé": "Élevé",
+      "modéré": "Modéré",
+      "faible": "Faible"
+    }
   },
   "groupRecommendations": {
     "similarProperties": "propriétés similaires détectées",
@@ -441,6 +450,7 @@
     "unknownProperty": "Propriété inconnue",
     "viewTable": "Tableau",
     "viewCalendar": "Calendrier",
+    "searchPlaceholder": "Rechercher par nom, ID ou propriété...",
     "calendar": {
       "today": "Aujourd'hui",
       "previousMonth": "Mois précédent",

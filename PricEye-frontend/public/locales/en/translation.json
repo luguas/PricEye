@@ -392,11 +392,20 @@
   },
   "newsFeed": {
     "title": "Market News",
+    "insights": "Insights",
     "loading": "Loading...",
     "noNews": "No relevant news found.",
     "loadError": "Unable to load news: {{message}}",
     "estimatedImpact": "Estimated impact",
-    "source": "Source"
+    "source": "Source",
+    "impactCategories": {
+      "high": "High",
+      "medium": "Medium",
+      "low": "Low",
+      "élevé": "High",
+      "modéré": "Medium",
+      "faible": "Low"
+    }
   },
   "groupRecommendations": {
     "similarProperties": "similar properties detected",
@@ -441,6 +450,7 @@
     "unknownProperty": "Unknown property",
     "viewTable": "Table",
     "viewCalendar": "Calendar",
+    "searchPlaceholder": "Search by name, ID or property...",
     "calendar": {
       "today": "Today",
       "previousMonth": "Previous month",

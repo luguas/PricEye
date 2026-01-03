@@ -1,6 +1,7 @@
 import React from 'react';
 import logoPriceye from '../../Images/logo priceye.png';
 import { useLanguage } from '../contexts/LanguageContext.jsx';
+import AIQuotaIndicator from './AIQuotaIndicator.jsx';
 
 const IconDashboard = ({ className = '' }) => (
   <svg
@@ -122,6 +123,7 @@ export const NavBar = ({
   onNavigate,
   isCollapsed = false,
   onToggleCollapse,
+  token = null,
   className = '',
   ...props
 }) => {
@@ -188,6 +190,10 @@ export const NavBar = ({
           })}
         </div>
 
+        {/* Indicateur de quota IA */}
+        {token && (
+          <AIQuotaIndicator token={token} isCollapsed={isCollapsed} />
+        )}
 
         {isCollapsed && (
           <button

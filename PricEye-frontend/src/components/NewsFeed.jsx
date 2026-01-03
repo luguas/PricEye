@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { getMarketNews } from '../services/api.js';
 import CustomScrollbar from './CustomScrollbar.jsx';
 import { useLanguage } from '../contexts/LanguageContext.jsx';
+import { handleQuotaError } from '../utils/quotaErrorHandler.js';
 
 function NewsFeed({ token, userProfile }) {
   const { t, language: contextLanguage } = useLanguage();
@@ -19,8 +20,21 @@ function NewsFeed({ token, userProfile }) {
       // Toujours passer la langue explicitement pour s'assurer que le backend l'utilise
       const data = await getMarketNews(token, language, forceRefresh);
       setNews(data || []);
+      // Déclencher un événement pour mettre à jour l'indicateur de quota
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('aiCallCompleted'));
+      }
     } catch (err) {
-      setError(t('newsFeed.loadError', { message: err.message }));
+      // Gérer les erreurs de quota IA
+      const isQuotaError = handleQuotaError(err, setError, null, userProfile, null);
+      if (!isQuotaError) {
+        // Si ce n'est pas une erreur de quota, afficher le message d'erreur standard
+        setError(t('newsFeed.loadError', { message: err.message }));
+      }
+      // Déclencher un événement pour mettre à jour l'indicateur de quota
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('aiCallFailed'));
+      }
     } finally {
       setIsLoading(false);
     }
@@ -44,6 +58,12 @@ function NewsFeed({ token, userProfile }) {
       default:
         return 'text-global-inactive';
     }
+  };
+
+  const translateImpactCategory = (category) => {
+    if (!category) return 'N/A';
+    const categoryKey = category.toLowerCase();
+    return t(`newsFeed.impactCategories.${categoryKey}`, category);
   };
 
   const getImpactSign = (percentage) => {
@@ -97,7 +117,7 @@ function NewsFeed({ token, userProfile }) {
             <p className="text-sm text-global-inactive">{item.summary}</p>
             <div className="flex items-center justify-between text-sm">
               <span className={`font-semibold ${getImpactColor(item.impact_category)}`}>
-                {t('newsFeed.estimatedImpact')}: {getImpactSign(item.impact_percentage)} ({item.impact_category || 'N/A'})
+                {t('newsFeed.estimatedImpact')}: {getImpactSign(item.impact_percentage)} ({translateImpactCategory(item.impact_category)})
               </span>
               {item.source && (
                 <span className="text-xs text-global-inactive">{t('newsFeed.source')}: {item.source}</span>
@@ -113,7 +133,7 @@ function NewsFeed({ token, userProfile }) {
     <div className="bg-global-bg-box border border-global-stroke-box rounded-[14px] p-6 shadow-[0_15px_60px_rgba(0,0,0,0.35)] flex flex-col h-full max-h-[800px]">
       <div className="flex items-center justify-between gap-4 shrink-0 mb-4">
         <div>
-          <p className="text-sm uppercase tracking-[0.3em] text-global-inactive">Insights</p>
+          <p className="text-sm uppercase tracking-[0.3em] text-global-inactive">{t('newsFeed.insights')}</p>
           <h2 className="text-2xl font-h2-font-family text-global-blanc">{t('newsFeed.title')}</h2>
         </div>
         <button

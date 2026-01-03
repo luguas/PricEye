@@ -759,12 +759,6 @@ function DashboardPage({ token, userProfile }) {
                   {t('dashboard.groupSuggestions')}
                 </h2>
               </div>
-              <button
-                onClick={fetchInitialData}
-                className="text-xs px-4 py-2 rounded-full border border-global-stroke-box text-global-inactive hover:text-global-blanc hover:border-global-content-highlight-2nd transition-colors"
-              >
-                {t('dashboard.refresh')}
-              </button>
             </div>
             <div>
                 <GroupRecommendations
