@@ -196,7 +196,17 @@ function PropertySyncModal({ token, pmsType, onClose }) {
     <>
       <TrialLimitModal
         isOpen={showTrialLimitModal}
-        onClose={() => setShowTrialLimitModal(false)}
+        onClose={() => {
+          setShowTrialLimitModal(false);
+          // Rafraîchir le compteur de propriétés après la fermeture de la modale
+          if (typeof window !== 'undefined') {
+            try {
+              window.dispatchEvent(new CustomEvent('refreshPropertyCount'));
+            } catch (error) {
+              console.error('Erreur lors de l\'envoi de l\'événement refreshPropertyCount:', error);
+            }
+          }
+        }}
         currentCount={trialLimitData.currentCount}
         maxAllowed={trialLimitData.maxAllowed}
         token={token}

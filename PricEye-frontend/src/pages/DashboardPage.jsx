@@ -235,6 +235,14 @@ function DashboardPage({ token, userProfile }) {
       setIsLoading(false);
       setIsKpiLoading(false);
       setIsRecLoading(false);
+      // Rafraîchir le compteur de propriétés dans la barre supérieure après chaque rafraîchissement
+      if (typeof window !== 'undefined') {
+        try {
+          window.dispatchEvent(new CustomEvent('refreshPropertyCount'));
+        } catch (error) {
+          console.error('Erreur lors de l\'envoi de l\'événement refreshPropertyCount:', error);
+        }
+      }
     }
   }, [token, isPropertyModalOpen, isStrategyModalOpen, isRulesModalOpen, userProfile]); 
 
@@ -328,7 +336,15 @@ function DashboardPage({ token, userProfile }) {
       onConfirm: async () => {
         try {
           await deleteProperty(propertyId, token);
-          fetchInitialData(); 
+          fetchInitialData();
+          // Rafraîchir le compteur de propriétés dans la barre supérieure
+          if (typeof window !== 'undefined') {
+            try {
+              window.dispatchEvent(new CustomEvent('refreshPropertyCount'));
+            } catch (error) {
+              console.error('Erreur lors de l\'envoi de l\'événement refreshPropertyCount:', error);
+            }
+          }
         } catch (err) {
           setError(err.message);
         }
@@ -340,7 +356,15 @@ function DashboardPage({ token, userProfile }) {
       setOpenMenuId(null);
       try {
           await updatePropertyStatus(propertyId, status, token);
-          fetchInitialData(); 
+          fetchInitialData();
+          // Rafraîchir le compteur de propriétés dans la barre supérieure
+          if (typeof window !== 'undefined') {
+            try {
+              window.dispatchEvent(new CustomEvent('refreshPropertyCount'));
+            } catch (error) {
+              console.error('Erreur lors de l\'envoi de l\'événement refreshPropertyCount:', error);
+            }
+          }
       } catch (err) {
           setError(err.message);
       }
@@ -358,6 +382,14 @@ function DashboardPage({ token, userProfile }) {
     await refreshGroupsAndProperties();
     // Forcer le rafraîchissement de GroupsManager
     setGroupsRefreshKey(prev => prev + 1);
+    // Rafraîchir le compteur de propriétés dans la barre supérieure
+    if (typeof window !== 'undefined') {
+      try {
+        window.dispatchEvent(new CustomEvent('refreshPropertyCount'));
+      } catch (error) {
+        console.error('Erreur lors de l\'envoi de l\'événement refreshPropertyCount:', error);
+      }
+    }
   };
   
   const handleModalClose = () => {

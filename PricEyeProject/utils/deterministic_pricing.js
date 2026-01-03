@@ -53,21 +53,75 @@ async function calculateDeterministicPrice({ property, date, marketFeatures = nu
         marketFeatures = data;
     }
     
-    // Si pas de données marché, utiliser prix de base
+    // Si pas de données marché, utiliser prix de base avec ajustements basiques
     if (!marketFeatures) {
+        // Même sans données marché, on peut appliquer des ajustements basiques
+        let adjustedPrice = basePrice;
+        const breakdown = {
+            base: basePrice,
+            market_adjustment: 0,
+            demand_adjustment: 0,
+            event_adjustment: 0,
+            weather_adjustment: 0,
+            strategy_adjustment: 0,
+            lead_time_adjustment: 0,
+            weekday_adjustment: 0
+        };
+        const reasoning = [];
+        
+        // Appliquer au moins les ajustements basiques (stratégie, lead time, week-end)
+        // Stratégie
+        if (strategy === 'Prudent') {
+            adjustedPrice *= 0.95;
+            breakdown.strategy_adjustment = adjustedPrice - basePrice;
+            reasoning.push('Stratégie prudente: -5%');
+        } else if (strategy === 'Agressif') {
+            adjustedPrice *= 1.05;
+            breakdown.strategy_adjustment = adjustedPrice - basePrice;
+            reasoning.push('Stratégie agressive: +5%');
+        }
+        
+        // Lead time
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const targetDate = new Date(date + 'T00:00:00Z');
+        const daysUntil = Math.round((targetDate - today) / (1000 * 60 * 60 * 24));
+        
+        if (daysUntil > 90) {
+            adjustedPrice *= 1.10;
+            breakdown.lead_time_adjustment = adjustedPrice - (basePrice + breakdown.strategy_adjustment);
+            reasoning.push(`Réservation à l'avance (${daysUntil}j): +10%`);
+        } else if (daysUntil < 7 && strategy === 'Prudent') {
+            adjustedPrice *= 0.85;
+            breakdown.lead_time_adjustment = adjustedPrice - (basePrice + breakdown.strategy_adjustment);
+            reasoning.push(`Dernière minute (${daysUntil}j): -15%`);
+        }
+        
+        // Week-end
+        const weekday = targetDate.getDay();
+        if ((weekday === 5 || weekday === 6) && property.weekend_markup_percent) {
+            const beforeWeekend = adjustedPrice;
+            adjustedPrice *= (1 + property.weekend_markup_percent / 100);
+            breakdown.weekday_adjustment = adjustedPrice - beforeWeekend;
+            reasoning.push(`Week-end: +${property.weekend_markup_percent}%`);
+        }
+        
+        // Appliquer contraintes
+        if (adjustedPrice < floorPrice) adjustedPrice = floorPrice;
+        if (ceilingPrice != null && adjustedPrice > ceilingPrice) adjustedPrice = ceilingPrice;
+        
+        adjustedPrice = applyCharmPricing(adjustedPrice);
+        
         return {
-            price: basePrice,
+            price: Math.round(adjustedPrice),
             breakdown: {
-                base: basePrice,
-                market_adjustment: 0,
-                demand_adjustment: 0,
-                event_adjustment: 0,
-                weather_adjustment: 0,
-                strategy_adjustment: 0,
-                lead_time_adjustment: 0,
-                weekday_adjustment: 0
+                ...breakdown,
+                final: adjustedPrice
             },
-            reasoning: 'Données marché non disponibles pour cette date, utilisation du prix de base'
+            reasoning: reasoning.length > 0 
+                ? reasoning.join('; ') + ' (données marché non disponibles)'
+                : 'Prix de base (données marché non disponibles)',
+            market_data_used: null
         };
     }
     

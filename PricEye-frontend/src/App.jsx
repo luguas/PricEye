@@ -77,7 +77,11 @@ function AppContent() {
 
     try {
       const properties = await getProperties(authToken);
-      setPropertyCount(Array.isArray(properties) ? properties.length : 0);
+      // Filtrer uniquement les propriétés actives (pour correspondre au dashboard)
+      const activeProperties = Array.isArray(properties) 
+        ? properties.filter(p => (p.status || 'active') === 'active')
+        : [];
+      setPropertyCount(activeProperties.length);
     } catch (err) {
       console.error("Erreur lors du chargement des propriétés:", err);
       setPropertyCount(null);
@@ -131,6 +135,21 @@ function AppContent() {
       window.removeEventListener('tokenExpired', handleTokenExpired);
     };
   }, [handleLogout]);
+
+  // Effet pour écouter les événements de rafraîchissement du compteur de propriétés
+  useEffect(() => {
+    const handleRefreshPropertyCount = () => {
+      if (token) {
+        fetchPropertyCount(token);
+      }
+    };
+
+    window.addEventListener('refreshPropertyCount', handleRefreshPropertyCount);
+
+    return () => {
+      window.removeEventListener('refreshPropertyCount', handleRefreshPropertyCount);
+    };
+  }, [token, fetchPropertyCount]);
 
   // Effet pour vérifier le retour depuis Stripe Checkout
   useEffect(() => {

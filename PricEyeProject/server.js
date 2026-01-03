@@ -1369,18 +1369,59 @@ app.post('/api/subscriptions/end-trial-and-bill', authenticateToken, async (req,
         
         // Récupérer les items d'abonnement existants
         const subscriptionItems = subscription.items.data;
+        
+        // Récupérer les Product IDs pour identifier les items (plus fiable que les Price IDs)
+        const parentProductId = process.env.STRIPE_PRODUCT_PARENT_ID || process.env.STRIPE_PRODUCT_PRINCIPAL_ID;
+        const childProductId = process.env.STRIPE_PRODUCT_CHILD_ID;
         const parentPriceId = process.env.STRIPE_PRICE_PARENT_ID || process.env.STRIPE_PRICE_PRINCIPAL_ID;
         const childPriceId = process.env.STRIPE_PRICE_CHILD_ID;
         
-        // Trouver les items existants
-        let principalItem = subscriptionItems.find(item => {
-            const priceId = typeof item.price === 'string' ? item.price : item.price.id;
-            return priceId === parentPriceId;
-        });
-        let childItem = subscriptionItems.find(item => {
-            const priceId = typeof item.price === 'string' ? item.price : item.price.id;
-            return priceId === childPriceId;
-        });
+        // Récupérer la devise de l'abonnement (depuis le premier item ou la devise par défaut)
+        let subscriptionCurrency = 'eur'; // Par défaut
+        if (subscriptionItems.length > 0) {
+            const firstPrice = subscriptionItems[0].price;
+            if (typeof firstPrice !== 'string' && firstPrice.currency) {
+                subscriptionCurrency = firstPrice.currency.toLowerCase();
+            }
+        }
+        
+        // Trouver les items existants par Product ID (plus fiable que Price ID) ou par Price ID en fallback
+        let principalItem = null;
+        let childItem = null;
+        
+        if (parentProductId) {
+            principalItem = subscriptionItems.find(item => {
+                const productId = typeof item.price.product === 'string' 
+                    ? item.price.product 
+                    : item.price.product.id;
+                return productId === parentProductId;
+            });
+        }
+        
+        // Si pas trouvé par Product ID, essayer par Price ID
+        if (!principalItem && parentPriceId) {
+            principalItem = subscriptionItems.find(item => {
+                const priceId = typeof item.price === 'string' ? item.price : item.price.id;
+                return priceId === parentPriceId;
+            });
+        }
+        
+        if (childProductId) {
+            childItem = subscriptionItems.find(item => {
+                const productId = typeof item.price.product === 'string' 
+                    ? item.price.product 
+                    : item.price.product.id;
+                return productId === childProductId;
+            });
+        }
+        
+        // Si pas trouvé par Product ID, essayer par Price ID
+        if (!childItem && childPriceId) {
+            childItem = subscriptionItems.find(item => {
+                const priceId = typeof item.price === 'string' ? item.price : item.price.id;
+                return priceId === childPriceId;
+            });
+        }
         
         // Construire les items à mettre à jour
         const itemsToUpdate = [];
@@ -1391,10 +1432,48 @@ app.post('/api/subscriptions/end-trial-and-bill', authenticateToken, async (req,
                 quantity: quantities.quantityPrincipal
             });
         } else if (quantities.quantityPrincipal > 0) {
-            itemsToUpdate.push({
-                price: parentPriceId,
-                quantity: quantities.quantityPrincipal
-            });
+            // Si l'item n'existe pas, on doit trouver un prix compatible avec la devise de l'abonnement
+            let priceToUse = null;
+            
+            if (parentProductId) {
+                try {
+                    // Récupérer tous les prix du produit parent
+                    const allParentPrices = await stripe.prices.list({
+                        product: parentProductId,
+                        limit: 100
+                    });
+                    
+                    // Trouver un prix avec la même devise que l'abonnement
+                    priceToUse = allParentPrices.data.find(price => 
+                        price.currency.toLowerCase() === subscriptionCurrency.toLowerCase()
+                    );
+                } catch (err) {
+                    console.warn(`[End Trial] Erreur lors de la récupération des prix du produit parent:`, err.message);
+                }
+            }
+            
+            // Si pas de prix trouvé par Product ID, vérifier le prix par défaut
+            if (!priceToUse && parentPriceId) {
+                try {
+                    const defaultPrice = await stripe.prices.retrieve(parentPriceId);
+                    if (defaultPrice.currency.toLowerCase() === subscriptionCurrency.toLowerCase()) {
+                        priceToUse = defaultPrice;
+                    } else {
+                        console.warn(`[End Trial] Le prix par défaut (${parentPriceId}) est en ${defaultPrice.currency}, mais l'abonnement est en ${subscriptionCurrency}`);
+                    }
+                } catch (err) {
+                    console.warn(`[End Trial] Erreur lors de la récupération du prix par défaut:`, err.message);
+                }
+            }
+            
+            if (priceToUse) {
+                itemsToUpdate.push({
+                    price: priceToUse.id,
+                    quantity: quantities.quantityPrincipal
+                });
+            } else {
+                throw new Error(`Impossible de trouver un prix compatible pour le produit parent avec la devise ${subscriptionCurrency}. Veuillez configurer les prix Stripe correctement.`);
+            }
         }
         
         if (childItem) {
@@ -1403,10 +1482,48 @@ app.post('/api/subscriptions/end-trial-and-bill', authenticateToken, async (req,
                 quantity: quantities.quantityChild
             });
         } else if (quantities.quantityChild > 0) {
-            itemsToUpdate.push({
-                price: childPriceId,
-                quantity: quantities.quantityChild
-            });
+            // Si l'item n'existe pas, on doit trouver un prix compatible avec la devise de l'abonnement
+            let priceToUse = null;
+            
+            if (childProductId) {
+                try {
+                    // Récupérer tous les prix du produit enfant
+                    const allChildPrices = await stripe.prices.list({
+                        product: childProductId,
+                        limit: 100
+                    });
+                    
+                    // Trouver un prix avec la même devise que l'abonnement
+                    priceToUse = allChildPrices.data.find(price => 
+                        price.currency.toLowerCase() === subscriptionCurrency.toLowerCase()
+                    );
+                } catch (err) {
+                    console.warn(`[End Trial] Erreur lors de la récupération des prix du produit enfant:`, err.message);
+                }
+            }
+            
+            // Si pas de prix trouvé par Product ID, vérifier le prix par défaut
+            if (!priceToUse && childPriceId) {
+                try {
+                    const defaultPrice = await stripe.prices.retrieve(childPriceId);
+                    if (defaultPrice.currency.toLowerCase() === subscriptionCurrency.toLowerCase()) {
+                        priceToUse = defaultPrice;
+                    } else {
+                        console.warn(`[End Trial] Le prix par défaut (${childPriceId}) est en ${defaultPrice.currency}, mais l'abonnement est en ${subscriptionCurrency}`);
+                    }
+                } catch (err) {
+                    console.warn(`[End Trial] Erreur lors de la récupération du prix par défaut:`, err.message);
+                }
+            }
+            
+            if (priceToUse) {
+                itemsToUpdate.push({
+                    price: priceToUse.id,
+                    quantity: quantities.quantityChild
+                });
+            } else {
+                throw new Error(`Impossible de trouver un prix compatible pour le produit enfant avec la devise ${subscriptionCurrency}. Veuillez configurer les prix Stripe correctement.`);
+            }
         }
         
         // Mettre à jour l'abonnement : quantité + fin d'essai + facturation immédiate
@@ -6410,11 +6527,111 @@ Structure attendue :
 RAPPEL CRITIQUE : La réponse finale doit être UNIQUEMENT ce JSON, sans texte additionnel, sans commentaires, sans markdown.
             `;
 
-            const iaResult = await callGeminiWithSearch(prompt, 10, language);
-
-            if (!iaResult || !Array.isArray(iaResult.calendar) || iaResult.calendar.length === 0) {
-                throw new Error("La réponse de l'IA est invalide ou ne contient pas de calendrier de prix.");
+            let iaResult;
+            try {
+                iaResult = await callGeminiWithSearch(prompt, 10, language);
+            } catch (iaError) {
+                console.error(`[Pricing] Erreur lors de l'appel IA:`, iaError.message);
+                // Si l'IA échoue (refuse de générer du JSON), utiliser le pricing déterministe comme fallback
+                console.log(`[Pricing] L'IA a refusé de générer du JSON. Utilisation du pricing déterministe comme fallback...`);
+                
+                // Essayer de générer un calendrier avec le pricing déterministe
+                try {
+                    const deterministicPricing = require('./utils/deterministic_pricing');
+                    const endDate = new Date();
+                    endDate.setDate(endDate.getDate() + 180);
+                    const endDateStr = endDate.toISOString().split('T')[0];
+                    
+                    const calendar = await deterministicPricing.generateDeterministicPricingCalendar({
+                        property,
+                        startDate: today,
+                        endDate: endDateStr,
+                        city,
+                        country
+                    });
+                    
+                    if (calendar && calendar.length > 0) {
+                        const daily_prices = calendar.map(day => ({
+                            date: day.date,
+                            price: day.price,
+                            reason: day.reasoning || "Tarification basée sur données marché (fallback après échec IA)"
+                        }));
+                        
+                        strategyResult = {
+                            strategy_summary: `Tarification déterministe (fallback après échec IA) - ${calendar.filter(d => d.market_data_used?.competitor_avg_price).length}/${calendar.length} jours avec données marché`,
+                            daily_prices,
+                            method: 'deterministic',
+                            raw: {
+                                calendar: calendar.map(day => ({
+                                    date: day.date,
+                                    final_suggested_price: day.price,
+                                    price_breakdown: day.breakdown,
+                                    reasoning: day.reasoning,
+                                    market_data_used: day.market_data_used
+                                }))
+                            }
+                        };
+                        console.log(`[Pricing] ✓ Pricing déterministe de secours généré: ${calendar.length} jours`);
+                        // Skip le reste du traitement IA
+                        iaResult = null;
+                    } else {
+                        throw new Error("L'IA a échoué et le pricing déterministe n'a pas pu générer de calendrier.");
+                    }
+                } catch (fallbackError) {
+                    console.error(`[Pricing] Erreur pricing déterministe de secours:`, fallbackError);
+                    throw new Error(`Échec de l'IA (refus de générer du JSON) et du pricing déterministe. Veuillez vérifier vos données marché ou réessayer plus tard.`);
+                }
             }
+
+            // Si on a déjà un strategyResult du fallback, on skip le traitement IA
+            if (!strategyResult && iaResult) {
+                if (!iaResult || !Array.isArray(iaResult.calendar) || iaResult.calendar.length === 0) {
+                    // Si l'IA a répondu mais sans JSON valide, utiliser le pricing déterministe
+                    console.log(`[Pricing] Réponse IA invalide, utilisation du pricing déterministe comme fallback...`);
+                    try {
+                        const deterministicPricing = require('./utils/deterministic_pricing');
+                        const endDate = new Date();
+                        endDate.setDate(endDate.getDate() + 180);
+                        const endDateStr = endDate.toISOString().split('T')[0];
+                        
+                        const calendar = await deterministicPricing.generateDeterministicPricingCalendar({
+                            property,
+                            startDate: today,
+                            endDate: endDateStr,
+                            city,
+                            country
+                        });
+                        
+                        if (calendar && calendar.length > 0) {
+                            const daily_prices = calendar.map(day => ({
+                                date: day.date,
+                                price: day.price,
+                                reason: day.reasoning || "Tarification basée sur données marché (fallback après réponse IA invalide)"
+                            }));
+                            
+                            strategyResult = {
+                                strategy_summary: `Tarification déterministe (fallback après réponse IA invalide) - ${calendar.filter(d => d.market_data_used?.competitor_avg_price).length}/${calendar.length} jours avec données marché`,
+                                daily_prices,
+                                method: 'deterministic',
+                                raw: {
+                                    calendar: calendar.map(day => ({
+                                        date: day.date,
+                                        final_suggested_price: day.price,
+                                        price_breakdown: day.breakdown,
+                                        reasoning: day.reasoning,
+                                        market_data_used: day.market_data_used
+                                    }))
+                                }
+                            };
+                            console.log(`[Pricing] ✓ Pricing déterministe de secours généré: ${calendar.length} jours`);
+                            iaResult = null; // Skip le reste
+                        } else {
+                            throw new Error("La réponse de l'IA est invalide et le pricing déterministe n'a pas pu générer de calendrier.");
+                        }
+                    } catch (fallbackError) {
+                        throw new Error("La réponse de l'IA est invalide ou ne contient pas de calendrier de prix.");
+                    }
+                }
 
             // Adapter le nouveau format (calendar) en daily_prices pour le reste du backend
             const daily_prices = iaResult.calendar.map(day => {
