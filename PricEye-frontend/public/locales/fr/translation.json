@@ -145,6 +145,11 @@
     "logout": "Déconnexion",
     "logoutDescription": "Vous pouvez vous déconnecter de votre compte à tout moment. Vous devrez vous reconnecter pour accéder à nouveau à l'application.",
     "disconnect": "Se déconnecter",
+    "deleteAccount": "Supprimer le compte",
+    "deleteAccountDescription": "La suppression de votre compte est définitive et irréversible. Toutes vos données (propriétés, réservations, intégrations, etc.) seront supprimées définitivement.",
+    "deleteAccountWarning": "Attention : Cette action est irréversible !",
+    "deleteAccountButton": "Supprimer mon compte",
+    "deleteAccountConfirm": "Êtes-vous sûr de vouloir supprimer votre compte ? Cette action est définitive et toutes vos données seront supprimées.",
     "validation": {
       "nameRequired": "Le nom ne peut pas être vide.",
       "currencyRequired": "Veuillez sélectionner une devise.",
@@ -157,7 +162,8 @@
       "profileUpdated": "Profil mis à jour avec succès !",
       "passwordChanged": "Mot de passe modifié avec succès !",
       "inviteSent": "Invitation envoyée à {{email}}.",
-      "removeMemberConfirm": "Êtes-vous sûr de vouloir retirer ce membre de l'équipe ?"
+      "removeMemberConfirm": "Êtes-vous sûr de vouloir retirer ce membre de l'équipe ?",
+      "accountDeleted": "Votre compte a été supprimé avec succès."
     },
     "errors": {
       "loadError": "Erreur lors du chargement des données: {{message}}",
@@ -165,7 +171,8 @@
       "inviteError": "Erreur lors de l'invitation: {{message}}",
       "roleChangeError": "Erreur lors du changement de rôle: {{message}}",
       "removeError": "Erreur lors de la suppression: {{message}}",
-      "integrationLoadError": "Impossible de charger le statut de l'intégration PMS."
+      "integrationLoadError": "Impossible de charger le statut de l'intégration PMS.",
+      "deleteAccountError": "Erreur lors de la suppression du compte: {{message}}"
     },
     "integration": {
       "loading": "Chargement de l'intégration...",

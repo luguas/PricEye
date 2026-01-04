@@ -606,6 +606,113 @@ async function setSystemCache(key, data, metadata = {}) {
   return result;
 }
 
+/**
+ * Supprime un utilisateur et toutes ses données associées de la base de données
+ * ATTENTION: Cette fonction supprime uniquement les données de la base de données
+ * La suppression de l'utilisateur dans Supabase Auth doit être faite séparément
+ * Utiliser avec précaution!
+ * @param {string} userId - L'ID de l'utilisateur à supprimer
+ * @returns {Promise<void>}
+ */
+async function deleteUser(userId) {
+  if (!userId) {
+    throw new Error('userId est requis pour supprimer un utilisateur');
+  }
+
+  // Récupérer le teamId de l'utilisateur avant suppression
+  const user = await getUser(userId);
+  if (!user) {
+    throw new Error(`Utilisateur ${userId} non trouvé`);
+  }
+  const teamId = user.team_id || userId;
+
+  // Supprimer les données associées dans l'ordre correct pour éviter les violations de contraintes
+  
+  // 1. Supprimer les réservations (bookings)
+  const { data: properties } = await supabase
+    .from('properties')
+    .select('id')
+    .eq('team_id', teamId);
+  
+  if (properties && properties.length > 0) {
+    const propertyIds = properties.map(p => p.id);
+    await supabase
+      .from('bookings')
+      .delete()
+      .in('property_id', propertyIds);
+  }
+
+  // 2. Supprimer les price_overrides
+  if (properties && properties.length > 0) {
+    const propertyIds = properties.map(p => p.id);
+    await supabase
+      .from('price_overrides')
+      .delete()
+      .in('property_id', propertyIds);
+  }
+
+  // 3. Supprimer les relations group_properties
+  const { data: groups } = await supabase
+    .from('groups')
+    .select('id')
+    .eq('owner_id', userId);
+  
+  if (groups && groups.length > 0) {
+    const groupIds = groups.map(g => g.id);
+    await supabase
+      .from('group_properties')
+      .delete()
+      .in('group_id', groupIds);
+  }
+
+  // 4. Supprimer les groupes
+  await supabase
+    .from('groups')
+    .delete()
+    .eq('owner_id', userId);
+
+  // 5. Supprimer les propriétés
+  await supabase
+    .from('properties')
+    .delete()
+    .eq('team_id', teamId);
+
+  // 6. Supprimer les intégrations
+  await supabase
+    .from('integrations')
+    .delete()
+    .eq('user_id', userId);
+
+  // 7. Supprimer les logs de propriétés (property_logs)
+  // Note: On peut aussi les anonymiser au lieu de les supprimer pour garder l'historique
+  if (properties && properties.length > 0) {
+    const propertyIds = properties.map(p => p.id);
+    await supabase
+      .from('property_logs')
+      .delete()
+      .in('property_id', propertyIds);
+  }
+
+  // 8. Supprimer les quotas IA (user_ai_usage)
+  await supabase
+    .from('user_ai_usage')
+    .delete()
+    .eq('user_id', userId);
+
+  // 9. Supprimer l'utilisateur de la table users
+  const { error: deleteError } = await supabase
+    .from('users')
+    .delete()
+    .eq('id', userId);
+  
+  if (deleteError) {
+    throw new Error(`Erreur lors de la suppression de l'utilisateur dans la base de données: ${deleteError.message}`);
+  }
+
+  // Note: La suppression de l'utilisateur dans Supabase Auth doit être faite séparément
+  // via supabase.auth.admin.deleteUser(userId) dans la route API
+}
+
 module.exports = {
   getUser,
   setUser,
@@ -638,6 +745,7 @@ module.exports = {
   getBooking,
   getBookingsByTeamAndDateRange,
   addPropertiesToGroup,
-  removePropertiesFromGroup
+  removePropertiesFromGroup,
+  deleteUser
 };
 

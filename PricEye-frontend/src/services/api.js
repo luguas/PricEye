@@ -180,6 +180,19 @@ export function updateUserProfile(profileData, token) {
 }
 
 /**
+ * Supprime le compte utilisateur
+ * @param {string} userId - ID de l'utilisateur à supprimer
+ * @param {string} token - Jeton d'authentification
+ * @returns {Promise<{message: string}>}
+ */
+export function deleteUserAccount(userId, token) {
+  return apiRequest(`/api/users/${userId}`, {
+    method: 'DELETE',
+    token,
+  });
+}
+
+/**
  * Récupère le quota IA de l'utilisateur
  * @param {string} token - Jeton d'authentification Priceye
  * @returns {Promise<{callsToday: number, maxCalls: number, remaining: number, tokensUsed: number, maxTokens: number, resetAt: string, subscriptionStatus: string}>}

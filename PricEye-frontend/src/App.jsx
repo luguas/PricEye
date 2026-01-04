@@ -379,7 +379,6 @@ function AppContent() {
           onNavigate={navigateTo}
           isCollapsed={isNavCollapsed}
           onToggleCollapse={() => setIsNavCollapsed((prev) => !prev)}
-          token={token}
         />
 
         <div className="flex flex-col min-h-screen">

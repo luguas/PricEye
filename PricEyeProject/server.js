@@ -10,6 +10,18 @@ const path = require('path');
 
 const execAsync = promisify(exec); 
 
+// --- IMPORT DES UTILITAIRES DE SANITISATION ---
+const { sanitizeForPrompt, validateAndSanitizeDate, validateDateRange, validateDateFormat, validateNumber, sanitizeNumber, sanitizeArray, validateStringLength, sanitizeUrl, sanitizeFilename, safeJSONStringify, validatePropertyObject, validatePropertyId, validatePrice, validatePercentage, validateCapacity, validateInteger, validateEnum, validateTimezone } = require('./utils/promptSanitizer');
+const { ALLOWED_STRATEGIES } = require('./utils/whitelists');
+
+// --- IMPORT DU SYSTÈME DE MONITORING DES INJECTIONS ---
+const { 
+    checkInjectionMiddleware, 
+    getUserStats, 
+    resetUserAttempts,
+    analyzeInput 
+} = require('./utils/injectionMonitor');
+
 // --- INITIALISATION DE SUPABASE ---
 const { supabase } = require('./config/supabase.js');
 console.log('✅ Connecté à Supabase avec succès.');
@@ -69,6 +81,16 @@ app.use('/api/webhooks/stripe', express.raw({ type: 'application/json' }));
 
 // Middleware JSON pour toutes les autres routes
 app.use(express.json());
+
+// --- MIDDLEWARE DE MONITORING DES INJECTIONS ---
+// Enregistrer l'endpoint actuel dans le contexte global pour le monitoring
+app.use((req, res, next) => {
+    global.currentRequestEndpoint = req.path || req.route?.path || 'unknown';
+    next();
+});
+
+// Appliquer le middleware de monitoring des injections sur toutes les routes API
+app.use('/api', checkInjectionMiddleware);
 
 // --- MIDDLEWARE D'AUTHENTIFICATION ---
 const authenticateToken = async (req, res, next) => {
@@ -872,6 +894,55 @@ app.get('/api/users/profile', authenticateToken, async (req, res) => {
 });
 
 // GET /api/users/ai-quota - Récupérer le quota IA de l'utilisateur
+/**
+ * GET /api/users/injection-stats - Récupère les statistiques de monitoring des injections pour l'utilisateur
+ */
+app.get('/api/users/injection-stats', authenticateToken, async (req, res) => {
+    try {
+        const userId = req.user.uid;
+        const stats = getUserStats(userId);
+        
+        res.json({
+            success: true,
+            stats: stats
+        });
+    } catch (error) {
+        console.error('[Injection Stats] Erreur:', error);
+        res.status(500).json({ error: 'Erreur lors de la récupération des statistiques' });
+    }
+});
+
+/**
+ * POST /api/admin/reset-injection-attempts/:userId - Réinitialise les tentatives d'injection d'un utilisateur (admin seulement)
+ */
+app.post('/api/admin/reset-injection-attempts/:userId', authenticateToken, async (req, res) => {
+    try {
+        const adminUserId = req.user.uid;
+        const targetUserId = req.params.userId;
+        
+        // TODO: Vérifier que l'utilisateur est admin
+        // Pour l'instant, on permet à n'importe quel utilisateur authentifié de réinitialiser ses propres tentatives
+        if (adminUserId !== targetUserId) {
+            // Vérifier si l'utilisateur est admin (vous pouvez ajouter cette vérification)
+            // const userProfile = await db.getUser(adminUserId);
+            // if (!userProfile || userProfile.role !== 'admin') {
+            //     return res.status(403).json({ error: 'Accès refusé. Admin seulement.' });
+            // }
+            return res.status(403).json({ error: 'Vous ne pouvez réinitialiser que vos propres tentatives.' });
+        }
+        
+        resetUserAttempts(targetUserId);
+        
+        res.json({
+            success: true,
+            message: `Tentatives d'injection réinitialisées pour l'utilisateur ${targetUserId}`
+        });
+    } catch (error) {
+        console.error('[Reset Injection Attempts] Erreur:', error);
+        res.status(500).json({ error: 'Erreur lors de la réinitialisation' });
+    }
+});
+
 app.get('/api/users/ai-quota', authenticateToken, async (req, res) => {
     try {
         const userId = req.user.uid;
@@ -958,6 +1029,75 @@ app.put('/api/users/profile', authenticateToken, async (req, res) => {
     } catch (error) {
         console.error('Erreur lors de la mise à jour du profil:', error);
         res.status(500).send({ error: 'Erreur lors de la mise à jour du profil.' });
+    }
+});
+
+/**
+ * DELETE /api/users/:userId - Supprime un utilisateur et toutes ses données
+ * ATTENTION: Cette route supprime définitivement l'utilisateur et toutes ses données
+ */
+app.delete('/api/users/:userId', authenticateToken, async (req, res) => {
+    try {
+        const currentUserId = req.user.uid;
+        const targetUserId = req.params.userId;
+
+        // Vérifier que l'utilisateur supprime son propre compte ou est admin
+        // Pour l'instant, on permet uniquement la suppression de son propre compte
+        if (currentUserId !== targetUserId) {
+            return res.status(403).send({ error: 'Vous ne pouvez supprimer que votre propre compte.' });
+        }
+
+        // TODO: Ajouter vérification du rôle admin si nécessaire
+        // const userProfile = await db.getUser(currentUserId);
+        // if (currentUserId !== targetUserId && userProfile.role !== 'admin') {
+        //     return res.status(403).send({ error: 'Accès refusé. Admin seulement.' });
+        // }
+
+        // Récupérer le profil utilisateur avant suppression pour vérifier qu'il existe
+        const userProfile = await db.getUser(targetUserId);
+        if (!userProfile) {
+            return res.status(404).send({ error: 'Utilisateur non trouvé.' });
+        }
+
+        // Annuler l'abonnement Stripe si présent
+        const subscriptionId = userProfile.stripe_subscription_id || userProfile.subscription_id;
+        if (subscriptionId) {
+            try {
+                const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
+                const subscription = await stripe.subscriptions.retrieve(subscriptionId);
+                
+                // Annuler l'abonnement immédiatement
+                if (subscription.status !== 'canceled' && subscription.status !== 'incomplete_expired') {
+                    await stripe.subscriptions.cancel(subscriptionId);
+                    console.log(`[Delete User] Abonnement Stripe ${subscriptionId} annulé pour l'utilisateur ${targetUserId}`);
+                }
+            } catch (stripeError) {
+                console.error(`[Delete User] Erreur lors de l'annulation de l'abonnement Stripe pour ${targetUserId}:`, stripeError);
+                // Continuer même si l'annulation Stripe échoue
+            }
+        }
+
+        // Supprimer toutes les données associées dans la base de données
+        await db.deleteUser(targetUserId);
+
+        // Supprimer l'utilisateur dans Supabase Auth
+        const { error: authDeleteError } = await supabase.auth.admin.deleteUser(targetUserId);
+        
+        if (authDeleteError) {
+            console.error(`[Delete User] Erreur lors de la suppression de l'utilisateur dans Auth:`, authDeleteError);
+            // Si la suppression dans Auth échoue, on retourne une erreur
+            // Mais les données sont déjà supprimées de la base de données
+            throw new Error(`Erreur lors de la suppression de l'utilisateur dans Supabase Auth: ${authDeleteError.message}`);
+        }
+
+        console.log(`[Delete User] Utilisateur ${targetUserId} supprimé avec succès`);
+        res.status(200).send({ message: 'Utilisateur supprimé avec succès.' });
+    } catch (error) {
+        console.error('Erreur lors de la suppression de l\'utilisateur:', error);
+        res.status(500).send({ 
+            error: 'Erreur lors de la suppression de l\'utilisateur.',
+            message: error.message || 'Database error deleting user'
+        });
     }
 });
 
@@ -2841,8 +2981,42 @@ app.post('/api/properties', authenticateToken, async (req, res) => {
     try {
         const newPropertyData = req.body;
         const userId = req.user.uid;
-        if (!newPropertyData || !newPropertyData.address || !newPropertyData.location) {
-            return res.status(400).send({ error: 'Les données fournies sont incomplètes.' });
+        
+        // 1. Valider strictement tous les inputs avant traitement
+        if (!newPropertyData || typeof newPropertyData !== 'object') {
+            return res.status(400).json({ 
+                error: 'Données invalides', 
+                message: 'Les données fournies doivent être un objet valide.' 
+            });
+        }
+        
+        // Validation stricte de l'objet property avec validatePropertyObject
+        const validationResult = validatePropertyObject(newPropertyData, userId);
+        if (!validationResult.valid) {
+            return res.status(400).json({ 
+                error: 'Validation échouée', 
+                message: 'Les données fournies ne respectent pas les règles de validation.',
+                validationErrors: validationResult.errors 
+            });
+        }
+        
+        // Validation des champs obligatoires supplémentaires (address, location)
+        if (!newPropertyData.address || !newPropertyData.location) {
+            return res.status(400).json({ 
+                error: 'Champs manquants', 
+                message: 'Les champs "address" et "location" sont obligatoires.' 
+            });
+        }
+        
+        // Valider address et location avec validateStringLength
+        try {
+            validateStringLength(newPropertyData.address, 1, 500, 'address', userId);
+            validateStringLength(newPropertyData.location, 1, 200, 'location', userId);
+        } catch (error) {
+            return res.status(400).json({ 
+                error: 'Validation échouée', 
+                message: error.message 
+            });
         }
         
         const userProfile = await db.getUser(userId);
@@ -2877,31 +3051,29 @@ app.post('/api/properties', authenticateToken, async (req, res) => {
             }
         } 
 
-        // Les champs acceptés incluent : name, address, location, description, property_type,
-        // surface, capacity, daily_revenue, min_stay, amenities, etc.
-        // Adapter les noms de champs pour PostgreSQL (snake_case)
+        // Utiliser les données validées et sanitizées
         const propertyWithOwner = { 
             name: newPropertyData.name,
-            address: newPropertyData.address,
-            location: newPropertyData.location,
-            description: newPropertyData.description,
-            property_type: newPropertyData.property_type || newPropertyData.type || 'villa',
-            surface: newPropertyData.surface,
-            capacity: newPropertyData.capacity,
-            daily_revenue: newPropertyData.daily_revenue,
+            address: String(newPropertyData.address).trim(),
+            location: String(newPropertyData.location).trim(),
+            description: newPropertyData.description ? String(newPropertyData.description).trim() : null,
+            property_type: validationResult.sanitized.property_type || newPropertyData.property_type || newPropertyData.type || 'villa',
+            surface: newPropertyData.surface || null,
+            capacity: validationResult.sanitized.capacity || newPropertyData.capacity || null,
+            daily_revenue: newPropertyData.daily_revenue || null,
             min_stay: newPropertyData.min_stay || 1,
             max_stay: newPropertyData.max_stay || null,
             amenities: newPropertyData.amenities || [],
             owner_id: userId, 
             team_id: teamId, 
             status: 'active', // Statut par défaut
-            strategy: newPropertyData.strategy || 'Équilibré',
-            floor_price: newPropertyData.floor_price || 0,
-            base_price: newPropertyData.base_price || 100,
-            ceiling_price: newPropertyData.ceiling_price || null,
-            weekly_discount_percent: newPropertyData.weekly_discount_percent || null,
-            monthly_discount_percent: newPropertyData.monthly_discount_percent || null,
-            weekend_markup_percent: newPropertyData.weekend_markup_percent || null
+            strategy: validationResult.sanitized.strategy || newPropertyData.strategy || 'Équilibré',
+            floor_price: validationResult.sanitized.floor_price !== undefined ? validationResult.sanitized.floor_price : (newPropertyData.floor_price || 0),
+            base_price: validationResult.sanitized.base_price !== undefined ? validationResult.sanitized.base_price : (newPropertyData.base_price || 100),
+            ceiling_price: validationResult.sanitized.ceiling_price !== undefined ? validationResult.sanitized.ceiling_price : (newPropertyData.ceiling_price || null),
+            weekly_discount_percent: validationResult.sanitized.weekly_discount_percent !== undefined ? validationResult.sanitized.weekly_discount_percent : (newPropertyData.weekly_discount_percent || null),
+            monthly_discount_percent: validationResult.sanitized.monthly_discount_percent !== undefined ? validationResult.sanitized.monthly_discount_percent : (newPropertyData.monthly_discount_percent || null),
+            weekend_markup_percent: validationResult.sanitized.weekend_markup_percent !== undefined ? validationResult.sanitized.weekend_markup_percent : (newPropertyData.weekend_markup_percent || null)
         };
         
         const createdProperty = await db.createProperty(propertyWithOwner);
@@ -2914,6 +3086,15 @@ app.post('/api/properties', authenticateToken, async (req, res) => {
         
         res.status(201).send({ message: 'Propriété ajoutée avec succès', id: createdProperty.id });
     } catch (error) {
+        // 3. Retourner des erreurs 400 avec messages clairs si validation échoue
+        // 4. Logger toutes les erreurs de validation avec userId
+        if (error.message && (error.message.includes('Le champ') || error.message.includes('doit être'))) {
+            console.error(`[Validation Error] [userId: ${req.user?.uid || 'unknown'}] ${error.message}`);
+            return res.status(400).json({ 
+                error: 'Validation échouée', 
+                message: error.message 
+            });
+        }
         console.error('Erreur lors de l\'ajout de la propriété:', error);
         res.status(500).send({ error: 'Erreur lors de l\'ajout de la propriété.' });
     }
@@ -2967,6 +3148,17 @@ app.delete('/api/properties/:id', authenticateToken, async (req, res) => {
         const propertyId = req.params.id;
         const userId = req.user.uid;
         
+        // 1. Valider strictement l'ID de propriété
+        try {
+            validatePropertyId(propertyId, 'propertyId', userId);
+        } catch (error) {
+            console.error(`[Validation Error] [userId: ${userId}] ${error.message}`);
+            return res.status(400).json({ 
+                error: 'Validation échouée', 
+                message: error.message 
+            });
+        }
+        
         const property = await db.getProperty(propertyId);
         if (!property) {
             return res.status(404).send({ error: 'Propriété non trouvée.' });
@@ -3004,6 +3196,17 @@ app.post('/api/properties/:id/sync', authenticateToken, async (req, res) => {
     try {
         const { id: propertyId } = req.params;
         const userId = req.user.uid;
+        
+        // 1. Valider strictement l'ID de propriété
+        try {
+            validatePropertyId(propertyId, 'propertyId', userId);
+        } catch (error) {
+            console.error(`[Validation Error] [userId: ${userId}] ${error.message}`);
+            return res.status(400).json({ 
+                error: 'Validation échouée', 
+                message: error.message 
+            });
+        }
 
         // 1. Vérifier les droits
         const property = await db.getProperty(propertyId);
@@ -3051,23 +3254,65 @@ app.put('/api/properties/:id/strategy', authenticateToken, async (req, res) => {
         const { id } = req.params;
         const userId = req.user.uid;
         const { strategy, floor_price, base_price, ceiling_price } = req.body;
-
-        const allowedStrategies = ['Prudent', 'Équilibré', 'Agressif'];
-        if (!strategy || !allowedStrategies.includes(strategy)) {
-            return res.status(400).send({ error: 'Stratégie invalide ou manquante.' });
+        
+        // 1. Valider strictement l'ID de propriété
+        try {
+            validatePropertyId(id, 'propertyId', userId);
+        } catch (error) {
+            console.error(`[Validation Error] [userId: ${userId}] ${error.message}`);
+            return res.status(400).json({ 
+                error: 'Validation échouée', 
+                message: error.message 
+            });
         }
-        const floorPriceNum = Number(floor_price);
-        const basePriceNum = Number(base_price);
-        const ceilingPriceNum = ceiling_price != null ? Number(ceiling_price) : null;
-
-        if (isNaN(floorPriceNum) || floorPriceNum < 0 || isNaN(basePriceNum) || basePriceNum < 0) {
-             return res.status(400).send({ error: 'Prix plancher et de base sont requis et doivent être des nombres positifs.' });
-         }
-         if (floorPriceNum > basePriceNum) {
-             return res.status(400).send({ error: 'Le prix plancher ne peut pas être supérieur au prix de base.' });
-         }
-        if (ceiling_price != null && (isNaN(ceilingPriceNum) || ceilingPriceNum < basePriceNum)) {
-             return res.status(400).send({ error: 'Prix plafond doit être un nombre valide et supérieur ou égal au prix de base.' });
+        
+        // 1. Valider strictement tous les inputs avant traitement
+        const allowedStrategies = ['Prudent', 'Équilibré', 'Agressif'];
+        
+        // Validation de la stratégie avec validateEnum
+        try {
+            validateEnum(strategy, allowedStrategies, 'strategy', userId);
+        } catch (error) {
+            console.error(`[Validation Error] [userId: ${userId}] ${error.message}`);
+            return res.status(400).json({ 
+                error: 'Validation échouée', 
+                message: error.message 
+            });
+        }
+        
+        // Validation des prix avec validatePrice
+        let validatedFloorPrice, validatedBasePrice, validatedCeilingPrice;
+        try {
+            validatedFloorPrice = validatePrice(floor_price, 0, Infinity, 'floor_price', userId);
+            validatedBasePrice = validatePrice(base_price, 0, Infinity, 'base_price', userId);
+            if (ceiling_price != null && ceiling_price !== undefined) {
+                validatedCeilingPrice = validatePrice(ceiling_price, 0, Infinity, 'ceiling_price', userId);
+            }
+        } catch (error) {
+            console.error(`[Validation Error] [userId: ${userId}] ${error.message}`);
+            return res.status(400).json({ 
+                error: 'Validation échouée', 
+                message: error.message 
+            });
+        }
+        
+        // Validation des plages de prix
+        if (validatedFloorPrice >= validatedBasePrice) {
+            const errorMsg = `Le prix plancher (${validatedFloorPrice}) doit être strictement inférieur au prix de base (${validatedBasePrice}).`;
+            console.error(`[Validation Error] [userId: ${userId}] ${errorMsg}`);
+            return res.status(400).json({ 
+                error: 'Validation échouée', 
+                message: errorMsg 
+            });
+        }
+        
+        if (validatedCeilingPrice !== undefined && validatedBasePrice >= validatedCeilingPrice) {
+            const errorMsg = `Le prix de base (${validatedBasePrice}) doit être strictement inférieur au prix plafond (${validatedCeilingPrice}).`;
+            console.error(`[Validation Error] [userId: ${userId}] ${errorMsg}`);
+            return res.status(400).json({ 
+                error: 'Validation échouée', 
+                message: errorMsg 
+            });
         }
 
         const property = await db.getProperty(id);
@@ -3134,6 +3379,15 @@ app.put('/api/properties/:id/strategy', authenticateToken, async (req, res) => {
 
 
     } catch (error) {
+        // 3. Retourner des erreurs 400 avec messages clairs si validation échoue
+        // 4. Logger toutes les erreurs de validation avec userId
+        if (error.message && (error.message.includes('Le champ') || error.message.includes('doit être'))) {
+            console.error(`[Validation Error] [userId: ${req.user?.uid || 'unknown'}] ${error.message}`);
+            return res.status(400).json({ 
+                error: 'Validation échouée', 
+                message: error.message 
+            });
+        }
         console.error('Erreur lors de la mise à jour de la stratégie:', error);
         res.status(500).send({ error: 'Erreur lors de la mise à jour de la stratégie.' });
     }
@@ -3150,22 +3404,78 @@ app.put('/api/properties/:id/rules', authenticateToken, async (req, res) => {
             monthly_discount_percent, 
             weekend_markup_percent 
         } = req.body;
-
+        
+        // 1. Valider strictement l'ID de propriété
+        try {
+            validatePropertyId(id, 'propertyId', userId);
+        } catch (error) {
+            console.error(`[Validation Error] [userId: ${userId}] ${error.message}`);
+            return res.status(400).json({ 
+                error: 'Validation échouée', 
+                message: error.message 
+            });
+        }
+        
+        // 1. Valider strictement tous les inputs avant traitement
         const rulesData = {};
-        const parseNumericOrNull = (value, min = 0, max = Infinity) => {
-            if (value == null || value === '') return null;
-            const num = Number(value);
-            return !isNaN(num) && num >= min && num <= max ? num : null;
-        };
-
-        rulesData.min_stay = parseNumericOrNull(min_stay, 1);
-        rulesData.max_stay = parseNumericOrNull(max_stay, rulesData.min_stay || 1);
-        rulesData.weekly_discount_percent = parseNumericOrNull(weekly_discount_percent, 0, 100);
-        rulesData.monthly_discount_percent = parseNumericOrNull(monthly_discount_percent, 0, 100);
-        rulesData.weekend_markup_percent = parseNumericOrNull(weekend_markup_percent, 0);
+        const validationErrors = [];
+        
+        // Validation de min_stay (entier positif)
+        if (min_stay != null && min_stay !== '') {
+            try {
+                rulesData.min_stay = validateInteger(min_stay, 1, Infinity, 'min_stay', userId);
+            } catch (error) {
+                validationErrors.push(error.message);
+            }
+        }
+        
+        // Validation de max_stay (entier positif, >= min_stay)
+        if (max_stay != null && max_stay !== '') {
+            try {
+                const minValue = rulesData.min_stay || 1;
+                rulesData.max_stay = validateInteger(max_stay, minValue, Infinity, 'max_stay', userId);
+            } catch (error) {
+                validationErrors.push(error.message);
+            }
+        }
+        
+        // Validation des pourcentages avec validatePercentage
+        if (weekly_discount_percent != null && weekly_discount_percent !== '') {
+            try {
+                rulesData.weekly_discount_percent = validatePercentage(weekly_discount_percent, 'weekly_discount_percent', userId);
+            } catch (error) {
+                validationErrors.push(error.message);
+            }
+        }
+        
+        if (monthly_discount_percent != null && monthly_discount_percent !== '') {
+            try {
+                rulesData.monthly_discount_percent = validatePercentage(monthly_discount_percent, 'monthly_discount_percent', userId);
+            } catch (error) {
+                validationErrors.push(error.message);
+            }
+        }
+        
+        if (weekend_markup_percent != null && weekend_markup_percent !== '') {
+            try {
+                rulesData.weekend_markup_percent = validatePercentage(weekend_markup_percent, 'weekend_markup_percent', userId);
+            } catch (error) {
+                validationErrors.push(error.message);
+            }
+        }
+        
+        // Si des erreurs de validation, retourner les erreurs
+        if (validationErrors.length > 0) {
+            console.error(`[Validation Error] [userId: ${userId}] Erreurs: ${validationErrors.join('; ')}`);
+            return res.status(400).json({ 
+                error: 'Validation échouée', 
+                message: 'Les données fournies ne respectent pas les règles de validation.',
+                validationErrors: validationErrors 
+            });
+        }
 
         const cleanRulesData = Object.entries(rulesData)
-          .filter(([_, value]) => value !== null)
+          .filter(([_, value]) => value !== null && value !== undefined)
           .reduce((obj, [key, value]) => {
             obj[key] = value;
             return obj;
@@ -3227,6 +3537,15 @@ app.put('/api/properties/:id/rules', authenticateToken, async (req, res) => {
         res.status(200).send({ message: 'Règles personnalisées mises à jour et synchronisées avec succès.' });
 
     } catch (error) {
+        // 3. Retourner des erreurs 400 avec messages clairs si validation échoue
+        // 4. Logger toutes les erreurs de validation avec userId
+        if (error.message && (error.message.includes('Le champ') || error.message.includes('doit être'))) {
+            console.error(`[Validation Error] [userId: ${req.user?.uid || 'unknown'}] ${error.message}`);
+            return res.status(400).json({ 
+                error: 'Validation échouée', 
+                message: error.message 
+            });
+        }
         console.error('Erreur lors de la mise à jour des règles:', error);
         res.status(500).send({ error: 'Erreur lors de la mise à jour des règles.' });
     }
@@ -3730,8 +4049,18 @@ app.get('/api/properties/:id/news', authenticateToken, checkAIQuota, async (req,
              return res.status(403).send({ error: 'Action non autorisée sur cette propriété (pas dans la bonne équipe).' });
         }
         
+        // 1.1. Sanitiser la ville avant injection dans le prompt IA
         const fullLocation = property.location || 'France';
-        const city = fullLocation.split(',')[0].trim();
+        const rawCity = fullLocation.split(',')[0].trim();
+        let city = sanitizeForPrompt(rawCity, 100); // Limiter à 100 caractères
+        
+        // Utiliser une valeur par défaut si la ville est vide après sanitisation
+        if (!city || city.trim().length === 0) {
+            console.warn(`[Sanitization] Ville vide après sanitisation, utilisation de la valeur par défaut. Raw: "${rawCity}"`);
+            city = 'France'; // Valeur par défaut
+        }
+        
+        console.log(`[Sanitization] Ville sanitizée: "${rawCity}" → "${city}"`);
 
         // 2. Vérifier le cache de cette propriété (avec langue)
         // IMPORTANT: Le quota est vérifié AVANT la vérification du cache (via le middleware checkAIQuota)
@@ -4515,15 +4844,45 @@ app.delete('/api/teams/members/:memberId', authenticateToken, async (req, res) =
 
 // --- ROUTES POUR LES RAPPORTS (SÉCURISÉES) ---
 app.get('/api/reports/kpis', authenticateToken, async (req, res) => {
+    const endpoint = '/api/reports/kpis';
     try {
         const userId = req.user.uid;
         const { startDate, endDate } = req.query; // ex: '2025-01-01', '2025-01-31'
 
+        // 1. Valider strictement les dates (format, plage, validité)
         if (!startDate || !endDate) {
-            return res.status(400).send({ error: 'Les dates de début et de fin sont requises.' });
+            console.error(`[Validation Error] [Endpoint: ${endpoint}] [userId: ${userId}] Les dates de début et de fin sont requises.`);
+            return res.status(400).json({ 
+                error: 'Validation échouée', 
+                message: 'Les dates de début et de fin sont requises.' 
+            });
         }
 
-        // 1. Récupérer le teamId de l'utilisateur
+        let validatedStartDate, validatedEndDate;
+        try {
+            validatedStartDate = validateAndSanitizeDate(startDate, 'startDate', userId);
+            validatedEndDate = validateAndSanitizeDate(endDate, 'endDate', userId);
+        } catch (dateError) {
+            console.error(`[Validation Error] [Endpoint: ${endpoint}] [userId: ${userId}] ${dateError.message}`);
+            return res.status(400).json({ 
+                error: 'Validation échouée', 
+                message: dateError.message 
+            });
+        }
+
+        // Valider la plage de dates (startDate <= endDate)
+        const start = new Date(validatedStartDate + 'T00:00:00Z');
+        const end = new Date(validatedEndDate + 'T00:00:00Z');
+        if (start > end) {
+            const errorMsg = `La date de début (${validatedStartDate}) doit être antérieure ou égale à la date de fin (${validatedEndDate}).`;
+            console.error(`[Validation Error] [Endpoint: ${endpoint}] [userId: ${userId}] ${errorMsg}`);
+            return res.status(400).json({ 
+                error: 'Validation échouée', 
+                message: errorMsg 
+            });
+        }
+
+        // 2. Récupérer le teamId de l'utilisateur
         const { teamId } = await getOrInitializeTeamId(userId);
 
         // 2. Récupérer les données des propriétés (pour le prix de base)
@@ -4540,13 +4899,11 @@ app.get('/api/reports/kpis', authenticateToken, async (req, res) => {
         const totalPropertiesInTeam = properties.length;
 
         // 3. Calculer le nombre de jours dans la période
-        const start = new Date(startDate);
-        const end = new Date(endDate);
         const daysInPeriod = Math.round((end - start) / (1000 * 60 * 60 * 24)) + 1; // +1 pour inclure le dernier jour
         const totalNightsAvailable = totalPropertiesInTeam * daysInPeriod;
 
         // 4. Interroger toutes les réservations de l'équipe qui chevauchent la période
-        const bookings = await db.getBookingsByTeamAndDateRange(teamId, startDate, endDate);
+        const bookings = await db.getBookingsByTeamAndDateRange(teamId, validatedStartDate, validatedEndDate);
 
         if (!bookings || bookings.length === 0) {
              return res.status(200).json({ totalRevenue: 0, totalNightsBooked: 0, adr: 0, occupancy: 0, totalNightsAvailable: totalNightsAvailable, iaGain: 0, iaScore: 0, revPar: 0 });
@@ -4606,39 +4963,71 @@ app.get('/api/reports/kpis', authenticateToken, async (req, res) => {
         });
 
     } catch (error) {
-        console.error('Erreur lors du calcul des KPIs:', error);
-        res.status(500).send({ error: 'Erreur serveur lors du calcul des KPIs.' });
+        // 5. Logger toutes les erreurs avec userId et endpoint
+        const userId = req.user?.uid || 'unknown';
+        console.error(`[Validation Error] [Endpoint: ${endpoint}] [userId: ${userId}] Erreur lors du calcul des KPIs:`, error);
+        res.status(500).json({ error: 'Erreur serveur lors du calcul des KPIs.' });
     }
 });
 
 // GET /api/reports/revenue-over-time
 app.get('/api/reports/revenue-over-time', authenticateToken, async (req, res) => {
+    const endpoint = '/api/reports/revenue-over-time';
     try {
         const userId = req.user.uid;
         const { startDate, endDate } = req.query;
 
+        // 1. Valider strictement les dates (format, plage, validité)
         if (!startDate || !endDate) {
-            return res.status(400).send({ error: 'Les dates de début et de fin sont requises.' });
+            console.error(`[Validation Error] [Endpoint: ${endpoint}] [userId: ${userId}] Les dates de début et de fin sont requises.`);
+            return res.status(400).json({ 
+                error: 'Validation échouée', 
+                message: 'Les dates de début et de fin sont requises.' 
+            });
         }
 
-        // 1. Trouver le teamId et le nombre total de propriétés
+        let validatedStartDate, validatedEndDate;
+        try {
+            validatedStartDate = validateAndSanitizeDate(startDate, 'startDate', userId);
+            validatedEndDate = validateAndSanitizeDate(endDate, 'endDate', userId);
+        } catch (dateError) {
+            console.error(`[Validation Error] [Endpoint: ${endpoint}] [userId: ${userId}] ${dateError.message}`);
+            return res.status(400).json({ 
+                error: 'Validation échouée', 
+                message: dateError.message 
+            });
+        }
+
+        // Valider la plage de dates (startDate <= endDate)
+        const start = new Date(validatedStartDate + 'T00:00:00Z');
+        const end = new Date(validatedEndDate + 'T00:00:00Z');
+        if (start > end) {
+            const errorMsg = `La date de début (${validatedStartDate}) doit être antérieure ou égale à la date de fin (${validatedEndDate}).`;
+            console.error(`[Validation Error] [Endpoint: ${endpoint}] [userId: ${userId}] ${errorMsg}`);
+            return res.status(400).json({ 
+                error: 'Validation échouée', 
+                message: errorMsg 
+            });
+        }
+
+        // 2. Trouver le teamId et le nombre total de propriétés
         const { teamId } = await getOrInitializeTeamId(userId);
 
         const properties = await db.getPropertiesByTeam(teamId);
         const totalPropertiesInTeam = properties.length;
 
-        // 2. Initialiser une carte de dates
+        // 3. Initialiser une carte de dates
         const datesMap = new Map();
-        let currentDate = new Date(startDate + 'T00:00:00Z'); // Forcer UTC
-        const finalDate = new Date(endDate + 'T00:00:00Z');
+        let currentDate = new Date(validatedStartDate + 'T00:00:00Z'); // Forcer UTC
+        const finalDate = new Date(validatedEndDate + 'T00:00:00Z');
 
         while (currentDate <= finalDate) {
             datesMap.set(currentDate.toISOString().split('T')[0], { revenue: 0, nightsBooked: 0 }); // Stocker un objet
             currentDate.setUTCDate(currentDate.getUTCDate() + 1);
         }
 
-        // 3. Récupérer les réservations qui chevauchent la période
-        const bookings = await db.getBookingsByTeamAndDateRange(teamId, startDate, endDate);
+        // 4. Récupérer les réservations qui chevauchent la période
+        const bookings = await db.getBookingsByTeamAndDateRange(teamId, validatedStartDate, validatedEndDate);
 
         // 4. Itérer sur chaque réservation et chaque jour de la réservation
         bookings.forEach(booking => {
@@ -4668,16 +5057,33 @@ app.get('/api/reports/revenue-over-time', authenticateToken, async (req, res) =>
         });
 
     } catch (error) {
-        console.error('Erreur lors du calcul des revenus journaliers:', error);
-        res.status(500).send({ error: 'Erreur serveur lors du calcul des revenus journaliers.' });
+        // 5. Logger toutes les erreurs avec userId et endpoint
+        const userId = req.user?.uid || 'unknown';
+        console.error(`[Validation Error] [Endpoint: ${endpoint}] [userId: ${userId}] Erreur lors du calcul des revenus journaliers:`, error);
+        res.status(500).json({ error: 'Erreur serveur lors du calcul des revenus journaliers.' });
     }
 });
 
 // GET /api/reports/market-demand-snapshot - Indicateurs de demande sur les dernières 24h
 app.get('/api/reports/market-demand-snapshot', authenticateToken, async (req, res) => {
+    const endpoint = '/api/reports/market-demand-snapshot';
     try {
         const userId = req.user.uid;
         const { timezone } = req.query;
+
+        // 3. Valider les paramètres de requête (timezone)
+        let validatedTimezone = 'UTC'; // Valeur par défaut
+        if (timezone) {
+            try {
+                validatedTimezone = validateTimezone(timezone, 'timezone', userId);
+            } catch (timezoneError) {
+                console.error(`[Validation Error] [Endpoint: ${endpoint}] [userId: ${userId}] ${timezoneError.message}`);
+                return res.status(400).json({ 
+                    error: 'Validation échouée', 
+                    message: timezoneError.message 
+                });
+            }
+        }
 
         // 1. Récupérer le teamId de l'utilisateur
         const { teamId } = await getOrInitializeTeamId(userId);
@@ -4699,7 +5105,7 @@ app.get('/api/reports/market-demand-snapshot', authenticateToken, async (req, re
                 conversionRate: 0,
                 windowStart: start.toISOString(),
                 windowEnd: end.toISOString(),
-                timezone: timezone || 'UTC'
+                timezone: validatedTimezone
             });
         }
         
@@ -4739,21 +5145,66 @@ app.get('/api/reports/market-demand-snapshot', authenticateToken, async (req, re
         });
 
     } catch (error) {
-        console.error('Erreur lors du calcul du snapshot de demande marché:', error);
-        res.status(500).send({ error: 'Erreur serveur lors du calcul du snapshot de demande marché.' });
+        // 5. Logger toutes les erreurs avec userId et endpoint
+        const userId = req.user?.uid || 'unknown';
+        console.error(`[Validation Error] [Endpoint: ${endpoint}] [userId: ${userId}] Erreur lors du calcul du snapshot de demande marché:`, error);
+        res.status(500).json({ error: 'Erreur serveur lors du calcul du snapshot de demande marché.' });
     }
 });
 
 // GET /api/reports/positioning - ADR vs marché + distribution prix concurrents (avec IA)
 app.get('/api/reports/positioning', authenticateToken, checkAIQuota, async (req, res) => {
+    const endpoint = '/api/reports/positioning';
     let tokensUsed = 0;
     let aiCallSucceeded = false;
     try {
         const userId = req.user.uid;
         const { startDate, endDate } = req.query;
 
+        // 1. Valider strictement les dates (format, plage, validité)
         if (!startDate || !endDate) {
-            return res.status(400).send({ error: 'Les dates de début et de fin sont requises.' });
+            console.error(`[Validation Error] [Endpoint: ${endpoint}] [userId: ${userId}] Les dates de début et de fin sont requises.`);
+            return res.status(400).json({ 
+                error: 'Validation échouée', 
+                message: 'Les dates de début et de fin sont requises.' 
+            });
+        }
+
+        let sanitizedStartDate, sanitizedEndDate;
+        try {
+            sanitizedStartDate = validateAndSanitizeDate(startDate, 'startDate', userId);
+            sanitizedEndDate = validateAndSanitizeDate(endDate, 'endDate', userId);
+        } catch (dateError) {
+            console.error(`[Validation Error] [Endpoint: ${endpoint}] [userId: ${userId}] ${dateError.message}`);
+            return res.status(400).json({ 
+                error: 'Validation échouée', 
+                message: dateError.message 
+            });
+        }
+
+        // Vérifier que la plage de dates est raisonnable (max 2 ans)
+        const start = new Date(sanitizedStartDate + 'T00:00:00Z');
+        const end = new Date(sanitizedEndDate + 'T00:00:00Z');
+        const diffTime = Math.abs(end - start);
+        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+        const maxDays = 2 * 365; // 2 ans
+
+        if (diffDays > maxDays) {
+            const errorMsg = `La plage de dates ne peut pas dépasser 2 ans. Plage demandée: ${diffDays} jours.`;
+            console.error(`[Validation Error] [Endpoint: ${endpoint}] [userId: ${userId}] ${errorMsg}`);
+            return res.status(400).json({ 
+                error: 'Validation échouée', 
+                message: errorMsg 
+            });
+        }
+
+        if (start > end) {
+            const errorMsg = `La date de début (${sanitizedStartDate}) doit être antérieure ou égale à la date de fin (${sanitizedEndDate}).`;
+            console.error(`[Validation Error] [Endpoint: ${endpoint}] [userId: ${userId}] ${errorMsg}`);
+            return res.status(400).json({ 
+                error: 'Validation échouée', 
+                message: errorMsg 
+            });
         }
 
         // 1. Récupérer le teamId et les propriétés
@@ -4783,8 +5234,7 @@ app.get('/api/reports/positioning', authenticateToken, checkAIQuota, async (req,
         });
 
         // 2. Agréger ADR par propriété sur la période (basé sur les réservations)
-        const start = new Date(startDate + 'T00:00:00Z');
-        const end = new Date(endDate + 'T00:00:00Z');
+        // Utiliser les dates sanitizées
 
         const adrStats = properties.map(p => ({
             id: p.id,
@@ -4794,7 +5244,7 @@ app.get('/api/reports/positioning', authenticateToken, checkAIQuota, async (req,
         }));
 
         // Récupérer toutes les réservations de l'équipe pour la période
-        const bookings = await db.getBookingsByTeamAndDateRange(teamId, startDate, endDate);
+        const bookings = await db.getBookingsByTeamAndDateRange(teamId, sanitizedStartDate, sanitizedEndDate);
 
         bookings.forEach(booking => {
             const propertyId = booking.property_id;
@@ -4817,19 +5267,40 @@ app.get('/api/reports/positioning', authenticateToken, checkAIQuota, async (req,
             }
         });
 
+        // Whitelist des types de propriétés autorisés
+        const allowedPropertyTypes = ['appartement', 'maison', 'villa', 'studio', 'chambre', 'loft', 'penthouse', 'chalet', 'gîte', 'apartment', 'house', 'villa', 'studio', 'room', 'loft', 'penthouse', 'chalet', 'cottage'];
+        
+        // Sanitiser propertyStats avant injection dans le prompt
         const propertyStats = adrStats.map((s, i) => {
             const prop = properties[i];
             const yourAdr = s.nights > 0 ? s.revenue / s.nights : prop.basePrice || 0;
+            
+            // Sanitiser le nom (limiter à 100 caractères)
+            const sanitizedName = sanitizeForPrompt(prop.name || 'Propriété', 100);
+            
+            // Sanitiser la location (limiter à 100 caractères)
+            const sanitizedLocation = sanitizeForPrompt(prop.location || '', 100);
+            
+            // Valider le type avec whitelist
+            const rawType = (prop.type || 'appartement').toLowerCase().trim();
+            const sanitizedType = allowedPropertyTypes.includes(rawType) ? rawType : 'appartement';
+            
+            if (rawType !== sanitizedType) {
+                console.warn(`[Sanitization] Type de propriété non autorisé: "${rawType}" → "${sanitizedType}"`);
+            }
+            
             return {
                 id: prop.id,
-                name: prop.name,
-                location: prop.location,
-                type: prop.type,
+                name: sanitizedName,
+                location: sanitizedLocation,
+                type: sanitizedType,
                 capacity: prop.capacity,
                 basePrice: prop.basePrice,
                 yourAdr: Math.round(yourAdr)
             };
         });
+        
+        console.log(`[Sanitization] ${propertyStats.length} propriétés sanitizées pour le prompt IA`);
 
         // 3. Construire le prompt IA pour obtenir ADR marché + distribution prix concurrents
         const today = new Date().toISOString().split('T')[0];
@@ -4839,11 +5310,11 @@ Tu es un moteur de benchmarking tarifaire pour la location courte durée.
 
 Contexte:
 - Date d'exécution: ${today}
-- Période analysée: du ${startDate} au ${endDate}
+- Période analysée: du ${sanitizedStartDate} au ${sanitizedEndDate}
 - Marché principal: ${propertyStats[0]?.location || 'Non spécifié'}
 
 Voici les propriétés de mon portefeuille et leur ADR observé sur la période:
-${JSON.stringify(propertyStats, null, 2)}
+${safeJSONStringify(propertyStats, 3, 2)}
 
 Ta mission:
 1) Utilise des recherches web pour trouver les prix moyens réels du marché pour des propriétés comparables dans ${propertyStats[0]?.location || 'cette zone'}.
@@ -4871,11 +5342,11 @@ You are a pricing benchmarking engine for short-term rentals.
 
 Context:
 - Execution date: ${today}
-- Analysis period: from ${startDate} to ${endDate}
+- Analysis period: from ${sanitizedStartDate} to ${sanitizedEndDate}
 - Main market: ${propertyStats[0]?.location || 'Not specified'}
 
 Here are my portfolio properties and their observed ADR over the period:
-${JSON.stringify(propertyStats, null, 2)}
+${safeJSONStringify(propertyStats, 3, 2)}
 
 Your mission:
 1) Use web searches to find real average market prices for comparable properties in ${propertyStats[0]?.location || 'this area'}.
@@ -5003,8 +5474,10 @@ CRITICAL REMINDER: Respond ONLY with this JSON, no comments, no text around, no 
         res.status(200).json(iaResult);
 
     } catch (error) {
-        console.error('Erreur lors du calcul du rapport de positionnement:', error);
-        res.status(500).send({ error: 'Erreur serveur lors du calcul du rapport de positionnement.' });
+        // 5. Logger toutes les erreurs avec userId et endpoint
+        const userId = req.user?.uid || 'unknown';
+        console.error(`[Validation Error] [Endpoint: ${endpoint}] [userId: ${userId}] Erreur lors du calcul du rapport de positionnement:`, error);
+        res.status(500).json({ error: 'Erreur serveur lors du calcul du rapport de positionnement.' });
     }
 });
 
@@ -6203,20 +6676,52 @@ app.post('/api/reports/analyze-date', authenticateToken, checkAIQuota, async (re
              return res.status(403).send({ error: 'Action non autorisée sur cette propriété.' });
         }
         
-        const location = property.location || 'France';
-        const city = location.split(',')[0].trim();
-        const capacity = property.capacity || 2;
+        // 2. Sanitiser et valider les inputs avant injection dans le prompt IA
+        // 2.1. Valider et sanitiser la date
+        let sanitizedDate;
+        try {
+            sanitizedDate = validateAndSanitizeDate(date);
+        } catch (dateError) {
+            console.error(`[Sanitization] Erreur de validation de date: ${dateError.message}`);
+            return res.status(400).send({ error: `Date invalide: ${dateError.message}` });
+        }
+        
+        // 2.2. Sanitiser la location
+        const rawLocation = property.location || 'France';
+        const sanitizedLocation = sanitizeForPrompt(rawLocation, 100);
+        const city = sanitizedLocation.split(',')[0].trim();
+        
+        // 2.3. Sanitiser le type de propriété
+        const rawPropertyType = property.property_type || property.propertyType || 'appartement';
+        const sanitizedPropertyType = sanitizeForPrompt(rawPropertyType, 50);
+        
+        // 2.4. Sanitiser la capacité (convertir en nombre sécurisé)
+        const rawCapacity = property.capacity || 2;
+        let capacity;
+        try {
+            capacity = sanitizeNumber(rawCapacity, 1, 50, 'capacity', userId, { mustBeInteger: true, mustBePositive: true });
+        } catch (capacityError) {
+            console.error(`[Sanitization] Erreur de validation de capacité: ${capacityError.message}`);
+            return res.status(400).send({ error: `Capacité invalide: ${capacityError.message}` });
+        }
+        
+        // 2.5. Logger les valeurs sanitizées pour debugging
+        console.log(`[Sanitization] Inputs sanitizés pour l'analyse de date:`);
+        console.log(`  - Date: ${date} → ${sanitizedDate}`);
+        console.log(`  - Location: ${rawLocation} → ${sanitizedLocation} (city: ${city})`);
+        console.log(`  - Property Type: ${rawPropertyType} → ${sanitizedPropertyType}`);
+        console.log(`  - Capacity: ${rawCapacity} → ${capacity}`);
         
         // Récupérer la langue de l'utilisateur
         const language = req.query.language || userProfile?.language || 'fr';
         const isFrench = language === 'fr' || language === 'fr-FR';
 
-        // 2. Construire le prompt pour ChatGPT
+        // 3. Construire le prompt pour ChatGPT avec les valeurs sanitizées
         const prompt = isFrench ? `
             Tu es un analyste de marché expert pour la location saisonnière.
-            Analyse la demande du marché pour la date spécifique: **${date}**
+            Analyse la demande du marché pour la date spécifique: **${sanitizedDate}**
             dans la ville de: **${city}**
-            pour un logement de type "${property.property_type || 'appartement'}" pouvant accueillir **${capacity} personnes**.
+            pour un logement de type "${sanitizedPropertyType}" pouvant accueillir **${capacity} personnes**.
 
             Utilise l'outil de recherche Google pour trouver:
             1.  Les événements locaux (concerts, salons, matchs, vacances scolaires, jours fériés) ayant lieu à cette date ou ce week-end là.
@@ -6236,9 +6741,9 @@ app.post('/api/reports/analyze-date', authenticateToken, checkAIQuota, async (re
             }
         ` : `
             You are an expert market analyst for seasonal rentals.
-            Analyze market demand for the specific date: **${date}**
+            Analyze market demand for the specific date: **${sanitizedDate}**
             in the city of: **${city}**
-            for a "${property.property_type || property.propertyType || 'apartment'}" type accommodation that can accommodate **${capacity} people**.
+            for a "${sanitizedPropertyType}" type accommodation that can accommodate **${capacity} people**.
 
             Use the Google search tool to find:
             1.  Local events (concerts, trade shows, matches, school holidays, public holidays) taking place on this date or that weekend.
@@ -6258,7 +6763,7 @@ app.post('/api/reports/analyze-date', authenticateToken, checkAIQuota, async (re
             }
         `;
 
-        // 3. Appeler Perplexity/ChatGPT avec recherche web et capturer les tokens
+        // 4. Appeler Perplexity/ChatGPT avec recherche web et capturer les tokens
         const aiResponse = await callGeminiWithSearch(prompt, 10, language);
         
         // Gérer le nouveau format de retour { data, tokens } ou l'ancien format (rétrocompatibilité)
@@ -6279,7 +6784,7 @@ app.post('/api/reports/analyze-date', authenticateToken, checkAIQuota, async (re
             return res.status(503).send({ error: "L'analyse IA n'a pas pu générer de réponse valide." });
         }
 
-        // 4. Mettre à jour le quota avec les tokens réels utilisés
+        // 5. Mettre à jour le quota avec les tokens réels utilisés
         // Note: Le quota a déjà été incrémenté par le middleware, on doit juste mettre à jour les tokens
         // On va récupérer la valeur actuelle puis l'incrémenter
         const today = new Date().toISOString().split('T')[0];
@@ -6301,11 +6806,11 @@ app.post('/api/reports/analyze-date', authenticateToken, checkAIQuota, async (re
                 .eq('date', today);
         }
 
-        // 5. Logger l'utilisation
+        // 6. Logger l'utilisation
         const quotaInfo = req.aiQuota || {};
         console.log(`[AI Quota] User ${userId} used ${tokensUsed} tokens, remaining: ${quotaInfo.remaining || 0} calls`);
 
-        // 6. Renvoyer le résultat
+        // 7. Renvoyer le résultat
         res.status(200).json(analysisResult);
 
     } catch (error) {
@@ -6921,7 +7426,19 @@ app.post('/api/properties/:id/pricing-strategy', authenticateToken, checkAIQuota
     try {
         const { id } = req.params;
         const userId = req.user.uid;
+        const endpoint = '/api/properties/:id/pricing-strategy';
         const { useMarketData = 'true', useAI = 'hybrid' } = req.query; // Nouveaux paramètres
+        
+        // 1. Valider strictement l'ID de propriété
+        try {
+            validatePropertyId(id, 'propertyId', userId);
+        } catch (error) {
+            console.error(`[Validation Error] [Endpoint: ${endpoint}] [userId: ${userId}] ${error.message}`);
+            return res.status(400).json({ 
+                error: 'Validation échouée', 
+                message: error.message 
+            });
+        }
 
         const property = await db.getProperty(id);
         if (!property) {
@@ -6943,9 +7460,209 @@ app.post('/api/properties/:id/pricing-strategy', authenticateToken, checkAIQuota
         // Récupérer la langue de l'utilisateur
         const language = req.query.language || userProfile?.language || 'fr';
         
-        // Extraire city et country depuis property.location
-        const location = property.location || '';
-        const city = location.split(',')[0].trim() || '';
+        // 1. Valider strictement tous les champs de property avant traitement
+        const validationErrors = [];
+        const sanitizationWarnings = [];
+        
+        // Whitelist des types de propriétés autorisés
+        const allowedPropertyTypes = ['appartement', 'maison', 'villa', 'studio', 'chambre', 'loft', 'penthouse', 'chalet', 'gîte', 'apartment', 'house', 'villa', 'studio', 'room', 'loft', 'penthouse', 'chalet', 'cottage'];
+        
+        // Sanitiser location (limiter à 200 caractères)
+        const rawLocation = property.location || '';
+        const sanitizedLocation = sanitizeForPrompt(rawLocation, 200);
+        if (rawLocation !== sanitizedLocation) {
+            sanitizationWarnings.push(`Location: "${rawLocation.substring(0, 50)}..." → "${sanitizedLocation.substring(0, 50)}..."`);
+        }
+        
+        // Sanitiser address (limiter à 200 caractères)
+        const rawAddress = property.address || '';
+        const sanitizedAddress = sanitizeForPrompt(rawAddress, 200);
+        if (rawAddress !== sanitizedAddress) {
+            sanitizationWarnings.push(`Address: "${rawAddress.substring(0, 50)}..." → "${sanitizedAddress.substring(0, 50)}..."`);
+        }
+        
+        // Valider property_type avec whitelist
+        const rawPropertyType = property.property_type || property.propertyType || 'appartement';
+        const sanitizedPropertyType = allowedPropertyTypes.includes(rawPropertyType.toLowerCase().trim()) 
+            ? rawPropertyType.toLowerCase().trim() 
+            : 'appartement';
+        if (rawPropertyType.toLowerCase().trim() !== sanitizedPropertyType) {
+            sanitizationWarnings.push(`Property Type: "${rawPropertyType}" → "${sanitizedPropertyType}"`);
+        }
+        
+        // Valider capacity avec validateCapacity
+        const rawCapacity = property.capacity || 2;
+        let sanitizedCapacity;
+        try {
+            sanitizedCapacity = validateCapacity(rawCapacity, 'property.capacity', userId);
+        } catch (capacityError) {
+            console.error(`[Validation Error] [Endpoint: ${endpoint}] [userId: ${userId}] ${capacityError.message}`);
+            return res.status(400).json({ 
+                error: 'Validation échouée', 
+                message: capacityError.message 
+            });
+        }
+        if (rawCapacity !== sanitizedCapacity) {
+            sanitizationWarnings.push(`Capacity: ${rawCapacity} → ${sanitizedCapacity}`);
+        }
+        
+        // Valider surface (nombre positif ou zéro)
+        const rawSurface = property.surface || 0;
+        let sanitizedSurface;
+        try {
+            sanitizedSurface = sanitizeNumber(rawSurface, 0, Infinity, 'surface', userId);
+        } catch (surfaceError) {
+            console.error(`[Sanitization] Erreur de validation de surface: ${surfaceError.message}`);
+            return res.status(400).send({ error: `Surface invalide: ${surfaceError.message}` });
+        }
+        if (rawSurface !== sanitizedSurface) {
+            sanitizationWarnings.push(`Surface: ${rawSurface} → ${sanitizedSurface}`);
+        }
+        
+        // Sanitiser amenities (tableau)
+        const rawAmenities = property.amenities || [];
+        const sanitizedAmenities = sanitizeArray(rawAmenities, 50, (item) => sanitizeForPrompt(String(item), 50));
+        if (JSON.stringify(rawAmenities) !== JSON.stringify(sanitizedAmenities)) {
+            sanitizationWarnings.push(`Amenities: ${rawAmenities.length} items → ${sanitizedAmenities.length} items sanitizés`);
+        }
+        
+        // Valider strategy avec validateEnum
+        const rawStrategy = property.strategy || 'Équilibré';
+        let sanitizedStrategy;
+        try {
+            sanitizedStrategy = validateEnum(rawStrategy, ALLOWED_STRATEGIES, 'property.strategy', userId);
+        } catch (strategyError) {
+            console.error(`[Validation Error] [Endpoint: ${endpoint}] [userId: ${userId}] ${strategyError.message}`);
+            return res.status(400).json({ 
+                error: 'Validation échouée', 
+                message: strategyError.message 
+            });
+        }
+        if (rawStrategy !== sanitizedStrategy) {
+            sanitizationWarnings.push(`Strategy: "${rawStrategy}" → "${sanitizedStrategy}"`);
+        }
+        
+        // Valider base_price, floor_price, ceiling_price avec validatePrice
+        const rawBasePrice = property.base_price || 100;
+        let sanitizedBasePrice;
+        try {
+            sanitizedBasePrice = validatePrice(rawBasePrice, 0, Infinity, 'property.base_price', userId);
+        } catch (basePriceError) {
+            console.error(`[Validation Error] [Endpoint: ${endpoint}] [userId: ${userId}] ${basePriceError.message}`);
+            return res.status(400).json({ 
+                error: 'Validation échouée', 
+                message: basePriceError.message 
+            });
+        }
+        if (rawBasePrice !== sanitizedBasePrice) {
+            sanitizationWarnings.push(`Base Price: ${rawBasePrice} → ${sanitizedBasePrice}`);
+        }
+        
+        const rawFloorPrice = property.floor_price || 50;
+        let sanitizedFloorPrice;
+        try {
+            sanitizedFloorPrice = validatePrice(rawFloorPrice, 0, Infinity, 'property.floor_price', userId);
+        } catch (floorPriceError) {
+            console.error(`[Validation Error] [Endpoint: ${endpoint}] [userId: ${userId}] ${floorPriceError.message}`);
+            return res.status(400).json({ 
+                error: 'Validation échouée', 
+                message: floorPriceError.message 
+            });
+        }
+        if (rawFloorPrice !== sanitizedFloorPrice) {
+            sanitizationWarnings.push(`Floor Price: ${rawFloorPrice} → ${sanitizedFloorPrice}`);
+        }
+        
+        const rawCeilingPrice = property.ceiling_price || null;
+        let sanitizedCeilingPrice = null;
+        if (rawCeilingPrice !== null && rawCeilingPrice !== undefined) {
+            try {
+                sanitizedCeilingPrice = validatePrice(rawCeilingPrice, 0, Infinity, 'property.ceiling_price', userId);
+            } catch (ceilingPriceError) {
+                console.error(`[Validation Error] [Endpoint: ${endpoint}] [userId: ${userId}] ${ceilingPriceError.message}`);
+                return res.status(400).json({ 
+                    error: 'Validation échouée', 
+                    message: ceilingPriceError.message 
+                });
+            }
+        }
+        if (rawCeilingPrice !== sanitizedCeilingPrice) {
+            sanitizationWarnings.push(`Ceiling Price: ${rawCeilingPrice} → ${sanitizedCeilingPrice}`);
+        }
+        
+        // 2. Valider les plages de prix (floor_price < base_price < ceiling_price)
+        if (sanitizedFloorPrice >= sanitizedBasePrice) {
+            const errorMsg = `Le prix plancher (${sanitizedFloorPrice}) doit être strictement inférieur au prix de base (${sanitizedBasePrice}).`;
+            console.error(`[Validation Error] [Endpoint: ${endpoint}] [userId: ${userId}] ${errorMsg}`);
+            return res.status(400).json({ 
+                error: 'Validation échouée', 
+                message: errorMsg 
+            });
+        }
+        
+        if (sanitizedCeilingPrice !== null && sanitizedBasePrice >= sanitizedCeilingPrice) {
+            const errorMsg = `Le prix de base (${sanitizedBasePrice}) doit être strictement inférieur au prix plafond (${sanitizedCeilingPrice}).`;
+            console.error(`[Validation Error] [Endpoint: ${endpoint}] [userId: ${userId}] ${errorMsg}`);
+            return res.status(400).json({ 
+                error: 'Validation échouée', 
+                message: errorMsg 
+            });
+        }
+        
+        // 3. Valider tous les pourcentages (0-100) avec validatePercentage
+        const rawWeeklyDiscount = property.weekly_discount_percent || 0;
+        let sanitizedWeeklyDiscount;
+        try {
+            sanitizedWeeklyDiscount = validatePercentage(rawWeeklyDiscount, 'property.weekly_discount_percent', userId);
+        } catch (weeklyDiscountError) {
+            console.error(`[Validation Error] [Endpoint: ${endpoint}] [userId: ${userId}] ${weeklyDiscountError.message}`);
+            return res.status(400).json({ 
+                error: 'Validation échouée', 
+                message: weeklyDiscountError.message 
+            });
+        }
+        if (rawWeeklyDiscount !== sanitizedWeeklyDiscount) {
+            sanitizationWarnings.push(`Weekly Discount: ${rawWeeklyDiscount}% → ${sanitizedWeeklyDiscount}%`);
+        }
+        
+        const rawMonthlyDiscount = property.monthly_discount_percent || 0;
+        let sanitizedMonthlyDiscount;
+        try {
+            sanitizedMonthlyDiscount = validatePercentage(rawMonthlyDiscount, 'property.monthly_discount_percent', userId);
+        } catch (monthlyDiscountError) {
+            console.error(`[Validation Error] [Endpoint: ${endpoint}] [userId: ${userId}] ${monthlyDiscountError.message}`);
+            return res.status(400).json({ 
+                error: 'Validation échouée', 
+                message: monthlyDiscountError.message 
+            });
+        }
+        if (rawMonthlyDiscount !== sanitizedMonthlyDiscount) {
+            sanitizationWarnings.push(`Monthly Discount: ${rawMonthlyDiscount}% → ${sanitizedMonthlyDiscount}%`);
+        }
+        
+        const rawWeekendMarkup = property.weekend_markup_percent || 0;
+        let sanitizedWeekendMarkup;
+        try {
+            sanitizedWeekendMarkup = validatePercentage(rawWeekendMarkup, 'property.weekend_markup_percent', userId);
+        } catch (weekendMarkupError) {
+            console.error(`[Validation Error] [Endpoint: ${endpoint}] [userId: ${userId}] ${weekendMarkupError.message}`);
+            return res.status(400).json({ 
+                error: 'Validation échouée', 
+                message: weekendMarkupError.message 
+            });
+        }
+        if (rawWeekendMarkup !== sanitizedWeekendMarkup) {
+            sanitizationWarnings.push(`Weekend Markup: ${rawWeekendMarkup}% → ${sanitizedWeekendMarkup}%`);
+        }
+        
+        // Logger les avertissements si des valeurs ont été modifiées
+        if (sanitizationWarnings.length > 0) {
+            console.warn(`[Sanitization] ${sanitizationWarnings.length} valeur(s) modifiée(s) pour la propriété ${id}:`);
+            sanitizationWarnings.forEach(warning => console.warn(`  - ${warning}`));
+        }
+        
+        // Extraire city et country depuis property.location sanitizée
+        const city = sanitizedLocation.split(',')[0].trim() || '';
         const country = property.country || 'FR';
         
         // Essayer d'abord le pricing déterministe basé sur market_features
@@ -7045,7 +7762,7 @@ Tu es l'IA centrale d'un système de Revenue Management (Yield Management) compa
 
 PARAMÈTRES DE LA MISSION :
 
-- **Lieu :** ${property.location}
+- **Lieu :** ${sanitizedLocation}
 - **Date d'exécution :** ${today}
 - **Horizon :** 180 jours
 - **Objectif :** Maximisation du RevPAR (Revenu par chambre disponible) + Taux de Conversion.
@@ -7058,28 +7775,28 @@ PARAMÈTRES DE LA MISSION :
 
 Analyse la valeur perçue de ce bien spécifique par rapport au marché local :
 
-${JSON.stringify({
-    address: property.address,
-    type: property.property_type,
-    capacity: property.capacity,
-    surface: property.surface,
-    amenities: property.amenities || [],
+${safeJSONStringify({
+    address: sanitizedAddress,
+    type: sanitizedPropertyType,
+    capacity: sanitizedCapacity,
+    surface: sanitizedSurface,
+    amenities: sanitizedAmenities,
     listing_quality_assessment:
       "AUTO-ÉVALUATION REQUISE : Détermine si ce bien est 'Économique', 'Standard', 'Premium' ou 'Luxe' en fonction des équipements (Piscine ? Vue ? AC ?) et de la surface vs capacité."
-  }, null, 2)}
+  }, 3, 2)}
 
 **2. RÈGLES FINANCIÈRES INVIOLABLES (HARD CONSTRAINTS)**
 
 Ces bornes sont des "Kill Switches". Si ton calcul théorique les dépasse, tu dois couper.
 
-- **Floor Price (Plancher Absolu):** ${property.floor_price} € (Ligne de survie).
-- **Base Price (Pivot):** ${property.base_price} € (Prix de référence neutre).
-- **Ceiling Price (Plafond):** ${property.ceiling_price || property.base_price * 4} € (Sécurité anti-aberration).
+- **Floor Price (Plancher Absolu):** ${sanitizedFloorPrice} € (Ligne de survie).
+- **Base Price (Pivot):** ${sanitizedBasePrice} € (Prix de référence neutre).
+- **Ceiling Price (Plafond):** ${sanitizedCeilingPrice || sanitizedBasePrice * 4} € (Sécurité anti-aberration).
 - **Min Stay:** ${property.min_stay || 1} nuits.
-- **Réductions:** Semaine -${property.weekly_discount_percent || 0}%, Mois -${property.monthly_discount_percent || 0}%.
-- **Majoration Week-end:** Ven/Sam +${property.weekend_markup_percent || 0}%.
+- **Réductions:** Semaine -${sanitizedWeeklyDiscount}%, Mois -${sanitizedMonthlyDiscount}%.
+- **Majoration Week-end:** Ven/Sam +${sanitizedWeekendMarkup}%.
 
-**3. STRATÉGIE UTILISATEUR : [ ${property.strategy || 'Équilibré'} ]**
+**3. STRATÉGIE UTILISATEUR : [ ${sanitizedStrategy} ]**
 
 Tu dois moduler ton agressivité selon ce profil :
 
@@ -7096,7 +7813,7 @@ Pour **CHAQUE JOUR** du calendrier, tu dois exécuter mentalement cette séquenc
 **ÉTAPE 1 : ANALYSE MACRO-ÉCONOMIQUE & TENDANCES (MARKET HEALTH)**
 
 * Prends en compte l'inflation actuelle en zone Euro/Locale.
-* Analyse la "Force de la destination" : Est-ce que ${property.location} est "tendance" cette année ? (Basé sur tes données d'entraînement).
+* Analyse la "Force de la destination" : Est-ce que ${sanitizedLocation} est "tendance" cette année ? (Basé sur tes données d'entraînement).
 * *Impact :* Ajuste le Prix de Base global de +/- 5% selon la santé économique du tourisme.
 
 **ÉTAPE 2 : COURBE DE SAISONNALITÉ HYPER-LOCALE (SEASONAL WAVE)**
@@ -7114,7 +7831,7 @@ Pour **CHAQUE JOUR** du calendrier, tu dois exécuter mentalement cette séquenc
 
 **ÉTAPE 4 : INTELLIGENCE ÉVÉNEMENTIELLE (DEMAND SPIKES)**
 
-* Effectue une recherche approfondie des événements à ${property.location} sur les 180 jours :
+* Effectue une recherche approfondie des événements à ${sanitizedLocation} sur les 180 jours :
     * Vacances Scolaires (Toutes zones + Pays limitrophes).
     * Jours Fériés et "Ponts" (Gaps entre férié et week-end).
     * Événements "Tier 1" : Grands concerts, Festivals, Compétitions sportives, Foires commerciales majeures.
@@ -7160,7 +7877,7 @@ Structure attendue :
     "property_grade": "Luxe/Standard/Éco",
     "market_sentiment": "Bullish (Hausier) ou Bearish (Baissier) - Courte explication.",
     "top_demand_drivers": ["Liste des 3 événements majeurs identifiés"],
-    "strategy_active": "${property.strategy || 'Équilibré'}"
+    "strategy_active": "${sanitizedStrategy}"
   },
   "calendar": [
     {
@@ -7169,7 +7886,7 @@ Structure attendue :
       "final_suggested_price": 0,
       "currency": "EUR",
       "price_breakdown": {
-        "base": ${property.base_price},
+        "base": ${sanitizedBasePrice},
         "seasonality_impact": "+0%",
         "event_impact": "+0%",
         "lead_time_impact": "+0%"
@@ -7496,11 +8213,24 @@ RAPPEL CRITIQUE : La réponse finale doit être UNIQUEMENT ce JSON, sans texte a
         res.status(200).json(strategyResult); 
 
     } catch (error) {
-        console.error('Erreur lors de la génération de la stratégie de prix:', error);
-        if (error.message.includes('429') || error.message.includes('overloaded')) {
+        // 4. Retourner des erreurs 400 avec détails si validation échoue
+        // 5. Logger toutes les erreurs avec userId et endpoint
+        const endpoint = '/api/properties/:id/pricing-strategy';
+        const userId = req.user?.uid || 'unknown';
+        
+        if (error.message && (error.message.includes('Le champ') || error.message.includes('doit être') || error.message.includes('Validation échouée'))) {
+            console.error(`[Validation Error] [Endpoint: ${endpoint}] [userId: ${userId}] ${error.message}`);
+            return res.status(400).json({ 
+                error: 'Validation échouée', 
+                message: error.message 
+            });
+        }
+        
+        console.error(`[Validation Error] [Endpoint: ${endpoint}] [userId: ${userId}] Erreur lors de la génération de la stratégie de prix:`, error);
+        if (error.message && (error.message.includes('429') || error.message.includes('overloaded'))) {
              res.status(503).send({ error: `L'API de génération de prix est temporairement surchargée. Veuillez réessayer plus tard.` });
         } else {
-             res.status(500).send({ error: `Erreur du serveur lors de la génération de la stratégie: ${error.message}` });
+             res.status(500).send({ error: `Erreur du serveur lors de la génération de la stratégie: ${error.message || 'Erreur inconnue'}` });
         }
     }
 });
@@ -7511,9 +8241,34 @@ app.get('/api/news', authenticateToken, async (req, res) => {
     try {
         const userId = req.user.uid;
         
-        // Récupérer la langue : query param > profil utilisateur > français par défaut
+        // 0. Sanitiser et valider les paramètres de la requête
+        // Whitelist des langues autorisées
+        const allowedLanguages = ['fr', 'en', 'es', 'de', 'it', 'pt', 'nl', 'pl', 'ru', 'ja', 'zh', 'ko', 'ar', 'hi'];
+        
+        // Récupérer et valider la langue : query param > profil utilisateur > français par défaut
         const userProfile = await db.getUser(userId);
-        const language = req.query.language || userProfile?.language || 'fr';
+        const rawLanguage = req.query.language || userProfile?.language || 'fr';
+        const language = allowedLanguages.includes(rawLanguage.toLowerCase()) ? rawLanguage.toLowerCase() : 'fr';
+        
+        if (rawLanguage !== language) {
+            console.warn(`[Sanitization] Langue non autorisée: "${rawLanguage}" → "${language}"`);
+        }
+        
+        // Sanitiser le paramètre city s'il est fourni
+        let city = null;
+        if (req.query.city) {
+            const rawCity = req.query.city;
+            city = sanitizeForPrompt(rawCity, 100);
+            
+            // Utiliser une valeur par défaut si la ville est vide après sanitisation
+            if (!city || city.trim().length === 0) {
+                console.warn(`[Sanitization] Ville vide après sanitisation, utilisation de la valeur par défaut. Raw: "${rawCity}"`);
+                city = 'France'; // Valeur par défaut sécurisée
+            }
+            
+            console.log(`[Sanitization] Ville sanitizée: "${rawCity}" → "${city}"`);
+        }
+        
         const forceRefresh = req.query.forceRefresh === 'true';
         
         const cacheKey = `marketNews_${language}`;
@@ -7784,8 +8539,18 @@ app.get('/api/properties/:id/news', authenticateToken, checkAIQuota, async (req,
              return res.status(403).send({ error: 'Action non autorisée sur cette propriété (pas dans la bonne équipe).' });
         }
         
+        // 1.1. Sanitiser la ville avant injection dans le prompt IA
         const fullLocation = property.location || 'France';
-        const city = fullLocation.split(',')[0].trim();
+        const rawCity = fullLocation.split(',')[0].trim();
+        let city = sanitizeForPrompt(rawCity, 100); // Limiter à 100 caractères
+        
+        // Utiliser une valeur par défaut si la ville est vide après sanitisation
+        if (!city || city.trim().length === 0) {
+            console.warn(`[Sanitization] Ville vide après sanitisation, utilisation de la valeur par défaut. Raw: "${rawCity}"`);
+            city = 'France'; // Valeur par défaut
+        }
+        
+        console.log(`[Sanitization] Ville sanitizée: "${rawCity}" → "${city}"`);
 
         // 2. Vérifier le cache de cette propriété (avec langue)
         // IMPORTANT: Le quota est vérifié AVANT la vérification du cache (via le middleware checkAIQuota)
@@ -8297,28 +9062,28 @@ PARAMÈTRES DE LA MISSION :
 
 Analyse la valeur perçue de ce bien spécifique par rapport au marché local :
 
-${JSON.stringify({
-    address: property.address,
-    type: property.property_type,
-    capacity: property.capacity,
-    surface: property.surface,
-    amenities: property.amenities || [],
+${safeJSONStringify({
+    address: sanitizedAddress,
+    type: sanitizedPropertyType,
+    capacity: sanitizedCapacity,
+    surface: sanitizedSurface,
+    amenities: sanitizedAmenities,
     listing_quality_assessment:
       "AUTO-ÉVALUATION REQUISE : Détermine si ce bien est 'Économique', 'Standard', 'Premium' ou 'Luxe' en fonction des équipements (Piscine ? Vue ? AC ?) et de la surface vs capacité."
-  }, null, 2)}
+  }, 3, 2)}
 
 **2. RÈGLES FINANCIÈRES INVIOLABLES (HARD CONSTRAINTS)**
 
 Ces bornes sont des "Kill Switches". Si ton calcul théorique les dépasse, tu dois couper.
 
-- **Floor Price (Plancher Absolu):** ${property.floor_price} € (Ligne de survie).
-- **Base Price (Pivot):** ${property.base_price} € (Prix de référence neutre).
-- **Ceiling Price (Plafond):** ${property.ceiling_price || property.base_price * 4} € (Sécurité anti-aberration).
+- **Floor Price (Plancher Absolu):** ${sanitizedFloorPrice} € (Ligne de survie).
+- **Base Price (Pivot):** ${sanitizedBasePrice} € (Prix de référence neutre).
+- **Ceiling Price (Plafond):** ${sanitizedCeilingPrice || sanitizedBasePrice * 4} € (Sécurité anti-aberration).
 - **Min Stay:** ${property.min_stay || 1} nuits.
-- **Réductions:** Semaine -${property.weekly_discount_percent || 0}%, Mois -${property.monthly_discount_percent || 0}%.
-- **Majoration Week-end:** Ven/Sam +${property.weekend_markup_percent || 0}%.
+- **Réductions:** Semaine -${sanitizedWeeklyDiscount}%, Mois -${sanitizedMonthlyDiscount}%.
+- **Majoration Week-end:** Ven/Sam +${sanitizedWeekendMarkup}%.
 
-**3. STRATÉGIE UTILISATEUR : [ ${property.strategy || 'Équilibré'} ]**
+**3. STRATÉGIE UTILISATEUR : [ ${sanitizedStrategy} ]**
 
 Tu dois moduler ton agressivité selon ce profil :
 
@@ -8335,7 +9100,7 @@ Pour **CHAQUE JOUR** du calendrier, tu dois exécuter mentalement cette séquenc
 **ÉTAPE 1 : ANALYSE MACRO-ÉCONOMIQUE & TENDANCES (MARKET HEALTH)**
 
 * Prends en compte l'inflation actuelle en zone Euro/Locale.
-* Analyse la "Force de la destination" : Est-ce que ${property.location} est "tendance" cette année ? (Basé sur tes données d'entraînement).
+* Analyse la "Force de la destination" : Est-ce que ${sanitizedLocation} est "tendance" cette année ? (Basé sur tes données d'entraînement).
 * *Impact :* Ajuste le Prix de Base global de +/- 5% selon la santé économique du tourisme.
 
 **ÉTAPE 2 : COURBE DE SAISONNALITÉ HYPER-LOCALE (SEASONAL WAVE)**
@@ -8353,7 +9118,7 @@ Pour **CHAQUE JOUR** du calendrier, tu dois exécuter mentalement cette séquenc
 
 **ÉTAPE 4 : INTELLIGENCE ÉVÉNEMENTIELLE (DEMAND SPIKES)**
 
-* Effectue une recherche approfondie des événements à ${property.location} sur les 180 jours :
+* Effectue une recherche approfondie des événements à ${sanitizedLocation} sur les 180 jours :
     * Vacances Scolaires (Toutes zones + Pays limitrophes).
     * Jours Fériés et "Ponts" (Gaps entre férié et week-end).
     * Événements "Tier 1" : Grands concerts, Festivals, Compétitions sportives, Foires commerciales majeures.
@@ -8399,7 +9164,7 @@ Structure attendue :
     "property_grade": "Luxe/Standard/Éco",
     "market_sentiment": "Bullish (Hausier) ou Bearish (Baissier) - Courte explication.",
     "top_demand_drivers": ["Liste des 3 événements majeurs identifiés"],
-    "strategy_active": "${property.strategy || 'Équilibré'}"
+    "strategy_active": "${sanitizedStrategy}"
   },
   "calendar": [
     {
@@ -8408,7 +9173,7 @@ Structure attendue :
       "final_suggested_price": 0,
       "currency": "EUR",
       "price_breakdown": {
-        "base": ${property.base_price},
+        "base": ${sanitizedBasePrice},
         "seasonality_impact": "+0%",
         "event_impact": "+0%",
         "lead_time_impact": "+0%"

@@ -7,7 +7,8 @@ import {
     updateMemberRole, 
     removeMember,
     changeUserPassword,
-    getIntegrations // NOUVEL IMPORT
+    getIntegrations, // NOUVEL IMPORT
+    deleteUserAccount // NOUVEL IMPORT
 } from '../services/api.js'; 
 import { jwtDecode } from 'jwt-decode'; 
 import PMSIntegrationPanel from '../components/PMSIntegrationPanel.jsx'; // NOUVEL IMPORT
@@ -47,6 +48,10 @@ function SettingsPage({ token, userProfile: initialProfile, onThemeChange, onLog
   const [confirmPassword, setConfirmPassword] = useState('');
   const [passwordError, setPasswordError] = useState('');
   const [passwordSuccess, setPasswordSuccess] = useState('');
+
+  // États pour la suppression de compte
+  const [isDeletingAccount, setIsDeletingAccount] = useState(false);
+  const [deleteAccountError, setDeleteAccountError] = useState('');
 
   // États de chargement et de messagerie
   const [isLoading, setIsLoading] = useState(true);
@@ -333,6 +338,29 @@ function SettingsPage({ token, userProfile: initialProfile, onThemeChange, onLog
                   setTeamMembers(membersData);
               } catch (err) {
                   setTeamError(t('settings.errors.removeError', { message: err.message }));
+              }
+          }
+      });
+  };
+
+  // Suppression du compte utilisateur
+  const handleDeleteAccount = () => {
+      setConfirmModal({
+          isOpen: true,
+          message: t('settings.deleteAccountConfirm'),
+          onConfirm: async () => {
+              setDeleteAccountError('');
+              setIsDeletingAccount(true);
+              try {
+                  await deleteUserAccount(currentUserId, token);
+                  // Si la suppression réussit, déconnecter l'utilisateur
+                  if (onLogout) {
+                      onLogout();
+                  }
+              } catch (err) {
+                  console.error('Erreur lors de la suppression du compte:', err);
+                  setDeleteAccountError(t('settings.errors.deleteAccountError', { message: err.message || 'Erreur inconnue' }));
+                  setIsDeletingAccount(false);
               }
           }
       });
@@ -804,6 +832,34 @@ function SettingsPage({ token, userProfile: initialProfile, onThemeChange, onLog
             className="px-6 py-2 font-semibold text-white rounded-[10px] bg-red-600 hover:bg-red-700 transition-colors"
           >
             {t('settings.disconnect')}
+          </button>
+        </div>
+      </div>
+
+      {/* Section Suppression de compte */}
+      <div className="bg-global-bg-box rounded-[14px] border border-solid border-red-800/50 p-6 flex flex-col gap-3 items-start justify-start relative">
+        <h2 className="text-global-blanc text-left font-h2-font-family text-h2-font-size font-h2-font-weight relative border-b border-global-stroke-box pb-2 mb-4 w-full">
+          {t('settings.deleteAccount')}
+        </h2>
+        <p className="text-red-300 text-sm font-medium mb-2">
+          {t('settings.deleteAccountWarning')}
+        </p>
+        <p className="text-global-inactive text-sm mb-4">
+          {t('settings.deleteAccountDescription')}
+        </p>
+        {deleteAccountError && (
+          <p className="bg-red-900/50 text-red-300 p-3 rounded-[10px] text-sm w-full">
+            {deleteAccountError}
+          </p>
+        )}
+        <div className="flex justify-end pt-4 w-full">
+          <button 
+            type="button"
+            onClick={handleDeleteAccount}
+            disabled={isDeletingAccount}
+            className="px-6 py-2 font-semibold text-white rounded-[10px] bg-red-700 hover:bg-red-800 disabled:bg-red-900 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          >
+            {isDeletingAccount ? t('common.saving') : t('settings.deleteAccountButton')}
           </button>
         </div>
       </div>

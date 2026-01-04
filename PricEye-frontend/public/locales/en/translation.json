@@ -145,6 +145,11 @@
     "logout": "Logout",
     "logoutDescription": "You can log out of your account at any time. You will need to log in again to access the application.",
     "disconnect": "Log out",
+    "deleteAccount": "Delete Account",
+    "deleteAccountDescription": "Deleting your account is permanent and irreversible. All your data (properties, bookings, integrations, etc.) will be permanently deleted.",
+    "deleteAccountWarning": "Warning: This action is irreversible!",
+    "deleteAccountButton": "Delete my account",
+    "deleteAccountConfirm": "Are you sure you want to delete your account? This action is permanent and all your data will be deleted.",
     "validation": {
       "nameRequired": "Name cannot be empty.",
       "currencyRequired": "Please select a currency.",
@@ -157,7 +162,8 @@
       "profileUpdated": "Profile updated successfully!",
       "passwordChanged": "Password changed successfully!",
       "inviteSent": "Invitation sent to {{email}}.",
-      "removeMemberConfirm": "Are you sure you want to remove this team member?"
+      "removeMemberConfirm": "Are you sure you want to remove this team member?",
+      "accountDeleted": "Your account has been successfully deleted."
     },
     "errors": {
       "loadError": "Error loading data: {{message}}",
@@ -165,7 +171,8 @@
       "inviteError": "Error inviting: {{message}}",
       "roleChangeError": "Error changing role: {{message}}",
       "removeError": "Error removing: {{message}}",
-      "integrationLoadError": "Unable to load PMS integration status."
+      "integrationLoadError": "Unable to load PMS integration status.",
+      "deleteAccountError": "Error deleting account: {{message}}"
     },
     "integration": {
       "loading": "Loading integration...",
