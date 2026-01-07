@@ -153,6 +153,10 @@ async function getRecommendedPrice(propertyId, date, roomType = 'default') {
                 maxBuffer: 10 * 1024 * 1024, // 10MB
                 env: {
                     ...process.env,
+                    PYTHONUNBUFFERED: '1' // Désactiver le buffering Python pour voir les erreurs en temps réel
+                }
+                env: {
+                    ...process.env,
                     PYTHONUNBUFFERED: '1'
                 }
             }),
@@ -190,6 +194,18 @@ async function getRecommendedPrice(propertyId, date, roomType = 'default') {
         const errorType = detectErrorType(error.message, error.stdout || '', error.stderr || '');
         
         console.error(`[Pricing Bridge] Erreur (${errorType}):`, error.message);
+        console.error(`[Pricing Bridge] Code d'erreur:`, error.code);
+        
+        // Afficher stdout et stderr complets pour debugging
+        if (error.stdout) {
+            console.error(`[Pricing Bridge] stdout complet:`, error.stdout);
+        }
+        if (error.stderr) {
+            console.error(`[Pricing Bridge] stderr complet:`, error.stderr);
+        }
+        if (error.stack) {
+            console.error(`[Pricing Bridge] Stack trace:`, error.stack);
+        }
         
         // Pour les erreurs non-critiques, retourner null (fallback sera utilisé)
         if (errorType === 'model_not_found' || errorType === 'insufficient_data') {

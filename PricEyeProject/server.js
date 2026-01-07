@@ -35,6 +35,25 @@ console.log('✅ Connecté à Supabase avec succès.');
 const app = express();
 const port = process.env.PORT || 5000;
 
+// Installer les dépendances Python au démarrage (en arrière-plan, ne bloque pas le démarrage)
+// Cette installation se fait automatiquement en production ou si INSTALL_PYTHON_DEPS=true
+(async () => {
+    if (process.env.NODE_ENV === 'production' || process.env.INSTALL_PYTHON_DEPS === 'true') {
+        try {
+            const installPythonDeps = require('./scripts/install_python_deps');
+            const success = await installPythonDeps.installDependencies();
+            if (success) {
+                console.log('[Server] ✅ Dépendances Python installées avec succès');
+            } else {
+                console.warn('[Server] ⚠️  Installation des dépendances Python échouée ou non nécessaire');
+            }
+        } catch (err) {
+            console.warn('[Server] ⚠️  Erreur lors de l\'installation des dépendances Python:', err.message);
+            console.warn('[Server] Le moteur de pricing IA pourrait ne pas fonctionner correctement.');
+        }
+    }
+})();
+
 // Vérification des variables d'environnement Stripe au démarrage
 if (!process.env.STRIPE_SECRET_KEY) {
     console.error('❌ ERREUR CRITIQUE: STRIPE_SECRET_KEY non configuré dans les variables d\'environnement');

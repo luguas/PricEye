@@ -23,18 +23,40 @@ def main() -> None:
 
     args = parser.parse_args()
 
-    # Contexte minimal : on pourrait enrichir avec des features marché si nécessaires
-    context_features = {}
+    try:
+        # Contexte minimal : on pourrait enrichir avec des features marché si nécessaires
+        context_features = {}
 
-    recommendation = get_recommended_price(
-        property_id=args.property_id,
-        room_type=args.room_type,
-        date=args.date,
-        context_features=context_features,
-    )
+        recommendation = get_recommended_price(
+            property_id=args.property_id,
+            room_type=args.room_type,
+            date=args.date,
+            context_features=context_features,
+        )
 
-    print("✅ Recommandation de prix")
-    print(json.dumps(recommendation, indent=2, ensure_ascii=False))
+        # Afficher uniquement le JSON pour que le bridge puisse le parser
+        # Ne pas afficher de messages avant le JSON
+        print(json.dumps(recommendation, ensure_ascii=False))
+        
+    except Exception as e:
+        # En cas d'erreur, retourner un JSON d'erreur
+        error_response = {
+            "error": True,
+            "error_type": type(e).__name__,
+            "error_message": str(e),
+            "price": None,
+            "expected_revenue": None,
+            "predicted_demand": None,
+            "strategy": "error",
+            "details": {
+                "error": str(e),
+                "property_id": args.property_id,
+                "date": args.date
+            }
+        }
+        print(json.dumps(error_response, ensure_ascii=False))
+        import sys
+        sys.exit(1)
 
 
 if __name__ == "__main__":
