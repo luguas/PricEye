@@ -139,6 +139,7 @@ class DemandModelTrainer:
             colsample_bytree=self.config.colsample_bytree,
             random_state=self.config.random_state,
             objective="reg:squarederror",
+            enable_categorical=False,  # Évite les problèmes avec _estimator_type
         )
 
         model.fit(
@@ -191,8 +192,37 @@ class DemandModelTrainer:
         path = self._get_model_path()
 
         # On sauvegarde le modèle XGBoost au format JSON natif
-        model_json_path = path
-        self.model.save_model(model_json_path)
+        # Utiliser la méthode native de XGBoost pour éviter les problèmes avec _estimator_type
+        model_json_path = str(path)
+        try:
+            # Essayer d'abord avec la méthode sklearn (pour compatibilité)
+            self.model.save_model(model_json_path)
+        except (TypeError, AttributeError) as e:
+            # Si ça échoue, utiliser la méthode native XGBoost via get_booster()
+            if hasattr(self.model, 'get_booster'):
+                try:
+                    self.model.get_booster().save_model(model_json_path)
+                except Exception as e2:
+                    # Dernier recours : sauvegarder via pickle
+                    import pickle as pickle_module
+                    pkl_path = model_json_path.replace('.json', '.pkl')
+                    with open(pkl_path, 'wb') as f:
+                        pickle_module.dump(self.model, f)
+                    # Créer aussi un fichier JSON vide pour compatibilité
+                    # Utiliser le module json importé en haut du fichier
+                    with open(model_json_path, 'w') as f:
+                        json.dump({"format": "pkl", "pkl_file": pkl_path}, f)
+                    raise RuntimeError(
+                        f"Erreur lors de la sauvegarde du modèle XGBoost: {e2}. "
+                        f"Le modèle a été sauvegardé en format pickle dans {pkl_path}. "
+                        "Vérifiez votre version de XGBoost."
+                    ) from e2
+            else:
+                raise RuntimeError(
+                    f"Erreur lors de la sauvegarde du modèle XGBoost: {e}. "
+                    "Le modèle n'a pas de méthode get_booster(). "
+                    "Vérifiez votre version de XGBoost."
+                ) from e
 
         # Sauvegarder les méta-informations (features utilisées) dans un .meta.json
         meta = {
@@ -354,9 +384,21 @@ class DemandPredictor:
                 "Entraînez-le d’abord avec train_demand_model_for_property()."
             )
 
-        model = XGBRegressor()
-        model.load_model(str(model_path))
-        self.model = model
+        # Vérifier si c'est un fichier pickle (fallback)
+        if str(model_path).endswith('.pkl') or (model_path.exists() and model_path.stat().st_size < 100):
+            # C'est probablement un fichier pickle ou un fichier JSON vide pointant vers pickle
+            import pickle
+            pkl_path = model_path.parent / model_path.name.replace('.json', '.pkl')
+            if pkl_path.exists():
+                with open(pkl_path, 'rb') as f:
+                    self.model = pickle.load(f)
+            else:
+                raise FileNotFoundError(f"Fichier modèle pickle non trouvé: {pkl_path}")
+        else:
+            # Chargement normal XGBoost
+            model = XGBRegressor(enable_categorical=False)
+            model.load_model(str(model_path))
+            self.model = model
 
         meta = json.loads(meta_path.read_text(encoding="utf-8"))
         self.feature_columns = meta.get("feature_columns", [])

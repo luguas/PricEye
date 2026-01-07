@@ -159,9 +159,15 @@ def build_pricing_dataset(
 
     # 5. Gestion simple des NaN pour quelques features clés
     if "competitor_avg_price" in merged_df.columns:
-        merged_df["competitor_avg_price"] = merged_df["competitor_avg_price"].fillna(0.0)
+        # Convertir en float avant fillna pour éviter les warnings
+        merged_df["competitor_avg_price"] = pd.to_numeric(
+            merged_df["competitor_avg_price"], errors='coerce'
+        ).fillna(0.0)
     if "market_demand_level" in merged_df.columns:
-        merged_df["market_demand_level"] = merged_df["market_demand_level"].fillna(50.0)
+        # Convertir en float avant fillna pour éviter les warnings
+        merged_df["market_demand_level"] = pd.to_numeric(
+            merged_df["market_demand_level"], errors='coerce'
+        ).fillna(50.0)
 
     return merged_df
 
