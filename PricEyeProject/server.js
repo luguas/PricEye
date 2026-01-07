@@ -8401,6 +8401,36 @@ app.post('/api/pricing/recommend', authenticateToken, async (req, res) => {
             // Ignorer l'erreur, marketFeaturesAvailable reste false
         }
 
+        // Calculer la capacité restante si disponible
+        let capacity_remaining = null;
+        try {
+            // Essayer de récupérer depuis les détails de la recommandation
+            if (recommendation.details && recommendation.details.capacity_remaining !== undefined) {
+                capacity_remaining = recommendation.details.capacity_remaining;
+            } else {
+                // Sinon, essayer de la calculer depuis les données de la propriété
+                // Récupérer les réservations pour cette date
+                const { data: bookings } = await supabase
+                    .from('bookings')
+                    .select('id')
+                    .eq('property_id', property_id)
+                    .eq('check_in_date', date)
+                    .eq('status', 'confirmed');
+                
+                const bookingsCount = bookings ? bookings.length : 0;
+                
+                // Récupérer la capacité de la propriété
+                const propertyCapacity = property.max_guests || property.capacity || null;
+                
+                if (propertyCapacity !== null) {
+                    capacity_remaining = Math.max(propertyCapacity - bookingsCount, 0);
+                }
+            }
+        } catch (e) {
+            // Ignorer l'erreur, capacity_remaining reste null
+            console.warn(`[Pricing IA] [${property_id}] Impossible de calculer capacity_remaining:`, e.message);
+        }
+
         // Construire le contexte enrichi
         const enrichedContext = {
             ...(recommendation.details || {}),

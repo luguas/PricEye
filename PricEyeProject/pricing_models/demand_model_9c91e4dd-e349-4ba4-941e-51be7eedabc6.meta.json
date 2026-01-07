@@ -1,0 +1,17 @@
+{
+  "property_id": "9c91e4dd-e349-4ba4-941e-51be7eedabc6",
+  "feature_columns": [
+    "price",
+    "competitor_avg_price",
+    "market_demand_level"
+  ],
+  "config": {
+    "n_estimators": 300,
+    "learning_rate": 0.05,
+    "max_depth": 6,
+    "subsample": 0.9,
+    "colsample_bytree": 0.9,
+    "random_state": 42
+  },
+  "saved_at": "2026-01-07T19:16:03.734687"
+}
