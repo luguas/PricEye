@@ -6,7 +6,11 @@ services:
     name: priceye-backend
     env: node
     plan: free # ou starter/pro pour plus de ressources
-    buildCommand: npm install && cd PricEyeProject && npm install
+    buildCommand: |
+      npm install && 
+      cd PricEyeProject && 
+      npm install && 
+      pip3 install -r requirements.txt || python3 -m pip install -r requirements.txt
     startCommand: cd PricEyeProject && npm start
     envVars:
       - key: NODE_ENV
@@ -19,4 +23,11 @@ services:
       # - key: STRIPE_SECRET_KEY
       #   sync: false
       # etc.
+
+
+
+
+
+
+
 
