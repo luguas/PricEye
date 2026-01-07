@@ -541,3 +541,10 @@ def get_market_config_manager(settings: Optional[Settings] = None) -> MarketConf
     return _manager_instance
 
 
+
+
+
+
+
+
+

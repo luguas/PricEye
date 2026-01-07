@@ -282,3 +282,10 @@ class TestUtilsEdgeCases:
         
         assert validate_data(data, schema) is False  # Champ manquant
 
+
+
+
+
+
+
+

@@ -399,3 +399,10 @@ class TestEdgeCases:
         # Devrait retourner une liste vide ou gérer l'erreur
         assert isinstance(result, list)
 
+
+
+
+
+
+
+

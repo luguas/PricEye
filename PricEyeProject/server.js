@@ -10,6 +10,9 @@ const path = require('path');
 
 const execAsync = promisify(exec); 
 
+// Helper pour savoir si on est sur Windows (pour la commande python)
+const PYTHON_COMMAND = process.platform === 'win32' ? 'python' : 'python3';
+
 // --- IMPORT DES UTILITAIRES DE SANITISATION ---
 const { sanitizeForPrompt, validateAndSanitizeDate, validateDateRange, validateDateFormat, validateNumber, sanitizeNumber, sanitizeArray, validateStringLength, sanitizeUrl, sanitizeFilename, safeJSONStringify, validatePropertyObject, validatePropertyId, validatePrice, validatePercentage, validateCapacity, validateInteger, validateEnum, validateTimezone } = require('./utils/promptSanitizer');
 const { ALLOWED_STRATEGIES } = require('./utils/whitelists');
@@ -21,6 +24,9 @@ const {
     resetUserAttempts,
     analyzeInput 
 } = require('./utils/injectionMonitor');
+
+// --- IMPORT DU BRIDGE PRICING ENGINE ---
+const pricingBridge = require('./pricing_engine_bridge');
 
 // --- INITIALISATION DE SUPABASE ---
 const { supabase } = require('./config/supabase.js');
@@ -8235,6 +8241,856 @@ RAPPEL CRITIQUE : La réponse finale doit être UNIQUEMENT ce JSON, sans texte a
     }
 });
 
+/**
+ * POST /api/pricing/recommend
+ * Retourne un prix recommandé par le moteur de pricing IA pour une propriété / date donnée.
+ */
+app.post('/api/pricing/recommend', authenticateToken, async (req, res) => {
+    try {
+        const userId = req.user.uid;
+        const { property_id, room_type = 'default', date } = req.body || {};
+
+        if (!property_id || !date) {
+            return res.status(400).json({
+                error: 'Paramètres manquants',
+                message: 'property_id et date sont requis'
+            });
+        }
+
+        try {
+            validatePropertyId(property_id, 'propertyId', userId);
+        } catch (validationError) {
+            console.error(`[Validation Error] [Endpoint: /api/pricing/recommend] [userId: ${userId}] ${validationError.message}`);
+            return res.status(400).json({
+                error: 'Validation échouée',
+                message: validationError.message
+            });
+        }
+
+        const property = await db.getProperty(property_id);
+        if (!property) {
+            return res.status(404).json({ error: 'Propriété non trouvée.' });
+        }
+
+        const userProfile = await db.getUser(userId);
+        if (!userProfile) {
+            return res.status(404).json({ error: 'Profil utilisateur non trouvé.' });
+        }
+
+        const propertyTeamId = property.team_id || property.owner_id;
+        if (userProfile.team_id !== propertyTeamId) {
+            return res.status(403).json({ error: 'Action non autorisée sur cette propriété (pas dans la bonne équipe).' });
+        }
+
+        // Vérifier si un modèle existe pour cette propriété
+        const modelExists = await pricingBridge.checkModelExists(property_id);
+        
+        // Mesurer le temps de computation (inclut tout le processus jusqu'à la recommandation finale)
+        const computationStartTime = Date.now();
+        
+        // Utiliser le bridge pour obtenir la recommandation
+        let recommendation = null;
+        let fallbackUsed = false;
+        let fallbackReason = null;
+        
+        if (modelExists) {
+            console.log(`[Pricing IA] [${property_id}] Modèle détecté, tentative de recommandation IA pour ${date}`);
+            recommendation = await pricingBridge.getRecommendedPrice(
+                property_id,
+                date,
+                room_type
+            );
+        } else {
+            console.log(`[Pricing IA] [${property_id}] Aucun modèle entraîné détecté, utilisation directe du fallback déterministe`);
+            fallbackReason = 'Modèle IA non entraîné pour cette propriété';
+        }
+
+        // Si le bridge retourne null (modèle non trouvé, erreur, etc.), utiliser le pricing déterministe comme fallback
+        if (!recommendation) {
+            if (!fallbackReason) {
+                fallbackReason = 'Modèle IA non disponible ou erreur lors de la prédiction';
+            }
+            
+            console.log(`[Pricing IA] [${property_id}] ${fallbackReason}, utilisation du pricing déterministe comme fallback`);
+            fallbackUsed = true;
+            
+            try {
+                const deterministicPricing = require('./utils/deterministic_pricing');
+                const deterministicResult = await deterministicPricing.calculateDeterministicPrice({
+                    property: property,
+                    date: date,
+                    city: property.city || '',
+                    country: property.country || ''
+                });
+                
+                recommendation = {
+                    price: deterministicResult.price,
+                    expected_revenue: null,
+                    predicted_demand: null,
+                    strategy: 'deterministic_fallback',
+                    details: {
+                        reason: fallbackReason,
+                        breakdown: deterministicResult.breakdown,
+                        reasoning: deterministicResult.reasoning,
+                        model_available: modelExists
+                    }
+                };
+                
+                console.log(`[Pricing IA] [${property_id}] Fallback déterministe réussi: prix ${deterministicResult.price}`);
+            } catch (fallbackError) {
+                console.error(`[Pricing IA] [${property_id}] Erreur lors du fallback déterministe:`, fallbackError);
+                console.error(`[Pricing IA] [${property_id}] Stack trace:`, fallbackError.stack);
+                
+                // Dernier recours : utiliser le prix de base de la propriété
+                const basePrice = property.base_price || 100;
+                recommendation = {
+                    price: basePrice,
+                    expected_revenue: null,
+                    predicted_demand: null,
+                    strategy: 'base_price_fallback',
+                    details: {
+                        reason: `Erreur lors du fallback déterministe: ${fallbackError.message}. Utilisation du prix de base.`,
+                        original_fallback_reason: fallbackReason,
+                        model_available: modelExists
+                    }
+                };
+                
+                console.log(`[Pricing IA] [${property_id}] Utilisation du prix de base: ${basePrice}`);
+            }
+        } else {
+            console.log(`[Pricing IA] [${property_id}] Recommandation IA réussie: prix ${recommendation.price}, stratégie ${recommendation.strategy}`);
+        }
+
+        // Calculer le temps de computation total (inclut tout le processus jusqu'à la recommandation finale)
+        const computationTime = Date.now() - computationStartTime;
+
+        // Préparer le contexte enrichi pour le logging
+        
+        // Récupérer la version du modèle si disponible
+        let modelVersion = null;
+        if (!fallbackUsed && modelExists) {
+            try {
+                const { data: latestMetrics } = await supabase
+                    .from('pricing_model_metrics')
+                    .select('model_version')
+                    .eq('property_id', property_id)
+                    .order('trained_at', { ascending: false })
+                    .limit(1)
+                    .single();
+                
+                if (latestMetrics) {
+                    modelVersion = latestMetrics.model_version;
+                }
+            } catch (e) {
+                // Ignorer l'erreur, modelVersion reste null
+            }
+        }
+
+        // Vérifier si les features marché sont disponibles
+        let marketFeaturesAvailable = false;
+        try {
+            const { data: marketFeatures } = await supabase
+                .from('features_pricing_daily')
+                .select('id')
+                .eq('property_id', property_id)
+                .eq('date', date)
+                .limit(1);
+            
+            marketFeaturesAvailable = marketFeatures && marketFeatures.length > 0;
+        } catch (e) {
+            // Ignorer l'erreur, marketFeaturesAvailable reste false
+        }
+
+        // Construire le contexte enrichi
+        const enrichedContext = {
+            ...(recommendation.details || {}),
+            model_used: fallbackUsed ? 'deterministic' : 'ia',
+            model_version: modelVersion,
+            model_available: modelExists,
+            capacity_remaining: capacity_remaining,
+            market_features_available: marketFeaturesAvailable,
+            computation_time_ms: computationTime,
+            fallback_used: fallbackUsed,
+            fallback_reason: fallbackReason || null
+        };
+
+        // Log dans pricing_recommendations avec gestion d'erreur robuste
+        try {
+            const { error: logError, data: logData } = await supabase
+                .from('pricing_recommendations')
+                .insert({
+                    property_id: property_id,
+                    user_id: userId,
+                    room_type: room_type,
+                    stay_date: date,
+                    recommended_price: recommendation.price,
+                    expected_revenue: recommendation.expected_revenue || null,
+                    predicted_demand: recommendation.predicted_demand || null,
+                    strategy: recommendation.strategy || null,
+                    context: enrichedContext
+                })
+                .select()
+                .single();
+
+            if (logError) {
+                console.error(`[Pricing IA] [${property_id}] Erreur lors du logging dans pricing_recommendations:`, logError);
+                console.error(`[Pricing IA] [${property_id}] Détails de l'erreur:`, JSON.stringify(logError, null, 2));
+                // Ne pas faire échouer la requête si le logging échoue
+            } else {
+                console.log(`[Pricing IA] [${property_id}] Recommandation loggée avec succès (strategy: ${recommendation.strategy}, id: ${logData?.id})`);
+            }
+        } catch (logError) {
+            // Gestion d'erreur robuste : ne pas faire échouer la requête
+            console.error(`[Pricing IA] [${property_id}] Exception lors du logging dans pricing_recommendations:`, logError);
+            console.error(`[Pricing IA] [${property_id}] Stack trace:`, logError.stack);
+            // Optionnel : envoyer une alerte si le logging échoue trop souvent
+            // (à implémenter avec un système de monitoring)
+        }
+
+        // Préparer la réponse avec des informations sur le fallback si utilisé
+        const response = {
+            recommended_price: recommendation.price,
+            expected_revenue: recommendation.expected_revenue,
+            predicted_demand: recommendation.predicted_demand,
+            strategy: recommendation.strategy,
+            fallback_used: fallbackUsed,
+            model_available: modelExists,
+            raw: recommendation
+        };
+
+        // Ajouter un message informatif si un fallback a été utilisé
+        if (fallbackUsed) {
+            response.message = fallbackReason || 'Modèle IA non disponible, prix calculé avec le système déterministe';
+        }
+
+        return res.status(200).json(response);
+    } catch (error) {
+        console.error(`[Pricing IA] [${req.body?.property_id || 'unknown'}] Erreur dans /api/pricing/recommend:`, error);
+        console.error(`[Pricing IA] Stack trace:`, error.stack);
+        
+        // Détecter le type d'erreur pour un code HTTP approprié
+        let statusCode = 500;
+        let errorMessage = 'Erreur interne du serveur lors de la recommandation de prix';
+        
+        if (error.message && error.message.includes('validation')) {
+            statusCode = 400;
+            errorMessage = 'Erreur de validation: ' + error.message;
+        } else if (error.message && error.message.includes('not found')) {
+            statusCode = 404;
+            errorMessage = 'Ressource non trouvée: ' + error.message;
+        }
+        
+        return res.status(statusCode).json({
+            error: errorMessage,
+            message: error.message,
+            property_id: req.body?.property_id || null,
+            date: req.body?.date || null
+        });
+    }
+});
+
+/**
+ * POST /api/pricing/simulate
+ * Simule la demande et le revenu pour une grille de prix.
+ */
+app.post('/api/pricing/simulate', authenticateToken, async (req, res) => {
+    try {
+        const userId = req.user.uid;
+        const { property_id, room_type = 'default', date, price_grid } = req.body || {};
+
+        if (!property_id || !date || !Array.isArray(price_grid) || price_grid.length === 0) {
+            return res.status(400).json({
+                error: 'Paramètres manquants',
+                message: 'property_id, date et price_grid non vide sont requis'
+            });
+        }
+
+        try {
+            validatePropertyId(property_id, 'propertyId', userId);
+        } catch (validationError) {
+            console.error(`[Validation Error] [Endpoint: /api/pricing/simulate] [userId: ${userId}] ${validationError.message}`);
+            return res.status(400).json({
+                error: 'Validation échouée',
+                message: validationError.message
+            });
+        }
+
+        const property = await db.getProperty(property_id);
+        if (!property) {
+            return res.status(404).json({ error: 'Propriété non trouvée.' });
+        }
+
+        const userProfile = await db.getUser(userId);
+        if (!userProfile) {
+            return res.status(404).json({ error: 'Profil utilisateur non trouvé.' });
+        }
+
+        const propertyTeamId = property.team_id || property.owner_id;
+        if (userProfile.team_id !== propertyTeamId) {
+            return res.status(403).json({ error: 'Action non autorisée sur cette propriété (pas dans la bonne équipe).' });
+        }
+
+        // Vérifier si un modèle existe pour cette propriété
+        const modelExists = await pricingBridge.checkModelExists(property_id);
+        
+        if (!modelExists) {
+            console.log(`[Pricing IA] [${property_id}] Aucun modèle entraîné pour la simulation, retour tableau vide`);
+            return res.status(200).json({
+                simulations: [],
+                message: 'Aucun modèle IA entraîné pour cette propriété. Veuillez entraîner un modèle avant de simuler des prix.',
+                model_available: false
+            });
+        }
+
+        // Validation de la grille de prix
+        if (!price_grid.every(p => typeof p === 'number' && p > 0 && p < 100000)) {
+            console.error(`[Pricing IA] [${property_id}] Grille de prix invalide:`, price_grid);
+            return res.status(400).json({
+                error: 'Grille de prix invalide',
+                message: 'La grille de prix doit contenir uniquement des nombres positifs inférieurs à 100000',
+                price_grid: price_grid
+            });
+        }
+
+        console.log(`[Pricing IA] [${property_id}] Début de simulation pour ${price_grid.length} prix (date: ${date})`);
+        
+        // Mesurer le temps de computation
+        const simulationStartTime = Date.now();
+        
+        // Utiliser le bridge pour la simulation
+        let simulations = await pricingBridge.simulatePrices(
+            property_id,
+            date,
+            price_grid,
+            room_type
+        );
+        
+        const simulationComputationTime = Date.now() - simulationStartTime;
+
+        // Si le bridge retourne null, retourner un tableau vide avec un message d'erreur
+        if (simulations === null) {
+            console.error(`[Pricing IA] [${property_id}] Bridge simulation retourné null, erreur lors de la simulation`);
+            return res.status(500).json({
+                error: 'Erreur lors de la simulation',
+                message: 'Une erreur est survenue lors de la simulation des prix. Le modèle peut être corrompu ou les données insuffisantes.',
+                simulations: [],
+                model_available: modelExists
+            });
+        }
+
+        if (!Array.isArray(simulations) || simulations.length === 0) {
+            console.warn(`[Pricing IA] [${property_id}] Simulation retournée vide ou invalide`);
+            return res.status(200).json({
+                simulations: [],
+                message: 'Aucun résultat de simulation disponible',
+                model_available: modelExists
+            });
+        }
+
+        console.log(`[Pricing IA] [${property_id}] Simulation réussie: ${simulations.length} résultats`);
+        
+        // Logger la simulation dans pricing_simulations
+        // (simulationComputationTime a déjà été calculé plus haut)
+        
+        try {
+            const { error: simLogError, data: simLogData } = await supabase
+                .from('pricing_simulations')
+                .insert({
+                    property_id: property_id,
+                    user_id: userId,
+                    room_type: room_type,
+                    stay_date: date,
+                    price_grid: price_grid,
+                    simulations: simulations,
+                    model_available: modelExists,
+                    computation_time_ms: simulationComputationTime,
+                    context: {
+                        price_grid_size: price_grid.length,
+                        simulations_count: simulations.length
+                    }
+                })
+                .select()
+                .single();
+
+            if (simLogError) {
+                console.error(`[Pricing IA] [${property_id}] Erreur lors du logging de la simulation:`, simLogError);
+                console.error(`[Pricing IA] [${property_id}] Détails de l'erreur:`, JSON.stringify(simLogError, null, 2));
+                // Ne pas faire échouer la requête si le logging échoue
+            } else {
+                console.log(`[Pricing IA] [${property_id}] Simulation loggée avec succès (id: ${simLogData?.id})`);
+            }
+        } catch (simLogError) {
+            // Gestion d'erreur robuste : ne pas faire échouer la requête
+            console.error(`[Pricing IA] [${property_id}] Exception lors du logging de la simulation:`, simLogError);
+            console.error(`[Pricing IA] [${property_id}] Stack trace:`, simLogError.stack);
+        }
+        
+        return res.status(200).json({
+            simulations: simulations,
+            count: simulations.length,
+            model_available: modelExists
+        });
+    } catch (error) {
+        console.error(`[Pricing IA] [${req.body?.property_id || 'unknown'}] Erreur dans /api/pricing/simulate:`, error);
+        console.error(`[Pricing IA] Stack trace:`, error.stack);
+        
+        // Détecter le type d'erreur pour un code HTTP approprié
+        let statusCode = 500;
+        let errorMessage = 'Erreur interne du serveur lors de la simulation de prix';
+        
+        if (error.message && error.message.includes('validation')) {
+            statusCode = 400;
+            errorMessage = 'Erreur de validation: ' + error.message;
+        } else if (error.message && error.message.includes('not found')) {
+            statusCode = 404;
+            errorMessage = 'Ressource non trouvée: ' + error.message;
+        } else if (error.message && error.message.includes('timeout')) {
+            statusCode = 504;
+            errorMessage = 'Timeout lors de la simulation. Le modèle prend trop de temps à répondre.';
+        }
+        
+        return res.status(statusCode).json({
+            error: errorMessage,
+            message: error.message,
+            property_id: req.body?.property_id || null,
+            date: req.body?.date || null,
+            price_grid: req.body?.price_grid || null
+        });
+    }
+});
+
+/**
+ * GET /api/pricing/metrics/:property_id
+ * Récupère les métriques du modèle de pricing pour une propriété.
+ * 
+ * Query params:
+ * - latest: si true, retourne seulement la dernière métrique (défaut: false)
+ */
+app.get('/api/pricing/metrics/:property_id', authenticateToken, async (req, res) => {
+    try {
+        const userId = req.user.uid;
+        const { property_id } = req.params;
+        const { latest } = req.query;
+
+        // Validation du property_id
+        try {
+            validatePropertyId(property_id, 'propertyId', userId);
+        } catch (validationError) {
+            console.error(`[Validation Error] [Endpoint: /api/pricing/metrics/:property_id] [userId: ${userId}] ${validationError.message}`);
+            return res.status(400).json({
+                error: 'Validation échouée',
+                message: validationError.message
+            });
+        }
+
+        // Vérifier que la propriété existe
+        const property = await db.getProperty(property_id);
+        if (!property) {
+            return res.status(404).json({ error: 'Propriété non trouvée.' });
+        }
+
+        // Vérifier les droits d'accès
+        const userProfile = await db.getUser(userId);
+        if (!userProfile) {
+            return res.status(404).json({ error: 'Profil utilisateur non trouvé.' });
+        }
+
+        const propertyTeamId = property.team_id || property.owner_id;
+        if (userProfile.team_id !== propertyTeamId) {
+            return res.status(403).json({ error: 'Action non autorisée sur cette propriété (pas dans la bonne équipe).' });
+        }
+
+        // Récupérer les métriques depuis Supabase
+        let query = supabase
+            .from('pricing_model_metrics')
+            .select('*')
+            .eq('property_id', property_id)
+            .order('trained_at', { ascending: false });
+
+        const { data: metrics, error: metricsError } = await query;
+
+        if (metricsError) {
+            console.error(`[Pricing Metrics] [${property_id}] Erreur Supabase:`, metricsError);
+            return res.status(500).json({
+                error: 'Erreur lors de la récupération des métriques',
+                message: metricsError.message
+            });
+        }
+
+        // Préparer la réponse
+        const hasModel = metrics && metrics.length > 0;
+        const latestMetrics = hasModel ? metrics[0] : null;
+
+        const response = {
+            property_id: property_id,
+            has_model: hasModel,
+            latest_metrics: latestMetrics ? {
+                model_version: latestMetrics.model_version,
+                train_rmse: latestMetrics.train_rmse,
+                val_rmse: latestMetrics.val_rmse,
+                train_mae: latestMetrics.train_mae,
+                val_mae: latestMetrics.val_mae,
+                n_train_samples: latestMetrics.n_train_samples,
+                n_val_samples: latestMetrics.n_val_samples,
+                feature_importance: latestMetrics.feature_importance,
+                model_path: latestMetrics.model_path,
+                trained_at: latestMetrics.trained_at,
+                trained_by: latestMetrics.trained_by,
+                metadata: latestMetrics.metadata
+            } : null
+        };
+
+        // Si latest=false ou non spécifié, inclure toutes les métriques
+        if (latest !== 'true') {
+            response.all_metrics = metrics || [];
+        }
+
+        return res.status(200).json(response);
+
+    } catch (error) {
+        console.error(`[Pricing Metrics] [${req.params?.property_id || 'unknown'}] Erreur:`, error);
+        console.error(`[Pricing Metrics] Stack trace:`, error.stack);
+        
+        return res.status(500).json({
+            error: 'Erreur interne du serveur',
+            message: error.message
+        });
+    }
+});
+
+/**
+ * GET /api/pricing/metrics
+ * Récupère un résumé global des métriques de pricing (dashboard admin).
+ */
+app.get('/api/pricing/metrics', authenticateToken, async (req, res) => {
+    try {
+        const userId = req.user.uid;
+
+        // Vérifier que l'utilisateur est admin (optionnel, à adapter selon votre logique)
+        // Pour l'instant, on permet à tous les utilisateurs authentifiés
+        // Vous pouvez ajouter une vérification de rôle admin ici si nécessaire
+
+        // Récupérer un résumé des métriques
+        const { data: allMetrics, error: metricsError } = await supabase
+            .from('pricing_model_metrics')
+            .select('property_id, model_version, train_rmse, val_rmse, trained_at, trained_by')
+            .order('trained_at', { ascending: false });
+
+        if (metricsError) {
+            console.error(`[Pricing Metrics] Erreur Supabase (résumé global):`, metricsError);
+            return res.status(500).json({
+                error: 'Erreur lors de la récupération des métriques',
+                message: metricsError.message
+            });
+        }
+
+        if (!allMetrics || allMetrics.length === 0) {
+            return res.status(200).json({
+                total_properties_with_model: 0,
+                total_models_trained: 0,
+                average_train_rmse: null,
+                average_val_rmse: null,
+                models_by_method: {},
+                recent_models: []
+            });
+        }
+
+        // Calculer les statistiques
+        const uniqueProperties = new Set(allMetrics.map(m => m.property_id));
+        const totalPropertiesWithModel = uniqueProperties.size;
+        const totalModelsTrained = allMetrics.length;
+
+        // Calculer les moyennes de RMSE
+        const validTrainRmse = allMetrics.filter(m => m.train_rmse != null).map(m => parseFloat(m.train_rmse));
+        const validValRmse = allMetrics.filter(m => m.val_rmse != null).map(m => parseFloat(m.val_rmse));
+
+        const averageTrainRmse = validTrainRmse.length > 0
+            ? validTrainRmse.reduce((a, b) => a + b, 0) / validTrainRmse.length
+            : null;
+
+        const averageValRmse = validValRmse.length > 0
+            ? validValRmse.reduce((a, b) => a + b, 0) / validValRmse.length
+            : null;
+
+        // Compter par méthode d'entraînement
+        const modelsByMethod = {};
+        allMetrics.forEach(metric => {
+            const method = metric.trained_by || 'unknown';
+            modelsByMethod[method] = (modelsByMethod[method] || 0) + 1;
+        });
+
+        // Derniers modèles entraînés (10 plus récents)
+        const recentModels = allMetrics.slice(0, 10).map(m => ({
+            property_id: m.property_id,
+            model_version: m.model_version,
+            train_rmse: m.train_rmse,
+            val_rmse: m.val_rmse,
+            trained_at: m.trained_at,
+            trained_by: m.trained_by
+        }));
+
+        return res.status(200).json({
+            total_properties_with_model: totalPropertiesWithModel,
+            total_models_trained: totalModelsTrained,
+            average_train_rmse: averageTrainRmse ? parseFloat(averageTrainRmse.toFixed(4)) : null,
+            average_val_rmse: averageValRmse ? parseFloat(averageValRmse.toFixed(4)) : null,
+            models_by_method: modelsByMethod,
+            recent_models: recentModels
+        });
+
+    } catch (error) {
+        console.error(`[Pricing Metrics] Erreur dans /api/pricing/metrics:`, error);
+        console.error(`[Pricing Metrics] Stack trace:`, error.stack);
+        
+        return res.status(500).json({
+            error: 'Erreur interne du serveur',
+            message: error.message
+        });
+    }
+});
+
+/**
+ * POST /api/pricing/retrain
+ * Déclenche manuellement le réentraînement des modèles de pricing.
+ * 
+ * Body (optionnel):
+ * - days: Nombre de jours d'historique (défaut: 180)
+ * - minNewRecommendations: Minimum de nouvelles recommandations (défaut: 50)
+ * - minDaysSinceTraining: Minimum de jours depuis dernier entraînement (défaut: 30)
+ * - minImprovement: Amélioration minimale pour remplacer (défaut: 0.05)
+ * - force: Forcer le réentraînement (défaut: false)
+ */
+app.post('/api/pricing/retrain', authenticateToken, async (req, res) => {
+    try {
+        const userId = req.user.uid;
+        const {
+            days = 180,
+            minNewRecommendations = 50,
+            minDaysSinceTraining = 30,
+            minImprovement = 0.05,
+            force = false
+        } = req.body || {};
+
+        console.log('[Pricing Retrain] Réentraînement déclenché via API par utilisateur:', userId);
+
+        // Validation des paramètres
+        if (typeof days !== 'number' || days < 1 || days > 365) {
+            return res.status(400).json({
+                error: 'Paramètre invalide',
+                message: 'days doit être un nombre entre 1 et 365'
+            });
+        }
+
+        if (typeof minNewRecommendations !== 'number' || minNewRecommendations < 1) {
+            return res.status(400).json({
+                error: 'Paramètre invalide',
+                message: 'minNewRecommendations doit être un nombre positif'
+            });
+        }
+
+        if (typeof minDaysSinceTraining !== 'number' || minDaysSinceTraining < 1) {
+            return res.status(400).json({
+                error: 'Paramètre invalide',
+                message: 'minDaysSinceTraining doit être un nombre positif'
+            });
+        }
+
+        if (typeof minImprovement !== 'number' || minImprovement < 0 || minImprovement > 1) {
+            return res.status(400).json({
+                error: 'Paramètre invalide',
+                message: 'minImprovement doit être un nombre entre 0 et 1'
+            });
+        }
+
+        const startTime = Date.now();
+        const result = await retrainPricingModels({
+            days,
+            minNewRecommendations,
+            minDaysSinceTraining,
+            minImprovement,
+            force
+        });
+        const duration = (Date.now() - startTime) / 1000;
+
+        if (result.success) {
+            res.status(200).json({
+                success: true,
+                message: 'Réentraînement terminé avec succès',
+                duration: duration,
+                summary: result.report?.summary || {},
+                results_count: result.report?.results?.length || 0
+            });
+        } else {
+            res.status(500).json({
+                success: false,
+                error: 'Erreur lors du réentraînement',
+                message: result.error,
+                duration: duration
+            });
+        }
+
+    } catch (error) {
+        console.error('[Pricing Retrain] Erreur dans /api/pricing/retrain:', error);
+        console.error('[Pricing Retrain] Stack trace:', error.stack);
+        
+        return res.status(500).json({
+            error: 'Erreur interne du serveur',
+            message: error.message
+        });
+    }
+});
+
+/**
+ * GET /api/pricing/logs
+ * Récupère les logs de pricing (recommandations et simulations) pour monitoring.
+ * 
+ * Query params:
+ * - property_id: Filtrer par propriété (optionnel)
+ * - date: Filtrer par date (optionnel, format: YYYY-MM-DD)
+ * - limit: Nombre de résultats à retourner (défaut: 50, max: 200)
+ * - type: Type de logs ("recommendations", "simulations", ou "all" - défaut: "all")
+ */
+app.get('/api/pricing/logs', authenticateToken, async (req, res) => {
+    try {
+        const userId = req.user.uid;
+        const { property_id, date, limit = '50', type = 'all' } = req.query;
+
+        // Validation du limit
+        const limitNum = Math.min(parseInt(limit, 10) || 50, 200);
+        if (limitNum < 1) {
+            return res.status(400).json({
+                error: 'Paramètre invalide',
+                message: 'limit doit être un nombre positif'
+            });
+        }
+
+        // Validation du type
+        if (!['recommendations', 'simulations', 'all'].includes(type)) {
+            return res.status(400).json({
+                error: 'Paramètre invalide',
+                message: 'type doit être "recommendations", "simulations" ou "all"'
+            });
+        }
+
+        // Validation du property_id si fourni
+        if (property_id) {
+            try {
+                validatePropertyId(property_id, 'propertyId', userId);
+            } catch (validationError) {
+                return res.status(400).json({
+                    error: 'Validation échouée',
+                    message: validationError.message
+                });
+            }
+
+            // Vérifier les droits d'accès
+            const property = await db.getProperty(property_id);
+            if (!property) {
+                return res.status(404).json({ error: 'Propriété non trouvée.' });
+            }
+
+            const userProfile = await db.getUser(userId);
+            if (!userProfile) {
+                return res.status(404).json({ error: 'Profil utilisateur non trouvé.' });
+            }
+
+            const propertyTeamId = property.team_id || property.owner_id;
+            if (userProfile.team_id !== propertyTeamId) {
+                return res.status(403).json({ error: 'Action non autorisée sur cette propriété.' });
+            }
+        }
+
+        const results = {
+            recommendations: [],
+            simulations: []
+        };
+
+        // Récupérer les recommandations si demandé
+        if (type === 'recommendations' || type === 'all') {
+            let recQuery = supabase
+                .from('pricing_recommendations')
+                .select('*')
+                .order('created_at', { ascending: false })
+                .limit(limitNum);
+
+            if (property_id) {
+                recQuery = recQuery.eq('property_id', property_id);
+            }
+
+            if (date) {
+                recQuery = recQuery.eq('stay_date', date);
+            }
+
+            const { data: recommendations, error: recError } = await recQuery;
+
+            if (recError) {
+                console.error(`[Pricing Logs] Erreur lors de la récupération des recommandations:`, recError);
+                // Ne pas faire échouer la requête, retourner un tableau vide
+                results.recommendations = [];
+            } else {
+                results.recommendations = recommendations || [];
+            }
+        }
+
+        // Récupérer les simulations si demandé
+        if (type === 'simulations' || type === 'all') {
+            let simQuery = supabase
+                .from('pricing_simulations')
+                .select('*')
+                .order('created_at', { ascending: false })
+                .limit(limitNum);
+
+            if (property_id) {
+                simQuery = simQuery.eq('property_id', property_id);
+            }
+
+            if (date) {
+                simQuery = simQuery.eq('stay_date', date);
+            }
+
+            const { data: simulations, error: simError } = await simQuery;
+
+            if (simError) {
+                console.error(`[Pricing Logs] Erreur lors de la récupération des simulations:`, simError);
+                // Ne pas faire échouer la requête, retourner un tableau vide
+                results.simulations = [];
+            } else {
+                results.simulations = simulations || [];
+            }
+        }
+
+        // Si type est "all", retourner les deux
+        // Sinon, retourner seulement le type demandé
+        if (type === 'all') {
+            return res.status(200).json({
+                recommendations: results.recommendations,
+                simulations: results.simulations,
+                total_recommendations: results.recommendations.length,
+                total_simulations: results.simulations.length
+            });
+        } else if (type === 'recommendations') {
+            return res.status(200).json({
+                recommendations: results.recommendations,
+                total: results.recommendations.length
+            });
+        } else {
+            return res.status(200).json({
+                simulations: results.simulations,
+                total: results.simulations.length
+            });
+        }
+
+    } catch (error) {
+        console.error(`[Pricing Logs] Erreur dans /api/pricing/logs:`, error);
+        console.error(`[Pricing Logs] Stack trace:`, error.stack);
+        
+        return res.status(500).json({
+            error: 'Erreur interne du serveur',
+            message: error.message
+        });
+    }
+});
+
 // GET /api/news - Récupérer les actualités du marché (depuis le cache)
 app.get('/api/news', authenticateToken, async (req, res) => {
     let tokensUsed = 0;
@@ -8931,6 +9787,35 @@ cron.schedule('0 2 * * *', async () => {
     scheduled: true,
     timezone: "UTC"
 });
+
+// Job hebdomadaire de réentraînement des modèles de pricing (dimanche à 4h UTC)
+cron.schedule('0 4 * * 0', async () => {
+    console.log('[Pricing Retrain] Démarrage du job de réentraînement automatique des modèles de pricing...');
+    try {
+        const result = await retrainPricingModels({
+            minNewRecommendations: 50,
+            minDaysSinceTraining: 30,
+            minImprovement: 0.05,
+            force: false
+        });
+        
+        if (result.success) {
+            console.log('[Pricing Retrain] ✅ Réentraînement terminé avec succès');
+            console.log(`[Pricing Retrain] - Propriétés traitées: ${result.report?.summary?.total_processed || 0}`);
+            console.log(`[Pricing Retrain] - Modèles remplacés: ${result.report?.summary?.model_replaced || 0}`);
+        } else {
+            console.error('[Pricing Retrain] ❌ Erreur lors du réentraînement:', result.error);
+        }
+    } catch (error) {
+        console.error('[Pricing Retrain] ❌ Exception lors du réentraînement:', error);
+        // Ne pas faire planter le serveur
+    }
+}, {
+    scheduled: true,
+    timezone: "UTC"
+});
+
+console.log('[Pricing Retrain] Job de réentraînement planifié: tous les dimanches à 4h UTC');
 
 cron.schedule('0 3 * * *', async () => {
     // Vérifier quelles langues sont réellement utilisées (ont un cache existant)
@@ -9830,9 +10715,7 @@ async function collectMarketData(options = {}) {
         console.log(`[Market Data] Exécution de la collecte: ${command}`);
         
         // Exécuter le script Python
-        // Note: Sur Windows, on peut utiliser 'python', sur Linux/Mac 'python3'
-        const pythonCommand = process.platform === 'win32' ? 'python' : 'python3';
-        command = command.replace('python', pythonCommand);
+        command = command.replace('python', PYTHON_COMMAND);
         
         const { stdout, stderr } = await execAsync(command, {
             cwd: __dirname,
@@ -9974,8 +10857,7 @@ async function enrichMarketData(options = {}) {
         console.log(`[Market Data] Exécution de l'enrichissement: ${command}`);
         
         // Exécuter le script Python
-        const pythonCommand = process.platform === 'win32' ? 'python' : 'python3';
-        command = command.replace('python', pythonCommand);
+        command = command.replace('python', PYTHON_COMMAND);
         
         const { stdout, stderr } = await execAsync(command, {
             cwd: __dirname,
@@ -10022,6 +10904,187 @@ async function enrichMarketData(options = {}) {
 
     } catch (error) {
         console.error('[Market Data] Erreur lors de l\'exécution du script Python:', error);
+        
+        return {
+            success: false,
+            error: error.message,
+            code: error.code,
+            signal: error.signal
+        };
+    }
+}
+
+/**
+ * Exécute le script Python de réentraînement des modèles de demande.
+ * 
+ * @param {Object} options - Options pour le réentraînement
+ * @param {number} options.days - Nombre de jours d'historique à utiliser (défaut: 180)
+ * @param {number} options.minNewRecommendations - Minimum de nouvelles recommandations (défaut: 50)
+ * @param {number} options.minDaysSinceTraining - Minimum de jours depuis dernier entraînement (défaut: 30)
+ * @param {number} options.minImprovement - Amélioration minimale pour remplacer (défaut: 0.05)
+ * @param {boolean} options.force - Forcer le réentraînement même si critères non remplis (défaut: false)
+ * @returns {Promise<Object>} Rapport de réentraînement
+ */
+async function retrainPricingModels(options = {}) {
+    const {
+        days = 180,
+        minNewRecommendations = 50,
+        minDaysSinceTraining = 30,
+        minImprovement = 0.05,
+        force = false
+    } = options;
+
+    const startTime = new Date().toISOString();
+    let jobId = null;
+
+    try {
+        // Logger le début du job dans pipeline_logs_market
+        const { data: logData, error: logError } = await supabase
+            .from('pipeline_logs_market')
+            .insert({
+                job_name: 'retrain_pricing_models',
+                status: 'running',
+                start_time: startTime,
+                parameters: {
+                    days,
+                    minNewRecommendations,
+                    minDaysSinceTraining,
+                    minImprovement,
+                    force
+                }
+            })
+            .select()
+            .single();
+
+        if (logData) {
+            jobId = logData.id;
+        }
+
+        // Construire la commande Python
+        let command = 'python -m scripts.retrain_demand_models_from_logs';
+        command += ` --days ${days}`;
+        command += ` --min-new-recommendations ${minNewRecommendations}`;
+        command += ` --min-days-since-training ${minDaysSinceTraining}`;
+        command += ` --min-improvement ${minImprovement}`;
+        
+        if (force) {
+            command += ' --force';
+        }
+
+        // Ajouter --output pour capturer le rapport JSON
+        const outputFile = path.join(__dirname, 'temp', `retrain_report_${Date.now()}.json`);
+        const tempDir = path.join(__dirname, 'temp');
+        const fs = require('fs');
+        if (!fs.existsSync(tempDir)) {
+            fs.mkdirSync(tempDir, { recursive: true });
+        }
+        command += ` --output "${outputFile}"`;
+
+        console.log(`[Pricing Retrain] Exécution du réentraînement: ${command}`);
+        
+        // Exécuter le script Python
+        command = command.replace('python', PYTHON_COMMAND);
+        
+        const { stdout, stderr } = await execAsync(command, {
+            cwd: __dirname,
+            maxBuffer: 10 * 1024 * 1024,
+            env: {
+                ...process.env,
+                PYTHONUNBUFFERED: '1'
+            }
+        });
+
+        // Lire le rapport JSON depuis le fichier
+        let report = null;
+        try {
+            if (fs.existsSync(outputFile)) {
+                const reportContent = fs.readFileSync(outputFile, 'utf-8');
+                report = JSON.parse(reportContent);
+                // Nettoyer le fichier temporaire
+                fs.unlinkSync(outputFile);
+            } else {
+                // Essayer de parser depuis stdout
+                const jsonMatch = stdout.match(/\{[\s\S]*\}/);
+                if (jsonMatch) {
+                    report = JSON.parse(jsonMatch[0]);
+                } else {
+                    throw new Error('No JSON output found');
+                }
+            }
+        } catch (parseError) {
+            console.error('[Pricing Retrain] Erreur de parsing JSON:', parseError);
+            console.error('[Pricing Retrain] stdout:', stdout);
+            console.error('[Pricing Retrain] stderr:', stderr);
+            
+            // Mettre à jour le log avec l'erreur
+            if (jobId) {
+                await supabase
+                    .from('pipeline_logs_market')
+                    .update({
+                        status: 'failed',
+                        end_time: new Date().toISOString(),
+                        error_message: `Failed to parse Python script output: ${parseError.message}`,
+                        output: stdout.substring(0, 10000) // Limiter la taille
+                    })
+                    .eq('id', jobId);
+            }
+            
+            return {
+                success: false,
+                error: 'Failed to parse Python script output',
+                stdout: stdout,
+                stderr: stderr,
+                parseError: parseError.message
+            };
+        }
+
+        if (stderr) {
+            console.warn('[Pricing Retrain] Warnings/Errors from Python script:', stderr);
+        }
+
+        const endTime = new Date().toISOString();
+        const duration = (new Date(endTime) - new Date(startTime)) / 1000;
+
+        // Mettre à jour le log avec le succès
+        if (jobId) {
+            await supabase
+                .from('pipeline_logs_market')
+                .update({
+                    status: report.summary?.errors > 0 ? 'completed_with_errors' : 'completed',
+                    end_time: endTime,
+                    duration_seconds: duration,
+                    output: JSON.stringify({
+                        summary: report.summary,
+                        total_processed: report.results?.length || 0
+                    }, null, 2).substring(0, 10000)
+                })
+                .eq('id', jobId);
+        }
+
+        console.log(`[Pricing Retrain] Réentraînement terminé: ${report.summary?.total_processed || 0} propriété(s) traitée(s)`);
+        
+        return {
+            success: report.summary?.errors === 0,
+            report: report
+        };
+
+    } catch (error) {
+        console.error('[Pricing Retrain] Erreur lors de l\'exécution du script Python:', error);
+        
+        const endTime = new Date().toISOString();
+        
+        // Mettre à jour le log avec l'erreur
+        if (jobId) {
+            await supabase
+                .from('pipeline_logs_market')
+                .update({
+                    status: 'failed',
+                    end_time: endTime,
+                    error_message: error.message,
+                    duration_seconds: (new Date(endTime) - new Date(startTime)) / 1000
+                })
+                .eq('id', jobId);
+        }
         
         return {
             success: false,
@@ -10081,8 +11144,7 @@ async function buildMarketFeatures(options = {}) {
         console.log(`[Market Data] Exécution de la construction des features: ${command}`);
         
         // Exécuter le script Python
-        const pythonCommand = process.platform === 'win32' ? 'python' : 'python3';
-        command = command.replace('python', pythonCommand);
+        command = command.replace('python', PYTHON_COMMAND);
         
         const { stdout, stderr } = await execAsync(command, {
             cwd: __dirname,
@@ -10455,6 +11517,170 @@ app.get('/api/market-data/features', authenticateToken, async (req, res) => {
         });
     }
 });
+
+/**
+ * @deprecated Cette fonction est remplacée par pricingBridge.getRecommendedPrice()
+ * Conservée pour référence / débogage uniquement.
+ * 
+ * Exécute le script Python de recommandation de prix pour une propriété/date.
+ *
+ * @param {Object} options
+ * @param {string} options.propertyId
+ * @param {string} options.date
+ * @param {string} [options.roomType]
+ * @returns {Promise<Object>} Recommandation de prix retournée par le script Python
+ */
+/*
+async function runPythonPriceRecommendation(options = {}) {
+    const {
+        propertyId,
+        date,
+        roomType = 'default'
+    } = options;
+
+    if (!propertyId || !date) {
+        throw new Error('propertyId et date sont requis pour la recommandation de prix');
+    }
+
+    // Sécurité basique sur le format de date
+    const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+    if (!dateRegex.test(date)) {
+        throw new Error('Format de date invalide. Utilisez YYYY-MM-DD');
+    }
+
+    try {
+        // Script Python: scripts/demo_optimize_price.py
+        let command = `python -m scripts.demo_optimize_price --property-id ${propertyId} --date ${date} --room-type ${roomType}`;
+
+        console.log(`[Pricing IA] Exécution de la recommandation de prix: ${command}`);
+
+        command = command.replace('python', PYTHON_COMMAND);
+
+        const { stdout, stderr } = await execAsync(command, {
+            cwd: __dirname,
+            maxBuffer: 10 * 1024 * 1024,
+            env: {
+                ...process.env,
+                PYTHONUNBUFFERED: '1'
+            }
+        });
+
+        if (stderr) {
+            console.warn('[Pricing IA] Warnings/Errors from Python script:', stderr);
+        }
+
+        let recommendation;
+        try {
+            const jsonMatch = stdout.match(/\{[\s\S]*\}/);
+            if (jsonMatch) {
+                recommendation = JSON.parse(jsonMatch[0]);
+            } else {
+                throw new Error('No JSON output found in stdout');
+            }
+        } catch (parseError) {
+            console.error('[Pricing IA] Erreur de parsing JSON:', parseError);
+            console.error('[Pricing IA] stdout:', stdout);
+            console.error('[Pricing IA] stderr:', stderr);
+            throw new Error('Failed to parse Python price recommendation output');
+        }
+
+        return recommendation;
+    } catch (error) {
+        console.error('[Pricing IA] Erreur lors de l’exécution du script Python:', error);
+        throw error;
+    }
+}
+*/
+
+/**
+ * @deprecated Cette fonction est remplacée par pricingBridge.simulatePrices()
+ * Conservée pour référence / débogage uniquement.
+ * 
+ * Exécute le moteur de simulation Python pour une grille de prix.
+ *
+ * @param {Object} options
+ * @param {string} options.propertyId
+ * @param {string} options.date
+ * @param {string} [options.roomType]
+ * @param {Array<number>} options.priceGrid
+ * @returns {Promise<Array<Object>>} Liste { price, predicted_demand, expected_revenue }
+ */
+/*
+async function runPythonPriceSimulation(options = {}) {
+    const {
+        propertyId,
+        date,
+        roomType = 'default',
+        priceGrid
+    } = options;
+
+    if (!propertyId || !date || !Array.isArray(priceGrid) || priceGrid.length === 0) {
+        throw new Error('propertyId, date et une priceGrid non vide sont requis pour la simulation');
+    }
+
+    const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+    if (!dateRegex.test(date)) {
+        throw new Error('Format de date invalide. Utilisez YYYY-MM-DD');
+    }
+
+    try {
+        const pricesArg = priceGrid.join(',');
+
+        // On exécute un petit script Python inline qui importe l’optimizer
+        let command = `python - << "EOF"
+from pricing_engine.optimizer import simulate_revenue_for_price_grid
+
+property_id = "${propertyId}"
+room_type = "${roomType}"
+date = "${date}"
+price_grid = [${pricesArg}]
+
+results = simulate_revenue_for_price_grid(
+    property_id=property_id,
+    room_type=room_type,
+    date=date,
+    price_grid=price_grid,
+    capacity_remaining=10,
+    context_features={},
+)
+
+import json
+print(json.dumps(results, ensure_ascii=False))
+EOF`;
+
+        console.log(`[Pricing IA] Exécution de la simulation de prix (inline Python)`);
+
+        const { stdout, stderr } = await execAsync(command, {
+            cwd: __dirname,
+            maxBuffer: 10 * 1024 * 1024,
+            env: {
+                ...process.env,
+                PYTHONUNBUFFERED: '1'
+            },
+            shell: process.platform === 'win32' ? 'cmd.exe' : '/bin/bash'
+        });
+
+        if (stderr) {
+            console.warn('[Pricing IA] Warnings/Errors from inline Python simulation:', stderr);
+        }
+
+        let results;
+        try {
+            results = JSON.parse(stdout);
+        } catch (parseError) {
+            console.error('[Pricing IA] Erreur de parsing JSON simulation:', parseError);
+            console.error('[Pricing IA] stdout:', stdout);
+            console.error('[Pricing IA] stderr:', stderr);
+            throw new Error('Failed to parse Python price simulation output');
+        }
+
+        return results;
+    } catch (error) {
+        console.error('[Pricing IA] Erreur lors de la simulation de prix:', error);
+        throw error;
+    }
+}
+*/
 
 /**
  * Endpoint API pour récupérer les prix concurrents.

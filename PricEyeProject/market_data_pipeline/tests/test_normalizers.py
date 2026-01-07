@@ -420,3 +420,10 @@ class TestNormalizersEdgeCases:
         assert "temperature" in normalized
         assert normalized["temperature"] == pytest.approx(50.0, abs=1.0)
 
+
+
+
+
+
+
+

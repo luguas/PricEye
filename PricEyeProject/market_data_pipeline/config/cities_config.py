@@ -221,3 +221,10 @@ def add_city_config(city_config: CityConfig) -> None:
     CITIES_DATABASE[country][city_config.name] = city_config
 
 
+
+
+
+
+
+
+
