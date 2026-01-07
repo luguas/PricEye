@@ -155,10 +155,6 @@ async function getRecommendedPrice(propertyId, date, roomType = 'default') {
                     ...process.env,
                     PYTHONUNBUFFERED: '1' // Désactiver le buffering Python pour voir les erreurs en temps réel
                 }
-                env: {
-                    ...process.env,
-                    PYTHONUNBUFFERED: '1'
-                }
             }),
             new Promise((_, reject) => 
                 setTimeout(() => reject(new Error('Timeout')), DEFAULT_TIMEOUT)
