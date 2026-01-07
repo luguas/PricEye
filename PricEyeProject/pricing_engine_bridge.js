@@ -15,8 +15,8 @@ const execAsync = promisify(exec);
 // Helper pour savoir si on est sur Windows (pour la commande python)
 const PYTHON_COMMAND = process.platform === 'win32' ? 'python' : 'python3';
 
-// Timeout par défaut (30 secondes)
-const DEFAULT_TIMEOUT = 30000;
+// Timeout par défaut (60 secondes pour permettre le chargement des modèles et les requêtes DB)
+const DEFAULT_TIMEOUT = 60000;
 
 /**
  * Vérifie si un modèle de demande existe pour une propriété donnée.

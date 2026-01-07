@@ -157,12 +157,28 @@ def choose_optimal_price(
             effective_base_price = effective_max_price
 
     # Construire la grille de prix
+    # Limiter la taille de la grille pour éviter les timeouts (max 50 prix)
     price_grid = _build_price_grid(
         min_price=effective_min_price,
         max_price=effective_max_price,
         base_price=effective_base_price,
         step=config.price_step,
     )
+    
+    # Limiter la taille de la grille si elle est trop grande
+    if len(price_grid) > 50:
+        # Prendre un échantillon représentatif : début, milieu (autour de base_price), fin
+        if effective_base_price is not None:
+            # Prioriser les prix autour de base_price
+            base_idx = min(range(len(price_grid)), key=lambda i: abs(price_grid[i] - effective_base_price))
+            start_idx = max(0, base_idx - 10)
+            end_idx = min(len(price_grid), base_idx + 10)
+            price_grid = price_grid[:5] + price_grid[start_idx:end_idx] + price_grid[-5:]
+            price_grid = sorted(list(set(price_grid)))[:50]
+        else:
+            # Échantillonnage uniforme
+            step = max(1, len(price_grid) // 50)
+            price_grid = price_grid[::step][:50]
 
     # Simuler le revenu pour chaque prix
     simulations = simulate_revenue_for_price_grid(
