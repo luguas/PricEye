@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { addProperty, updateProperty, syncPropertyData } from '../services/api.js';
 import { useLanguage } from '../contexts/LanguageContext.jsx';
 import TrialLimitModal from './TrialLimitModal.jsx';
+import CustomScrollbar from './CustomScrollbar.jsx';
 
 // Liste des équipements disponibles (équipements de base)
 const availableAmenities = [
@@ -820,11 +821,13 @@ function PropertyModal({ token, onClose, onSave, property, initialStep = 1 }) {
 
             {/* Corps (Scrollable) - flex-1 permet de prendre l'espace restant */}
             <form onSubmit={handleSubmit} className="flex flex-col flex-1 min-h-0 overflow-hidden">
-              <div className="overflow-y-auto flex-1 min-h-0 p-6">
-                {renderStepContent()}
-                
-                {error && <p className="text-sm text-red-400 bg-red-900/50 p-3 rounded-[8px] border border-red-500/20 mt-4">{error}</p>}
-              </div>
+              <CustomScrollbar className="flex-1 min-h-0">
+                <div className="p-6">
+                  {renderStepContent()}
+                  
+                  {error && <p className="text-sm text-red-400 bg-red-900/50 p-3 rounded-[8px] border border-red-500/20 mt-4">{error}</p>}
+                </div>
+              </CustomScrollbar>
 
               {/* Footer (Fixe) */}
               <div className="p-6 border-t border-global-stroke-box bg-global-bg-box/50 shrink-0">
