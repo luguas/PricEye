@@ -4576,6 +4576,23 @@ app.put('/api/groups/:id/strategy', authenticateToken, async (req, res) => {
              return res.status(400).send({ error: 'Prix plancher et de base sont requis et doivent être des nombres positifs.' });
          }
 
+        // Construire l'objet JSONB strategy pour la table groups
+        // La table groups a une colonne JSONB 'strategy', pas des colonnes directes
+        // Fusionner avec les données existantes si elles existent
+        // Utiliser _strategy_raw si disponible (JSONB brut), sinon essayer strategy, sinon objet vide
+        const existingStrategy = group._strategy_raw && typeof group._strategy_raw === 'object' && !Array.isArray(group._strategy_raw)
+            ? group._strategy_raw
+            : (group.strategy && typeof group.strategy === 'object' && !Array.isArray(group.strategy) ? group.strategy : {});
+        
+        const strategyJsonb = {
+            ...existingStrategy, // Conserver les autres champs du JSONB s'ils existent
+            strategy,
+            floor_price: floorPriceNum,
+            base_price: basePriceNum,
+            ceiling_price: ceilingPriceNum,
+        };
+
+        // Les données pour mettre à jour les propriétés du groupe (colonnes directes)
         const strategyData = {
             strategy,
             floor_price: floorPriceNum,
@@ -4588,8 +4605,8 @@ app.put('/api/groups/:id/strategy', authenticateToken, async (req, res) => {
             return res.status(400).send({ error: 'Ce groupe ne contient aucune propriété.' });
         }
         
-        // Mettre à jour le document du groupe lui-même avec la stratégie
-        await db.updateGroup(id, strategyData);
+        // Mettre à jour le document du groupe avec le JSONB strategy
+        await db.updateGroup(id, { strategy: strategyJsonb });
         
         // Mettre à jour toutes les propriétés du groupe
         for (const propId of propertiesInGroup) {

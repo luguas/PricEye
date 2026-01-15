@@ -155,9 +155,29 @@ async function getGroup(groupId) {
   
   if (!data) return null;
   
+  // Extraire les données du JSONB strategy et rules pour les aplatir
+  // Conserver les JSONB bruts dans _strategy_raw et _rules_raw pour les mises à jour
+  const strategyRaw = data.strategy;
+  const rulesRaw = data.rules;
+  const strategy = strategyRaw && typeof strategyRaw === 'object' && !Array.isArray(strategyRaw) ? strategyRaw : {};
+  const rules = rulesRaw && typeof rulesRaw === 'object' && !Array.isArray(rulesRaw) ? rulesRaw : {};
+  
   // Transformer les données pour correspondre au format attendu
   return {
     ...data,
+    // Conserver les JSONB bruts pour les mises à jour
+    _strategy_raw: strategyRaw,
+    _rules_raw: rulesRaw,
+    // Aplatir les données du JSONB strategy
+    strategy: strategy.strategy || data.strategy_type || null,
+    floor_price: strategy.floor_price || null,
+    base_price: strategy.base_price || null,
+    ceiling_price: strategy.ceiling_price || null,
+    // Aplatir les données du JSONB rules
+    min_stay_duration: rules.min_stay_duration || rules.min_stay || null,
+    max_stay_duration: rules.max_stay_duration || rules.max_stay || null,
+    long_stay_discount: rules.long_stay_discount || rules.weekly_discount_percent || null,
+    markup: rules.markup || rules.weekend_markup_percent || null,
     properties: (data.group_properties || []).map(gp => gp.properties).filter(Boolean)
   };
 }
@@ -180,10 +200,32 @@ async function getGroupsByOwner(ownerId) {
   if (error) throw error;
   
   // Transformer les données pour correspondre au format attendu
-  return (data || []).map(group => ({
-    ...group,
-    properties: (group.group_properties || []).map(gp => gp.properties).filter(Boolean)
-  }));
+  return (data || []).map(group => {
+    // Extraire les données du JSONB strategy et rules pour les aplatir
+    // Conserver les JSONB bruts dans _strategy_raw et _rules_raw pour les mises à jour
+    const strategyRaw = group.strategy;
+    const rulesRaw = group.rules;
+    const strategy = strategyRaw && typeof strategyRaw === 'object' && !Array.isArray(strategyRaw) ? strategyRaw : {};
+    const rules = rulesRaw && typeof rulesRaw === 'object' && !Array.isArray(rulesRaw) ? rulesRaw : {};
+    
+    return {
+      ...group,
+      // Conserver les JSONB bruts pour les mises à jour
+      _strategy_raw: strategyRaw,
+      _rules_raw: rulesRaw,
+      // Aplatir les données du JSONB strategy
+      strategy: strategy.strategy || group.strategy_type || null,
+      floor_price: strategy.floor_price || null,
+      base_price: strategy.base_price || null,
+      ceiling_price: strategy.ceiling_price || null,
+      // Aplatir les données du JSONB rules
+      min_stay_duration: rules.min_stay_duration || rules.min_stay || null,
+      max_stay_duration: rules.max_stay_duration || rules.max_stay || null,
+      long_stay_discount: rules.long_stay_discount || rules.weekly_discount_percent || null,
+      markup: rules.markup || rules.weekend_markup_percent || null,
+      properties: (group.group_properties || []).map(gp => gp.properties).filter(Boolean)
+    };
+  });
 }
 
 /**

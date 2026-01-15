@@ -820,6 +820,7 @@ function PropertyModal({ token, onClose, onSave, property, initialStep = 1 }) {
             </div>
 
             {/* Corps (Scrollable) - flex-1 permet de prendre l'espace restant */}
+            {/* La scrollbar personnalisée ne s'affiche que si le contenu dépasse la hauteur disponible */}
             <form onSubmit={handleSubmit} className="flex flex-col flex-1 min-h-0 overflow-hidden">
               <CustomScrollbar className="flex-1 min-h-0">
                 <div className="p-6">

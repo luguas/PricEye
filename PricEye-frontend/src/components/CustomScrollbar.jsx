@@ -56,7 +56,8 @@ function CustomScrollbar({ children, className = '' }) {
 
   // Calcul plus souple : on utilise Math.ceil pour éviter les problèmes de sub-pixel
   // On considère scrollable si le contenu dépasse d'au moins 1px
-  const isScrollable = Math.ceil(dimensions.scrollHeight) > Math.ceil(dimensions.clientHeight) + 1;
+  // La scrollbar ne s'affiche que si le contenu dépasse réellement la hauteur disponible
+  const isScrollable = dimensions.scrollHeight > dimensions.clientHeight + 1;
 
   const getThumbStyle = () => {
     if (!isScrollable) return { display: 'none' };
