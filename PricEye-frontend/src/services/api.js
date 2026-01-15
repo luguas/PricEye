@@ -4,87 +4,145 @@ const API_BASE_URL = 'https://priceye.onrender.com';
 // Importer Supabase (client) pour l'authentification
 import { supabase } from '../config/supabase.js';
 
+// Variable locale pour stocker le token en mémoire (évite les accès lents au localStorage)
+let globalAuthToken = localStorage.getItem('authToken');
+
+/**
+ * Met à jour le token utilisé par le service API.
+ * Cette fonction est appelée par AuthContext lors du login/logout.
+ */
+export const setApiToken = (token) => {
+  globalAuthToken = token;
+};
 
 /**
  * Fonction générique pour gérer les requêtes fetch vers NOTRE backend.
+ * Version améliorée : Gestion robuste des erreurs 429 et 401.
  */
 async function apiRequest(endpoint, options = {}) {
-  const token = options.token;
+  // Récupération du token (supporte l'injection manuelle ou via variable globale si implémentée précédemment)
+  const token = options.token || (typeof globalAuthToken !== 'undefined' ? globalAuthToken : null);
+  
   const headers = {
-    'Content-Type': options.headers?.['Content-Type'] ?? 'application/json', 
-    ...options.headers, 
+    'Content-Type': options.headers?.['Content-Type'] ?? 'application/json',
+    ...options.headers,
   };
+
   if (token) {
     headers['Authorization'] = `Bearer ${token}`;
   }
-  
+
   const finalOptions = {
-      ...options,
-      headers,
+    ...options,
+    headers,
   };
   delete finalOptions.token;
 
-  const response = await fetch(`${API_BASE_URL}${endpoint}`, finalOptions);
-  
-  const contentType = response.headers.get('content-type');
+  try {
+    const response = await fetch(`${API_BASE_URL}${endpoint}`, finalOptions);
+    const contentType = response.headers.get('content-type');
 
-  if (!response.ok) {
-    let errorData = { error: `Erreur ${response.status} sur l'endpoint ${endpoint}`};
-    if (contentType && contentType.includes('application/json')) {
-      try {
-        errorData = await response.json();
-      } catch (e) { /* Ignorer */ }
-    } else {
-        const textError = await response.text();
-        if (textError) {
-             errorData.error = textError;
-        }
-    }
-    
-    // Vérifier si c'est une erreur de limite d'essai (ne pas déconnecter dans ce cas)
-    const isLimitExceeded = errorData.error === 'LIMIT_EXCEEDED' || 
-                            errorData.message?.includes('limite') ||
-                            errorData.message?.includes('LIMIT_EXCEEDED');
-    
-    // Si le token est expiré ou invalide (401 ou 403), déclencher la déconnexion
-    // SAUF si c'est une erreur de limite d'essai (403 avec LIMIT_EXCEEDED)
-    if (response.status === 401 || (response.status === 403 && !isLimitExceeded)) {
-      // Nettoyer le token du localStorage
-      localStorage.removeItem('authToken');
-      // Déclencher un événement personnalisé pour notifier App.jsx
-      if (typeof window !== 'undefined') {
+    // ---------------------------------------------------------
+    // GESTION DES ERREURS (Si response.ok est false)
+    // ---------------------------------------------------------
+    if (!response.ok) {
+      let errorData = { error: `Erreur ${response.status} sur l'endpoint ${endpoint}` };
+
+      // Tentative de parsing de l'erreur (JSON ou Texte)
+      if (contentType && contentType.includes('application/json')) {
         try {
+          errorData = await response.json();
+        } catch (e) { /* Echec silencieux parsing JSON */ }
+      } else {
+        const textError = await response.text();
+        if (textError) errorData.error = textError;
+      }
+
+      // --- 1. Détection Typée des Erreurs ---
+      
+      // Est-ce un problème de Quota ? (429 standard OU ancien 403 avec message spécifique)
+      const isQuotaExceeded = 
+        response.status === 429 || 
+        (response.status === 403 && (
+          errorData.error === 'LIMIT_EXCEEDED' || 
+          errorData.message?.includes('limite') ||
+          errorData.message?.includes('LIMIT_EXCEEDED') ||
+          errorData.error === 'Quota IA atteint'
+        ));
+
+      // Est-ce une expiration de session ? (401 Strict uniquement)
+      const isAuthError = response.status === 401;
+
+      // --- 2. Actions Spécifiques ---
+
+      // Déconnexion automatique UNIQUEMENT sur 401 (Jeton invalide/expiré)
+      if (isAuthError) {
+        console.warn(`Session expirée (401) sur ${endpoint}. Déconnexion déclenchée.`);
+        localStorage.removeItem('authToken');
+        // Dispatch event pour que l'UI réagisse (App.jsx ou AuthContext)
+        if (typeof window !== 'undefined') {
           window.dispatchEvent(new CustomEvent('tokenExpired'));
-        } catch (error) {
-          console.error('Erreur lors de l\'envoi de l\'événement tokenExpired:', error);
         }
       }
+
+      console.error(`Erreur API (${response.status}):`, errorData.error || errorData.message);
+
+      // --- 3. Construction de l'objet Error pour le catch() appelant ---
+      
+      const errorMessage = errorData.error || errorData.message || `Erreur HTTP ${response.status}`;
+      const error = new Error(errorMessage);
+      
+      // Enrichissement de l'erreur pour un traitement facile côté UI
+      error.status = response.status;           // Code HTTP (ex: 429, 403)
+      error.errorData = errorData;              // Payload complet du backend (compatibilité)
+      error.isQuotaExceeded = isQuotaExceeded;  // Flag facile à vérifier
+      error.isAuthError = isAuthError;          // Flag facile à vérifier
+
+      // Si c'est une erreur de quota, on attache les infos utiles si disponibles
+      if (isQuotaExceeded && errorData.resetAt) {
+          error.quotaInfo = {
+            limit: errorData.limit,
+            used: errorData.used,
+            remaining: errorData.remaining,
+            resetAt: errorData.resetAt
+          };
+      }
+
+      throw error;
     }
-    
-    console.error(`Erreur API (${response.status}):`, errorData.error || errorData.message); 
-    
-    // Créer une erreur avec toutes les données accessibles
-    const error = new Error(errorData.error || errorData.message || `Erreur ${response.status}`);
-    // Attacher les données complètes à l'erreur pour qu'elles soient accessibles
-    error.errorData = errorData;
-    throw error;
-  }
 
-  if (response.status === 204 || (response.status === 200 && (!contentType?.includes('application/json') || response.headers.get('content-length') === '0'))) {
-    return { message: 'Opération réussie.' };
-  }
-  
-   if (contentType && (contentType.includes('text/html') || contentType.includes('text/plain'))) {
-       const text = await response.text();
-       return { message: text }; 
-   }
+    // ---------------------------------------------------------
+    // TRAITEMENT DU SUCCÈS (Si response.ok est true)
+    // ---------------------------------------------------------
 
-  try {
+    // Cas 204 No Content ou Body vide
+    if (response.status === 204 || (response.status === 200 && (!contentType?.includes('application/json') || response.headers.get('content-length') === '0'))) {
+      return { message: 'Opération réussie.' };
+    }
+
+    // Cas Texte brut
+    if (contentType && (contentType.includes('text/html') || contentType.includes('text/plain'))) {
+      const text = await response.text();
+      return { message: text };
+    }
+
+    // Cas JSON standard
+    try {
       const data = await response.json();
       return data;
-  } catch (e) {
-       console.error("Erreur de parsing JSON pour une réponse OK:", e, "Réponse:", await response.text());
-       throw new Error("Réponse du serveur reçue mais invalide (pas un JSON).");
+    } catch (e) {
+      console.error("Erreur de parsing JSON pour une réponse OK:", e);
+      throw new Error("Réponse du serveur reçue mais invalide (pas un JSON).");
+    }
+
+  } catch (error) {
+    // Si c'est déjà notre erreur formatée, on la relance
+    if (error.status || error.isQuotaExceeded) {
+      throw error;
+    }
+    // Sinon c'est une erreur réseau (fetch failed) ou de code
+    console.error("Erreur Réseau/Système:", error);
+    throw new Error(error.message || "Erreur de communication avec le serveur.");
   }
 }
 

@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
 import { addProperty, updateProperty, syncPropertyData } from '../services/api.js';
-import CustomScrollbar from './CustomScrollbar.jsx';
 import { useLanguage } from '../contexts/LanguageContext.jsx';
 import TrialLimitModal from './TrialLimitModal.jsx';
 
@@ -796,41 +795,47 @@ function PropertyModal({ token, onClose, onSave, property, initialStep = 1 }) {
         }}
       >
         <div 
-          className="border border-global-stroke-box rounded-[14px] shadow-xl w-full max-w-5xl p-6 max-h-[90vh] flex flex-col backdrop-blur-md"
+          className="border border-global-stroke-box rounded-[14px] shadow-xl w-full max-w-5xl max-h-[90vh] flex flex-col backdrop-blur-md overflow-hidden"
           style={{ backgroundColor: 'rgba(15, 23, 43, 0.75)' }}
           onClick={(e) => e.stopPropagation()}
         >
-            <div className="flex justify-between items-center mb-4 shrink-0">
-              <h3 className="text-xl font-bold text-global-blanc">{isEditing ? t('propertyModal.editTitle') : t('propertyModal.title')}</h3>
-              {isEditing && (
-                <button
-                  type="button"
-                  onClick={handleSyncData}
-                  disabled={isSyncing}
-                  className="px-4 py-2 text-sm font-semibold text-white bg-teal-600 rounded-[8px] hover:bg-teal-700 disabled:bg-gray-500 transition-colors"
-                >
-                  {isSyncing ? t('common.loading') : t('propertyModal.sync')}
-                </button>
-              )}
+            {/* Header (Fixe) */}
+            <div className="p-6 border-b border-global-stroke-box shrink-0">
+              <div className="flex justify-between items-center">
+                <h3 className="text-xl font-bold text-global-blanc">{isEditing ? t('propertyModal.editTitle') : t('propertyModal.title')}</h3>
+                {isEditing && (
+                  <button
+                    type="button"
+                    onClick={handleSyncData}
+                    disabled={isSyncing}
+                    className="px-4 py-2 text-sm font-semibold text-white bg-teal-600 rounded-[8px] hover:bg-teal-700 disabled:bg-gray-500 transition-colors"
+                  >
+                    {isSyncing ? t('common.loading') : t('propertyModal.sync')}
+                  </button>
+                )}
+              </div>
+              {syncMessage && <p className="text-sm text-green-400 mt-2 text-center">{syncMessage}</p>}
+              {renderStepIndicator()}
             </div>
-            {syncMessage && <p className="text-sm text-green-400 mb-2 text-center shrink-0">{syncMessage}</p>}
 
-            {renderStepIndicator()}
-
-            <CustomScrollbar className="flex-1 min-h-0">
-              <form onSubmit={handleSubmit} className="pr-2">
+            {/* Corps (Scrollable) - flex-1 permet de prendre l'espace restant */}
+            <form onSubmit={handleSubmit} className="flex flex-col flex-1 min-h-0 overflow-hidden">
+              <div className="overflow-y-auto flex-1 min-h-0 p-6">
                 {renderStepContent()}
                 
                 {error && <p className="text-sm text-red-400 bg-red-900/50 p-3 rounded-[8px] border border-red-500/20 mt-4">{error}</p>}
-                
-                <div className="flex justify-between gap-4 pt-6 mt-4 border-t border-global-stroke-box">
+              </div>
+
+              {/* Footer (Fixe) */}
+              <div className="p-6 border-t border-global-stroke-box bg-global-bg-box/50 shrink-0">
+                <div className="flex justify-between gap-4">
                   <button 
                     type="button" 
                     onClick={currentStep === 1 ? onClose : prevStep} 
                     className="px-4 py-2 font-semibold text-global-inactive bg-global-bg-small-box border border-global-stroke-box rounded-[8px] hover:border-global-content-highlight-2nd hover:text-global-blanc transition-colors"
                   >
                     {currentStep === 1 ? t('propertyModal.cancel') : t('propertyModal.previous')}
-                    </button>
+                  </button>
                   <button 
                     type="submit" 
                     disabled={isLoading || isSyncing} 
@@ -843,10 +848,10 @@ function PropertyModal({ token, onClose, onSave, property, initialStep = 1 }) {
                         : currentStep === totalSteps 
                           ? t('propertyModal.save') 
                           : t('propertyModal.next')}
-                    </button>
+                  </button>
                 </div>
-              </form>
-            </CustomScrollbar>
+              </div>
+            </form>
         </div>
     </div>
     </>
