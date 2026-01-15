@@ -819,19 +819,25 @@ function PropertyModal({ token, onClose, onSave, property, initialStep = 1 }) {
               {renderStepIndicator()}
             </div>
 
-            {/* Corps (Scrollable) - flex-1 permet de prendre l'espace restant */}
-            {/* La scrollbar personnalisée ne s'affiche que si le contenu dépasse la hauteur disponible */}
-            <form onSubmit={handleSubmit} className="flex flex-col flex-1 min-h-0 overflow-hidden">
-              <CustomScrollbar className="flex-1 min-h-0">
+            {/* Corps (Scrollable) */}
+            {/* flex-1 permet de prendre l'espace restant, min-h-0 est crucial pour le flex nesting */}
+            <form onSubmit={handleSubmit} className="flex flex-col flex-1 min-h-0 relative">
+              
+              {/* On passe w-full h-full pour que le conteneur relative prenne tout l'espace */}
+              <CustomScrollbar className="w-full h-full">
                 <div className="p-6">
                   {renderStepContent()}
                   
-                  {error && <p className="text-sm text-red-400 bg-red-900/50 p-3 rounded-[8px] border border-red-500/20 mt-4">{error}</p>}
+                  {error && (
+                    <p className="text-sm text-red-400 bg-red-900/50 p-3 rounded-[8px] border border-red-500/20 mt-4">
+                      {error}
+                    </p>
+                  )}
                 </div>
               </CustomScrollbar>
 
               {/* Footer (Fixe) */}
-              <div className="p-6 border-t border-global-stroke-box bg-global-bg-box/50 shrink-0">
+              <div className="p-6 border-t border-global-stroke-box bg-global-bg-box/50 shrink-0 z-10 relative">
                 <div className="flex justify-between gap-4">
                   <button 
                     type="button" 
