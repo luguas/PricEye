@@ -4,7 +4,6 @@ function CustomScrollbar({ children, className = '' }) {
   const scrollContainerRef = useRef(null);
   const scrollbarTrackRef = useRef(null);
   
-  // On utilise un seul objet d'état pour éviter les re-rendus en cascade
   const [dimensions, setDimensions] = useState({
     scrollTop: 0,
     scrollHeight: 0,
@@ -18,7 +17,7 @@ function CustomScrollbar({ children, className = '' }) {
     
     if (!container) return;
 
-    requestAnimationFrame(() => {
+    window.requestAnimationFrame(() => {
       setDimensions({
         scrollTop: container.scrollTop,
         scrollHeight: container.scrollHeight,
@@ -32,17 +31,17 @@ function CustomScrollbar({ children, className = '' }) {
     const container = scrollContainerRef.current;
     if (!container) return;
 
-    // 1. Calcul initial avec un petit délai pour laisser le temps au DOM de se peindre
-    const timeoutId = setTimeout(updateScrollbar, 50);
+    // 1. Calcul immédiat et différé pour être sûr
+    updateScrollbar();
+    const timeoutId = setTimeout(updateScrollbar, 100);
 
-    // 2. Écouter le scroll
+    // 2. Écouteurs
     container.addEventListener('scroll', updateScrollbar, { passive: true });
+    window.addEventListener('resize', updateScrollbar); // Ajout important pour le responsive
     
-    // 3. Observer le redimensionnement du conteneur LUI-MÊME
+    // 3. Observers
     const resizeObserver = new ResizeObserver(() => updateScrollbar());
     resizeObserver.observe(container);
-
-    // 4. Observer le changement de taille du CONTENU (important pour les formulaires dynamiques)
     if (container.firstElementChild) {
       resizeObserver.observe(container.firstElementChild);
     }
@@ -50,34 +49,36 @@ function CustomScrollbar({ children, className = '' }) {
     return () => {
       clearTimeout(timeoutId);
       container.removeEventListener('scroll', updateScrollbar);
+      window.removeEventListener('resize', updateScrollbar);
       resizeObserver.disconnect();
     };
   }, [children, updateScrollbar]);
 
-  // Vérifier si le scroll est nécessaire (avec une tolérance de 1px pour les arrondis)
-  const isScrollable = dimensions.scrollHeight > dimensions.clientHeight + 1 && dimensions.clientHeight > 0;
+  // Calcul plus souple : on utilise Math.ceil pour éviter les problèmes de sub-pixel
+  // On considère scrollable si le contenu dépasse d'au moins 1px
+  const isScrollable = Math.ceil(dimensions.scrollHeight) > Math.ceil(dimensions.clientHeight) + 1;
 
-  // Calculer le style du curseur (thumb)
   const getThumbStyle = () => {
     if (!isScrollable) return { display: 'none' };
 
     const { scrollHeight, clientHeight, trackHeight, scrollTop } = dimensions;
-    
-    // Hauteur de la piste disponible (fallback sur clientHeight si trackHeight est 0)
     const availableHeight = trackHeight || clientHeight;
     
-    // Hauteur du curseur (minimum 20px pour rester attrapable)
+    // Protection division par zéro
+    if (scrollHeight === 0) return { display: 'none' };
+
     const thumbHeight = Math.max(20, (clientHeight / scrollHeight) * availableHeight);
-    
-    // Calcul de la position top
     const maxScrollTop = scrollHeight - clientHeight;
-    const scrollRatio = scrollTop / maxScrollTop;
+    
+    // Évite division par zéro si maxScrollTop est nul
+    const scrollRatio = maxScrollTop > 0 ? scrollTop / maxScrollTop : 0;
+    
     const maxThumbTop = availableHeight - thumbHeight;
     const thumbTop = Math.min(maxThumbTop, Math.max(0, scrollRatio * maxThumbTop));
 
     return {
       height: `${thumbHeight}px`,
-      transform: `translateY(${thumbTop}px)`, // Plus performant que 'top'
+      transform: `translateY(${thumbTop}px)`,
       display: 'block',
     };
   };
@@ -88,17 +89,22 @@ function CustomScrollbar({ children, className = '' }) {
       <div 
         ref={scrollContainerRef}
         className="flex-1 overflow-x-hidden hide-scrollbar"
+        // Important: overflowY auto permet le scroll natif (caché visuellement), height 100% remplit le parent
         style={{ overflowY: 'auto', height: '100%' }}
       >
         {children}
       </div>
 
-      {/* Barre de défilement - Ne s'affiche QUE si nécessaire */}
+      {/* Barre de défilement */}
+      {/* On utilise opacity-0 au lieu de ne pas rendre le composant pour garder la structure stable si besoin, 
+          mais ici le rendu conditionnel est plus propre pour le layout flex */}
       {isScrollable && (
         <div 
           ref={scrollbarTrackRef}
-          className="bg-global-bg-small-box rounded-[10px] shrink-0 w-1.5 relative my-1 transition-opacity duration-200"
-          style={{ height: 'calc(100% - 8px)' }} // Petite marge en haut/bas
+          // z-10 assure que la barre est au-dessus
+          // bg-white/5 est une couleur de fallback visible sur fond sombre si global-bg-small-box échoue
+          className="bg-global-bg-small-box bg-white/5 rounded-[10px] shrink-0 w-1.5 relative my-1 z-10 transition-opacity duration-200"
+          style={{ height: 'calc(100% - 8px)' }}
         >
           <div 
             className="bg-global-stroke-highlight-2nd/50 hover:bg-global-content-highlight-2nd w-full rounded-[10px] absolute left-0 transition-colors duration-200"
