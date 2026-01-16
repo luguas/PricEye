@@ -842,3 +842,39 @@ export async function createPortalSession(token) {
   });
 }
 
+/**
+ * Applique une stratégie de pricing à une propriété (avec support des groupes)
+ * @param {string} propertyId - ID de la propriété principale
+ * @param {object|null} groupContext - Contexte du groupe si c'est une synchronisation de groupe
+ * @param {string} token - Jeton d'authentification
+ * @returns {Promise<{strategy_summary: string, daily_prices: Array, method: string, days_generated: number, synced_properties?: number}>}
+ */
+export const applyPricingStrategy = async (propertyId, groupContext = null, token) => {
+  // Utiliser API_BASE_URL défini en haut du fichier
+  const authToken = token || globalAuthToken || localStorage.getItem('authToken');
+
+  const response = await fetch(`${API_BASE_URL}/api/properties/${propertyId}/pricing-strategy`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${authToken}`,
+    },
+    body: JSON.stringify({
+      useMarketData: true,
+      group_context: groupContext // On passe les infos du groupe si c'est une synchro
+    }),
+  });
+
+  const data = await response.json();
+
+  if (!response.ok) {
+    const error = new Error(data.error || data.message || 'Erreur lors de la génération de la stratégie');
+    // On marque l'erreur si c'est un problème de quota pour l'interface
+    if (response.status === 402 || data.code === 'QUOTA_EXCEEDED') {
+        error.isQuotaExceeded = true;
+    }
+    throw error;
+  }
+
+  return data;
+};

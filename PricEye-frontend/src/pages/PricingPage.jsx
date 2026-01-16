@@ -230,7 +230,13 @@ function PricingPage({ token, userProfile }) {
 
     setIaLoading(true);
     try {
-      const result = await applyPricingStrategy(targetId, selectedView === 'group' ? allGroups.find(g=>g.id===selectedId) : null);
+      // CORRECTION ICI : On passe le token en 3ème argument
+      const result = await applyPricingStrategy(
+          targetId, 
+          selectedView === 'group' ? allGroups.find(g => String(g.id) === String(selectedId)) : null,
+          token 
+      );
+      
       setAlertModal({ isOpen: true, message: t('pricing.errors.strategySuccess', { count: result.days_generated || 180 }), title: t('pricing.modal.success') });
       fetchCalendarData(); // Rafraîchir après génération
     } catch (err) {
