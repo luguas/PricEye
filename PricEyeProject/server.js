@@ -4333,60 +4333,22 @@ app.post('/api/groups', authenticateToken, async (req, res) => {
     }
 });
 
+// --- Route pour récupérer les groupes (Bypass RLS) ---
 app.get('/api/groups', authenticateToken, async (req, res) => {
-    try {
-        const userId = req.user.uid;
-        const groups = await db.getGroupsByOwner(userId);
-        
-        // Adapter le format pour compatibilité avec le frontend
-        const formattedGroups = groups.map(group => {
-            // Valider et nettoyer main_property_id
-            let mainPropertyId = group.main_property_id;
-            if (mainPropertyId && typeof mainPropertyId === 'string') {
-                const uuidLength = mainPropertyId.replace(/-/g, '').length;
-                if (uuidLength < 32) {
-                    console.warn(`[getGroups] UUID main_property_id invalide pour le groupe ${group.id}: "${mainPropertyId}" (${uuidLength} caractères). Ignoré.`);
-                    mainPropertyId = null; // Ignorer les UUIDs invalides
-                }
-            }
-            
-            // Valider et nettoyer les propriétés
-            const validProperties = (group.properties || [])
-                .map(p => {
-                    const propId = p.id || p;
-                    if (typeof propId === 'string') {
-                        const uuidLength = propId.replace(/-/g, '').length;
-                        if (uuidLength < 32) {
-                            console.warn(`[getGroups] UUID propriété invalide dans le groupe ${group.id}: "${propId}" (${uuidLength} caractères). Ignoré.`);
-                            return null;
-                        }
-                    }
-                    return propId;
-                })
-                .filter(Boolean); // Retirer les nulls
-            
-            return {
-                id: group.id,
-                name: group.name,
-                ownerId: group.owner_id,
-                owner_id: group.owner_id, // Garder les deux formats
-                properties: validProperties,
-                syncPrices: group.sync_prices || false,
-                sync_prices: group.sync_prices || false,
-                mainPropertyId: mainPropertyId,
-                main_property_id: mainPropertyId,
-                strategy: group.strategy,
-                rules: group.rules,
-                createdAt: group.created_at,
-                created_at: group.created_at
-            };
-        });
-        
-        res.status(200).json(formattedGroups);
-    } catch (error) {
-        console.error('Erreur lors de la récupération des groupes:', error);
-        res.status(500).send({ error: 'Erreur lors de la récupération des groupes.' });
-    }
+  try {
+    // On récupère tout le contenu de la table 'groups'
+    const { data: groups, error } = await supabase
+      .from('groups')
+      .select('*');
+
+    if (error) throw error;
+    
+    console.log(`[API] ${groups.length} groupes trouvés pour l'utilisateur.`);
+    res.json(groups);
+  } catch (error) {
+    console.error('Erreur API Groups:', error);
+    res.status(500).json({ error: error.message });
+  }
 });
 
 app.put('/api/groups/:id', authenticateToken, async (req, res) => {

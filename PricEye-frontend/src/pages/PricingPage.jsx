@@ -1,95 +1,125 @@
-import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { getProperties, generatePricingStrategy, addBooking, getBookingsForMonth, getGroups, updateGroup, getUserProfile, getAutoPricingStatus, enableAutoPricing, getPriceOverrides, updatePriceOverrides, applyPricingStrategy } from '../services/api.js';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import { getProperties, getGroups, addBooking, getBookingsForMonth, getAutoPricingStatus, enableAutoPricing, getPriceOverrides, updatePriceOverrides, applyPricingStrategy } from '../services/api.js';
 import { jwtDecode } from 'jwt-decode'; 
 import Bouton from '../components/Bouton.jsx';
 import AlertModal from '../components/AlertModal.jsx';
 import { useLanguage } from '../contexts/LanguageContext.jsx';
 import { handleQuotaError, checkQuotaStatus } from '../utils/quotaErrorHandler.js';
 import { supabase } from '../config/supabase.js'; 
-// Import d'icônes standard (remplacement de Heroicons pour éviter erreur build)
-const ArrowLeftIcon = () => <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" /></svg>;
-const ArrowRightIcon = () => <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6"><path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" /></svg>;
+
+// Icônes SVG intégrées (Style conservé)
+const ArrowLeftIcon = () => <svg className="w-4 h-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>;
+const ArrowRightIcon = () => <svg className="w-4 h-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>;
+const ArrowDownIcon = () => <svg className="w-4 h-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>;
 
 function PricingPage({ token, userProfile }) {
   const { t, language } = useLanguage();
   
-  // États de données (Logique Corrigée)
+  // --- STATES ---
   const [properties, setProperties] = useState([]);
   const [allGroups, setAllGroups] = useState([]);
-  
-  // États de sélection (Logique Corrigée)
   const [selectedView, setSelectedView] = useState('property'); 
   const [selectedId, setSelectedId] = useState(''); 
 
-  // États du calendrier
   const [currentCalendarDate, setCurrentCalendarDate] = useState(new Date());
   const [priceOverrides, setPriceOverrides] = useState({});
   const [bookings, setBookings] = useState({}); 
-  
-  // États de chargement et erreurs
   const [isLoading, setIsLoading] = useState(true);
   const [isCalendarLoading, setIsCalendarLoading] = useState(false); 
   const [error, setError] = useState('');
   const [iaLoading, setIaLoading] = useState(false);
+  
+  // Auto-Pricing
+  const [isAutoGenerationEnabled, setIsAutoGenerationEnabled] = useState(false);
+  const [autoPricingTimezone, setAutoPricingTimezone] = useState('Europe/Paris');
+  const [autoPricingLastRun, setAutoPricingLastRun] = useState(null);
+  const [isLoadingAutoPricing, setIsLoadingAutoPricing] = useState(true);
+  const [autoPricingSuccess, setAutoPricingSuccess] = useState('');
+  const [autoPricingError, setAutoPricingError] = useState('');
   const [isQuotaReached, setIsQuotaReached] = useState(false); 
 
-  // États d'interaction (Sélection multiple)
+  // Sélection Manuelle
   const [selectionStart, setSelectionStart] = useState(null);
   const [selectionEnd, setSelectionEnd] = useState(null);
   const [isSelecting, setIsSelecting] = useState(false);
   const [selectionMode, setSelectionMode] = useState('booking'); 
   
-  // États formulaires
+  // Formulaires
   const [bookingPrice, setBookingPrice] = useState('');
   const [bookingChannel, setBookingChannel] = useState('Direct');
   const [manualPrice, setManualPrice] = useState('');
   const [isPriceLocked, setIsPriceLocked] = useState(true); 
+  const [selectedDateForAnalysis, setSelectedDateForAnalysis] = useState(null);
 
   // Modale
   const [alertModal, setAlertModal] = useState({ isOpen: false, message: '', title: 'Information' });
 
-  // ---------------------------------------------------------------------------
-  // 1. CHARGEMENT INITIAL (PROPRIÉTÉS + GROUPES) - Logique Corrigée
-  // ---------------------------------------------------------------------------
+  // --- 1. CHARGEMENT INITIAL (Logique Backend Prioritaire) ---
   const fetchInitialData = useCallback(async () => {
     if (!token) return; 
     setIsLoading(true);
     setError(''); 
-    
     try {
+      // A. Récupérer les Propriétés
       const propsData = await getProperties(token);
-      const { data: groupsData, error: groupsError } = await supabase
-        .from('groups') 
-        .select('*');
+      const validProperties = propsData.filter(prop => prop.id && typeof prop.id === 'string');
+      
+      // B. Récupérer les Groupes (Via API Backend pour contourner RLS)
+      let groupsData = [];
+      try {
+          // On tente via le backend (droits élevés)
+          const apiGroups = await getGroups(token);
+          if (apiGroups) {
+              groupsData = apiGroups;
+          } else {
+              // Si apiGroups est null (404), on tente le fallback Supabase direct (droits limités)
+              console.warn("API Groups non disponible, fallback Supabase...");
+              const { data } = await supabase.from('groups').select('*');
+              groupsData = data || [];
+          }
+      } catch (e) {
+          console.error("Erreur récupération groupes:", e);
+          // Dernier recours
+          const { data } = await supabase.from('groups').select('*');
+          groupsData = data || [];
+      }
+      setAllGroups(groupsData);
 
-      if (groupsError) console.error("Erreur groupes:", groupsError);
+      // C. Formatage des données pour le selecteur
+      const formattedGroups = groupsData.map(g => {
+          // Supporte les deux formats de noms de colonnes (API vs Supabase direct)
+          const mainId = g.main_property_id || g.mainPropertyId;
+          return {
+            uniqueId: `group-${g.id}`, 
+            realId: g.id,              
+            type: 'group',
+            name: `👥 Groupe: ${g.name}`, 
+            mainPropertyId: mainId,
+            ...g
+          };
+      });
 
-      setAllGroups(groupsData || []);
+      // On cache les propriétés qui sont déjà "Chefs de groupe" pour éviter les doublons visuels
+      // Note : On ne filtre PLUS les groupes sans propriété principale, ils s'affichent quand même.
+      const groupMainPropertyIds = new Set(
+          formattedGroups
+            .filter(g => g.mainPropertyId)
+            .map(g => g.mainPropertyId)
+      );
 
-      const formattedGroups = (groupsData || [])
-        .filter(g => g.main_property_id)
-        .map(g => ({
-          uniqueId: `group-${g.id}`,
-          realId: g.id,
-          type: 'group',
-          name: `👥 Groupe: ${g.name}`,
-          mainPropertyId: g.main_property_id,
-          ...g
-        }));
-
-      const hiddenPropIds = new Set(formattedGroups.map(g => String(g.mainPropertyId)));
-      const formattedProps = (propsData || []).filter(p => !hiddenPropIds.has(String(p.id)))
+      const formattedProps = validProperties
+        .filter(p => !groupMainPropertyIds.has(p.id))
         .map(p => ({
-          uniqueId: `property-${p.id}`,
-          realId: p.id,
-          type: 'property',
-          name: p.name,
-          ...p
+            uniqueId: `property-${p.id}`,
+            realId: p.id,
+            type: 'property',
+            ...p
         }));
 
       const finalList = [...formattedGroups, ...formattedProps];
       setProperties(finalList);
 
+      // D. Sélection par défaut
       if (finalList.length > 0 && !selectedId) {
         const first = finalList[0];
         setSelectedId(first.realId);
@@ -104,36 +134,54 @@ function PricingPage({ token, userProfile }) {
     }
   }, [token, t]); 
 
+  useEffect(() => { fetchInitialData(); }, [fetchInitialData]);
+
+  // --- AUTO PRICING STATUS ---
   useEffect(() => {
-    fetchInitialData();
-  }, [fetchInitialData]);
+    const loadAutoPricingStatus = async () => {
+      if (!token) { setIsLoadingAutoPricing(false); return; }
+      try {
+        let userId = jwtDecode(token)?.sub;
+        if (!userId) { setIsLoadingAutoPricing(false); return; }
+        const status = await getAutoPricingStatus(userId, token);
+        setIsAutoGenerationEnabled(status.enabled || false);
+        setAutoPricingTimezone(status.timezone || userProfile?.timezone || 'Europe/Paris');
+        setAutoPricingLastRun(status.lastRun || null);
+      } catch (err) { setIsAutoGenerationEnabled(false); } 
+      finally { setIsLoadingAutoPricing(false); }
+    };
+    loadAutoPricingStatus();
+  }, [token, userProfile]);
 
+  useEffect(() => {
+    const checkQuota = async () => {
+      if (!token) return;
+      const { isQuotaReached } = await checkQuotaStatus(token);
+      setIsQuotaReached(isQuotaReached);
+    };
+    checkQuota();
+  }, [token]);
 
-  // ---------------------------------------------------------------------------
-  // 2. CHARGEMENT DU CALENDRIER - Logique Corrigée
-  // ---------------------------------------------------------------------------
+  // --- 2. CHARGEMENT CALENDRIER ---
   const fetchCalendarData = useCallback(async () => {
-    if (!selectedId) return;
-    setIsCalendarLoading(true);
-    setError('');
+    if (!selectedId) {
+      setIsCalendarLoading(false); setPriceOverrides({}); setBookings({}); return;
+    }
     
-    let targetPropertyId = selectedId; 
-
+    let targetId = selectedId;
     if (selectedView === 'group') {
         const group = allGroups.find(g => String(g.id) === String(selectedId));
-        if (group) {
-            targetPropertyId = group.main_property_id || group.mainPropertyId;
-        } else {
-            console.warn("Groupe introuvable pour ID:", selectedId);
-            setIsCalendarLoading(false);
-            return;
-        }
+        // Support snake_case et camelCase
+        targetId = group?.main_property_id || group?.mainPropertyId;
     }
 
-    if (!targetPropertyId) {
-        setIsCalendarLoading(false);
-        return;
+    if (!targetId) {
+        // Si c'est un groupe sans chef, on arrête là proprement sans erreur
+        setIsCalendarLoading(false); return;
     }
+
+    setIsCalendarLoading(true);
+    setError('');
 
     try {
       const year = currentCalendarDate.getFullYear();
@@ -142,25 +190,30 @@ function PricingPage({ token, userProfile }) {
       const lastDay = new Date(year, month + 1, 0).getDate();
       const endOfMonth = `${year}-${String(month + 1).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
       
-      let overridesData = await getPriceOverrides(targetPropertyId, token, startOfMonth, endOfMonth).catch(() => ({}));
+      const overridesData = await getPriceOverrides(targetId, token, startOfMonth, endOfMonth).catch(()=>({}));
       const newOverrides = {};
       if (Array.isArray(overridesData)) {
         overridesData.forEach(o => { if (o.date) newOverrides[o.date] = o.price; });
-      } else if (overridesData && typeof overridesData === 'object') {
-        Object.keys(overridesData).forEach(d => { newOverrides[d] = overridesData[d]?.price || overridesData[d]; });
+      } else {
+        Object.keys(overridesData || {}).forEach(d => {
+             const val = overridesData[d];
+             newOverrides[d] = typeof val === 'object' ? val.price : val;
+        });
       }
       setPriceOverrides(newOverrides);
 
-      let bookingsData = await getBookingsForMonth(targetPropertyId, year, month, token).catch(() => []);
+      const bookingsData = await getBookingsForMonth(targetId, year, month, token).catch(()=>[]);
       const newBookings = {};
       if (Array.isArray(bookingsData)) {
         bookingsData.forEach(b => {
             if (!b.startDate || !b.endDate) return;
-            let cur = new Date(b.startDate + 'T00:00:00Z');
-            const end = new Date(b.endDate + 'T00:00:00Z');
+            let cur = new Date(b.startDate);
+            const end = new Date(b.endDate);
+            if (cur > end) return;
             while (cur < end) { 
-                newBookings[cur.toISOString().split('T')[0]] = b;
-                cur.setUTCDate(cur.getUTCDate() + 1);
+                const dStr = cur.toISOString().split('T')[0];
+                newBookings[dStr] = b;
+                cur.setDate(cur.getDate() + 1);
             }
         });
       }
@@ -173,32 +226,33 @@ function PricingPage({ token, userProfile }) {
     }
   }, [selectedId, selectedView, currentCalendarDate, token, allGroups]); 
 
-  useEffect(() => {
-      fetchCalendarData();
-  }, [fetchCalendarData]);
+  useEffect(() => { fetchCalendarData(); }, [fetchCalendarData]);
 
 
-  // ---------------------------------------------------------------------------
-  // 3. HANDLERS ACTIONS - Logique Corrigée
-  // ---------------------------------------------------------------------------
-  
-  const handleSelectionChange = (e) => {
-      const selectedValue = e.target.value;
-      const item = properties.find(p => p.uniqueId === selectedValue);
-      
-      if (item) {
-          setPriceOverrides({}); 
-          setBookings({});
-          setSelectedView(item.type); 
-          setSelectedId(item.realId);
-      }
+  // --- HANDLERS ---
+  const handleViewChange = (e) => {
+       const selectedValue = e.target.value; 
+       const item = properties.find(p => p.uniqueId === selectedValue);
+       if (item) {
+           setPriceOverrides({});
+           setBookings({});
+           setSelectedView(item.type); 
+           setSelectedId(item.realId);
+       }
   };
 
   const handleGenerateStrategy = async () => {
     let targetId = selectedId;
+    let groupContext = null;
+
     if (selectedView === 'group') {
-        const g = allGroups.find(x => String(x.id) === String(selectedId));
-        targetId = g?.main_property_id;
+        const group = allGroups.find(g => String(g.id) === String(selectedId));
+        targetId = group?.main_property_id || group?.mainPropertyId;
+        groupContext = group;
+        if (!targetId) {
+             setAlertModal({ isOpen: true, message: t('pricing.errors.noMainProperty'), title: t('pricing.modal.attention') });
+             return;
+        }
     }
 
     if (!targetId) { setError(t('pricing.errors.invalidSelection')); return; }
@@ -212,24 +266,53 @@ function PricingPage({ token, userProfile }) {
 
     setIaLoading(true);
     try {
-      const result = await applyPricingStrategy(
-          targetId, 
-          selectedView === 'group' ? allGroups.find(g => String(g.id) === String(selectedId)) : null,
-          token 
-      );
+      const result = await applyPricingStrategy(targetId, groupContext, token);
       setAlertModal({ isOpen: true, message: t('pricing.errors.strategySuccess', { count: result.days_generated || 180 }), title: t('pricing.modal.success') });
-      fetchCalendarData(); 
+      fetchCalendarData();
+      window.dispatchEvent(new CustomEvent('aiCallCompleted'));
     } catch (err) {
-        if (!err.isQuotaExceeded) setError(t('pricing.errors.strategyError', { message: err.message }));
+      if (!err.isQuotaExceeded) setError(t('pricing.errors.strategyError', { message: err.message }));
+      window.dispatchEvent(new CustomEvent('aiCallFailed'));
     } finally {
         setIaLoading(false);
     }
   };
 
+  const handleToggleAutoGeneration = async (newEnabled) => {
+    setAutoPricingSuccess(''); setAutoPricingError('');
+    if (newEnabled) {
+      const { isQuotaReached } = await checkQuotaStatus(token);
+      if (isQuotaReached) {
+        setIsQuotaReached(true);
+        handleQuotaError(new Error('Quota IA atteint'), null, setAlertModal, userProfile, null);
+        return;
+      }
+    }
+    setIsAutoGenerationEnabled(newEnabled); 
+    
+    try {
+        const userId = jwtDecode(token)?.sub;
+        if (!userId) throw new Error("User ID introuvable");
+        await enableAutoPricing(userId, newEnabled, autoPricingTimezone, token);
+        if (newEnabled) {
+            handleGenerateStrategy();
+            setAutoPricingSuccess(t('pricing.autoPricing.success'));
+        } else {
+            setAutoPricingSuccess(t('pricing.autoPricing.disabled'));
+        }
+        setTimeout(() => setAutoPricingSuccess(''), 5000);
+    } catch (err) {
+        setIsAutoGenerationEnabled(!newEnabled); 
+        setAutoPricingError(err.message);
+    }
+  };
+
+  // --- GESTION SOURIS ---
   const handleMouseDown = (dateStr) => {
     setIsSelecting(true);
     setSelectionStart(dateStr);
     setSelectionEnd(dateStr);
+    setSelectedDateForAnalysis(dateStr); 
     setBookingPrice('');
     setManualPrice('');
     setIsPriceLocked(true);
@@ -240,20 +323,21 @@ function PricingPage({ token, userProfile }) {
         window.addEventListener('mouseup', handleMouseUp);
         return () => window.removeEventListener('mouseup', handleMouseUp);
   }, []);
-  const clearSelection = () => {
-      setSelectionStart(null);
-      setSelectionEnd(null);
-  };
+  const clearSelection = () => { setSelectionStart(null); setSelectionEnd(null); };
 
+  // --- SAUVEGARDES ---
   const handleSaveBooking = async (e) => {
       e.preventDefault();
       let pid = selectedId;
-      if (selectedView === 'group') pid = allGroups.find(g=>String(g.id)===String(selectedId))?.main_property_id;
+      if (selectedView === 'group') {
+          const group = allGroups.find(g => String(g.id) === String(selectedId));
+          pid = group?.main_property_id || group?.mainPropertyId;
+      }
       
       const start = new Date(selectionStart);
       const end = new Date(selectionEnd);
       end.setDate(end.getDate() + 1);
-      const nights = Math.ceil((end - start) / (1000 * 60 * 60 * 24));
+      const nights = Math.max(1, Math.ceil((end - start) / (1000 * 60 * 60 * 24)));
       
       setIsLoading(true);
       try {
@@ -265,7 +349,7 @@ function PricingPage({ token, userProfile }) {
               channel: bookingChannel,
               bookedAt: new Date().toISOString()
           }, token);
-          setAlertModal({ isOpen: true, message: 'Réservation ajoutée', title: 'Succès' });
+          setAlertModal({ isOpen: true, message: t('pricing.errors.bookingSuccess'), title: t('pricing.modal.success') });
           clearSelection();
           fetchCalendarData();
       } catch(e) { setError(e.message); } finally { setIsLoading(false); }
@@ -276,12 +360,8 @@ function PricingPage({ token, userProfile }) {
       let targets = [selectedId];
       if (selectedView === 'group') {
           const g = allGroups.find(x => String(x.id) === String(selectedId));
-          if (g?.sync_prices) {
-             const { data: members } = await supabase.from('group_members').select('property_id').eq('group_id', g.id);
-             targets = [g.main_property_id, ...(members?.map(m=>m.property_id)||[])];
-          } else {
-             targets = [g?.main_property_id];
-          }
+          const mainId = g?.main_property_id || g?.mainPropertyId;
+          targets = [mainId];
       }
 
       setIsLoading(true);
@@ -293,192 +373,255 @@ function PricingPage({ token, userProfile }) {
               overrides.push({ date: cur.toISOString().split('T')[0], price: Number(manualPrice), isLocked: isPriceLocked });
               cur.setDate(cur.getDate() + 1);
           }
-          
           await Promise.all(targets.map(pid => pid && updatePriceOverrides(pid, overrides, token)));
-          
-          setAlertModal({ isOpen: true, message: 'Prix mis à jour', title: 'Succès' });
+          setAlertModal({ isOpen: true, message: t('pricing.errors.priceSuccess'), title: t('pricing.modal.success') });
           clearSelection();
           fetchCalendarData();
       } catch(e) { setError(e.message); } finally { setIsLoading(false); }
   };
 
-  // ---------------------------------------------------------------------------
-  // 4. RENDU - Style Restauré (comme votre version originale)
-  // ---------------------------------------------------------------------------
+  // --- RENDU CALENDRIER ---
   const renderCalendar = () => {
+    if (isLoading && !selectedId) return <div className="col-span-7 text-center text-gray-500 py-10">Chargement...</div>;
+
     const year = currentCalendarDate.getFullYear();
     const month = currentCalendarDate.getMonth();
     const firstDay = new Date(year, month, 1).getDay();
     const daysInMonth = new Date(year, month + 1, 0).getDate();
     const startOffset = firstDay === 0 ? 6 : firstDay - 1; 
     
-    const cells = [];
-    for (let i=0; i<startOffset; i++) cells.push(<div key={`e-${i}`} className="h-24 bg-transparent"></div>);
-    
-    for (let d=1; d<=daysInMonth; d++) {
-        const dateStr = `${year}-${String(month+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
-        const booking = bookings[dateStr];
-        const overridePrice = priceOverrides[dateStr];
-        
-        let bgColor = 'bg-global-bg-box';
-        if (booking) bgColor = 'bg-red-900/50 border-red-500';
-        else if (overridePrice) bgColor = 'bg-blue-900/30 border-blue-500';
-        
-        const isSelected = selectionStart && dateStr >= selectionStart && dateStr <= (selectionEnd || selectionStart);
-        if (isSelected) bgColor = 'bg-global-active text-white border-white';
-
-        cells.push(
-            <div 
-                key={dateStr}
-                onMouseDown={() => handleMouseDown(dateStr)}
-                onMouseOver={() => handleMouseOver(dateStr)}
-                className={`h-24 border border-global-stroke-box rounded p-1 cursor-pointer hover:border-global-active transition-all relative ${bgColor}`}
-            >
-                <div className="text-xs font-bold text-global-inactive">{d}</div>
-                {booking ? (
-                    <div className="text-xs mt-2 text-red-200 truncate">{booking.guest_name || 'Réservé'}</div>
-                ) : (
-                    <div className="mt-2 text-center">
-                        {overridePrice ? (
-                            <span className="font-bold text-lg text-global-blanc">{overridePrice}€</span>
-                        ) : (
-                            <span className="text-xs text-global-inactive">-</span>
-                        )}
-                    </div>
-                )}
+    const prevCells = [];
+    const prevMonthDays = new Date(year, month, 0).getDate();
+    for (let i=0; i<startOffset; i++) {
+        prevCells.unshift(
+            <div key={`prev-${i}`} className="w-full h-full flex items-center justify-center bg-global-bg-small-box rounded-[10px] border border-global-stroke-box opacity-30">
+                <span className="text-global-inactive font-h3-font-family">{prevMonthDays - i}</span>
             </div>
         );
     }
-    return cells;
+
+    const cells = [];
+    const todayStr = new Date().toISOString().split('T')[0];
+
+    for (let d=1; d<=daysInMonth; d++) {
+        const dateStr = `${year}-${String(month+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+        const bk = bookings[dateStr];
+        const pr = priceOverrides[dateStr];
+        const isPast = dateStr < todayStr;
+        
+        let bg = 'bg-global-bg-small-box';
+        let border = 'border-global-stroke-box';
+        let txt = 'text-global-blanc';
+        let cursor = isPast ? 'cursor-not-allowed' : 'cursor-pointer hover:border-global-content-highlight-2nd';
+        let opacity = isPast ? 'opacity-40' : 'opacity-100';
+
+        const isSel = selectionStart && dateStr >= selectionStart && dateStr <= (selectionEnd||selectionStart);
+        
+        if (isSel) {
+             bg = selectionMode === 'booking' ? 'bg-calendrierbg-bleu' : 'bg-calendrierbg-vert';
+             border = selectionMode === 'booking' ? 'border-calendrierstroke-bleu' : 'border-calendrierstroke-vert';
+        } else if (bk) {
+             bg = 'bg-calendrierbg-orange';
+             border = 'border-calendrierstroke-orange';
+             cursor = 'cursor-not-allowed'; 
+        } else if (pr) {
+             bg = 'bg-calendrierbg-vert'; // Style vert si prix défini
+             border = 'border-calendrierstroke-vert';
+        }
+
+        cells.push(
+            <div key={dateStr} 
+                 className={`w-full h-full flex flex-col items-center justify-center ${bg} rounded-[10px] border ${border} ${cursor} transition-all relative ${opacity}`}
+                 onMouseDown={!isPast && !bk ? () => handleMouseDown(dateStr) : undefined}
+                 onMouseEnter={!isPast && !bk ? () => handleMouseOver(dateStr) : undefined}
+            >
+                <span className={`${txt} font-h3-font-family font-h3-font-weight text-h3-font-size`}>{d}</span>
+                {pr && !bk && <span className={`${txt} font-h4-font-family text-xs`}>{Math.round(pr)}€</span>}
+                {bk && <span className="text-[10px] text-white">Réservé</span>}
+            </div>
+        );
+    }
+    return [...prevCells, ...cells];
   };
 
-  return (
-    <div className="p-6 relative min-h-screen">
-      <div className="flex justify-between items-center mb-6">
-        <h1 className="text-2xl font-bold text-global-blanc">{t('pricing.title')}</h1>
-        <div className="flex gap-4 items-center">
-            <select
-                value={selectedId ? (selectedView === 'group' ? `group-${selectedId}` : `property-${selectedId}`) : ''}
-                onChange={handleSelectionChange}
-                className="bg-global-bg-box border border-global-stroke-box rounded-lg p-2 text-global-blanc min-w-[250px]"
-            >
-                {properties.map(p => (
-                    <option key={p.uniqueId} value={p.uniqueId}>{p.name}</option>
-                ))}
+  const renderBookingForm = () => (
+    <form onSubmit={handleSaveBooking} className="flex flex-col gap-3 text-left">
+        <div>
+            <label className="text-xs text-global-inactive block mb-1">{t('pricing.selectedPeriod')}</label>
+            <div className="bg-global-bg-small-box border border-global-stroke-box rounded-[10px] p-2 text-sm text-white">
+                {selectionStart} → {selectionEnd}
+            </div>
+        </div>
+        <div>
+            <label className="text-xs text-global-inactive block mb-1">{t('pricing.pricePerNight')}</label>
+            <input type="number" value={bookingPrice} onChange={e=>setBookingPrice(e.target.value)} className="w-full bg-global-bg-small-box border border-global-stroke-box rounded-[10px] p-2 text-white outline-none focus:border-global-content-highlight-2nd" placeholder="Ex: 150"/>
+        </div>
+        <div>
+            <label className="text-xs text-global-inactive block mb-1">{t('pricing.channel')}</label>
+            <select value={bookingChannel} onChange={e=>setBookingChannel(e.target.value)} className="w-full bg-global-bg-small-box border border-global-stroke-box rounded-[10px] p-2 text-white outline-none">
+                <option>Direct</option><option>Airbnb</option><option>Booking</option>
             </select>
-            
-            <Bouton 
-                variant="principal" 
-                onClick={handleGenerateStrategy}
-                disabled={iaLoading || isCalendarLoading || !selectedId}
-            >
-                {iaLoading ? 'Génération...' : t('pricing.generateButton')}
-            </Bouton>
+        </div>
+        <div className="flex gap-2 pt-2">
+            <button type="submit" className="flex-1 bg-gradient-to-r from-[#155dfc] to-[#12a1d5] text-white py-2 rounded-[10px] font-bold text-sm hover:opacity-90">{t('pricing.saveBooking')}</button>
+            <button type="button" onClick={clearSelection} className="px-3 py-2 border border-gray-600 text-gray-400 rounded-[10px] text-xs hover:text-white">{t('pricing.cancel')}</button>
+        </div>
+    </form>
+  );
+
+  const renderPriceForm = () => (
+    <form onSubmit={handleSavePriceOverride} className="flex flex-col gap-3 text-left">
+        <div>
+            <label className="text-xs text-global-inactive block mb-1">{t('pricing.selectedPeriod')}</label>
+            <div className="bg-global-bg-small-box border border-global-stroke-box rounded-[10px] p-2 text-sm text-white">
+                {selectionStart} → {selectionEnd}
+            </div>
+        </div>
+        <div>
+            <label className="text-xs text-global-inactive block mb-1">{t('pricing.newPricePerNight')}</label>
+            <input type="number" value={manualPrice} onChange={e=>setManualPrice(e.target.value)} className="w-full bg-global-bg-small-box border border-global-stroke-box rounded-[10px] p-2 text-white outline-none focus:border-global-content-highlight-2nd" placeholder="Ex: 175"/>
+        </div>
+        <div className="flex items-center gap-2">
+            <input type="checkbox" checked={isPriceLocked} onChange={e=>setIsPriceLocked(e.target.checked)} className="accent-blue-500"/>
+            <label className="text-xs text-gray-400">{t('pricing.lockPrice')}</label>
+        </div>
+        <div className="flex gap-2 pt-2">
+            <button type="submit" className="flex-1 bg-gradient-to-r from-[#155dfc] to-[#12a1d5] text-white py-2 rounded-[10px] font-bold text-sm hover:opacity-90">{t('pricing.applyPrice')}</button>
+            <button type="button" onClick={clearSelection} className="px-3 py-2 border border-gray-600 text-gray-400 rounded-[10px] text-xs hover:text-white">{t('pricing.cancel')}</button>
+        </div>
+    </form>
+  );
+
+  return (
+    <div className="relative min-h-screen">
+      <div className="fixed inset-0" style={{ background: 'linear-gradient(135deg, rgba(2,6,24,1) 0%, rgba(22,36,86,1) 45%, rgba(15,23,43,1) 100%)', zIndex: 0 }} />
+      
+      <div className="relative z-10 space-y-6 p-4 md:p-6 lg:p-8">
+        {error && <div className="bg-red-900/50 text-red-300 p-3 rounded-md text-sm border border-red-500/50">{error}</div>}
+      
+        <div className="md:flex gap-6">
+          {/* COLONNE GAUCHE */}
+          <div className="flex-grow self-stretch p-8 bg-global-bg-box rounded-[14px] border border-solid border-global-stroke-box flex flex-col items-start gap-6">
+            <header className="flex items-center justify-between relative self-stretch w-full flex-[0_0_auto]">
+              
+              <div className="relative w-80">
+                  <select 
+                    id="view-selector" 
+                    value={selectedId ? (selectedView==='group'?`group-${selectedId}`:`property-${selectedId}`) : ''}
+                    onChange={handleViewChange}
+                    className="w-full h-9 bg-global-bg-small-box rounded-lg border border-solid border-global-stroke-box px-3 py-0 text-center font-h3-font-family font-h3-font-weight text-global-blanc text-h3-font-size appearance-none cursor-pointer focus:outline-none"
+                  >
+                    <option value="" disabled>{t('pricing.select')}</option>
+                    {properties.map(item => (
+                        <option key={item.uniqueId} value={item.uniqueId}>
+                            {item.name}
+                        </option>
+                    ))}
+                  </select>
+                  <div className="absolute right-3 top-2 pointer-events-none"><ArrowDownIcon/></div>
+              </div>
+              
+              <nav className="inline-flex h-8 items-center gap-3 relative flex-[0_0_auto]">
+                <button onClick={() => setCurrentCalendarDate(new Date(currentCalendarDate.setMonth(currentCalendarDate.getMonth() - 1)))} className="hover:opacity-70"><ArrowLeftIcon/></button>
+                <time className="relative w-[150px] font-h4-font-family font-h4-font-weight text-global-blanc text-h4-font-size text-center capitalize">
+                    {currentCalendarDate.toLocaleDateString(language === 'en' ? 'en-US' : 'fr-FR', { month: 'long', year: 'numeric' })}
+                </time>
+                <button onClick={() => setCurrentCalendarDate(new Date(currentCalendarDate.setMonth(currentCalendarDate.getMonth() + 1)))} className="hover:opacity-70"><ArrowRightIcon/></button>
+              </nav>
+            </header>
+
+            <section className="flex flex-col items-start gap-3 relative self-stretch w-full flex-[0_0_auto]">
+                <header className="flex items-center justify-between px-9 py-0 relative self-stretch w-full flex-[0_0_auto]">
+                    {(language==='en'?['Mon','Tue','Wed','Thu','Fri','Sat','Sun']:['Lun','Mar','Mer','Jeu','Ven','Sam','Dim']).map((d,i)=>(
+                        <div key={i} className="text-global-inactive font-p1-font-family font-bold">{d}</div>
+                    ))}
+                </header>
+                
+                <div className="self-stretch h-[458px] grid grid-cols-7 gap-2 select-none relative">
+                    {renderCalendar()}
+                    {iaLoading && (
+                        <div className="absolute inset-0 bg-black/60 backdrop-blur-sm z-50 flex flex-col items-center justify-center rounded-[10px]">
+                            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500 mb-4"></div>
+                            <p className="text-white font-bold">{t('pricing.strategy.generating')}</p>
+                        </div>
+                    )}
+                </div>
+            </section>
+
+            <section className="flex items-start justify-center gap-6 pt-4 border-t border-global-stroke-box w-full">
+                <div className="flex items-center gap-2"><div className="w-3 h-3 bg-calendrierbg-vert rounded border border-calendrierstroke-vert"/> <span className="text-gray-400 text-xs">Prix défini</span></div>
+                <div className="flex items-center gap-2"><div className="w-3 h-3 bg-calendrierbg-orange rounded border border-calendrierstroke-orange"/> <span className="text-gray-400 text-xs">Réservé</span></div>
+                <div className="flex items-center gap-2"><div className="w-3 h-3 bg-global-bg-small-box rounded border border-global-stroke-box"/> <span className="text-gray-400 text-xs">Vide</span></div>
+            </section>
+          </div>
+          
+          {/* COLONNE DROITE */}
+          <div id="edit-panel" className="flex flex-col gap-4 w-full md:w-[394px]">
+             {/* PANEL STRATÉGIE IA */}
+             <div className="bg-global-bg-box rounded-[14px] border border-global-stroke-box p-6 flex flex-col gap-3">
+                <div className="text-white font-h2-font-family text-lg">{t('pricing.strategy.title')}</div>
+                <div className="text-gray-400 text-sm">{t('pricing.strategy.description')}</div>
+                
+                {autoPricingSuccess && <div className="text-green-400 text-xs bg-green-900/20 p-2 rounded border border-green-500/30">{autoPricingSuccess}</div>}
+                {autoPricingError && <div className="text-red-400 text-xs bg-red-900/20 p-2 rounded border border-red-500/30">{autoPricingError}</div>}
+
+                <div 
+                    onClick={iaLoading ? undefined : () => handleToggleAutoGeneration(!isAutoGenerationEnabled)}
+                    className={`bg-global-stroke-highlight-2nd rounded-[10px] border border-global-content-highlight-2nd p-3 flex items-center justify-center gap-3 cursor-pointer hover:opacity-90 ${iaLoading ? 'opacity-50' : ''}`}
+                >
+                    <div className={`w-5 h-5 rounded border ${isAutoGenerationEnabled ? 'bg-blue-500 border-blue-500' : 'border-gray-400'} flex items-center justify-center`}>
+                        {isAutoGenerationEnabled && <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M10 3L4.5 8.5L2 6" stroke="white" strokeWidth="2"/></svg>}
+                    </div>
+                    <span className="text-white font-bold text-sm">{t('pricing.strategy.automate')}</span>
+                </div>
+
+                <div className="flex gap-3">
+                    <Bouton state="principal" text="Ajouter Résa" onClick={()=>{setSelectionMode('booking'); setBookingPrice(''); setManualPrice('');}} className={selectionMode==='booking'?'opacity-100':'opacity-60'} />
+                    <button onClick={()=>{setSelectionMode('price'); setBookingPrice(''); setManualPrice('');}} className={`flex-1 border border-blue-500 rounded-[10px] text-white text-sm py-2 hover:bg-blue-500/10 ${selectionMode==='price'?'bg-blue-500/20':''}`}>Définir Prix</button>
+                </div>
+
+                <div className="border-t border-global-stroke-box pt-4 mt-2">
+                    {!selectionStart ? (
+                        <div className="text-gray-500 text-sm text-center">{t('pricing.selectPeriod')}</div>
+                    ) : (
+                        selectionMode === 'booking' ? renderBookingForm() : renderPriceForm()
+                    )}
+                </div>
+                
+                {/* BOUTON GÉNÉRER IA (REMETTRE SELON DEMANDE DU TURN PRÉCÉDENT SI BESOIN) */}
+                <div className="mt-2">
+                    <Bouton 
+                        variant="principal" 
+                        className="w-full justify-center !py-3"
+                        onClick={handleGenerateStrategy}
+                        disabled={iaLoading || !selectedId}
+                    >
+                        {iaLoading ? 'Optimisation en cours...' : 'Générer les prix IA'}
+                    </Bouton>
+                </div>
+             </div>
+
+             {/* PANEL ACTUALITÉS */}
+             <div className="bg-global-bg-box rounded-[14px] border border-global-stroke-box p-6 flex flex-col gap-3 h-[389px] overflow-hidden">
+                <div className="text-white font-h2-font-family text-lg">Actualité du marché</div>
+                <div className="flex flex-col gap-3 w-full h-full overflow-y-auto pr-2">
+                    <div className="bg-global-bg-small-box rounded-[14px] p-3 flex flex-col gap-1">
+                        <div className="text-white font-bold text-sm">Nouvelle loi “anti-Airbnb”</div>
+                        <div className="text-gray-400 text-xs">Conséquences fiscales attendues pour 2025.</div>
+                        <div className="flex justify-between items-center mt-1"><span className="text-red-400 text-xs font-bold">Impact: -15%</span><span className="text-gray-600 text-[10px]">Il y a 2h</span></div>
+                    </div>
+                    <div className="bg-global-bg-small-box rounded-[14px] p-3 flex flex-col gap-1">
+                        <div className="text-white font-bold text-sm">Concert GIMS Nancy 2026</div>
+                        <div className="text-gray-400 text-xs">Forte demande hôtelière prévue.</div>
+                        <div className="flex justify-between items-center mt-1"><span className="text-green-400 text-xs font-bold">Impact: +25%</span><span className="text-gray-600 text-[10px]">Il y a 4j</span></div>
+                    </div>
+                </div>
+             </div>
+          </div>
         </div>
       </div>
 
-      <AlertModal 
-        isOpen={alertModal.isOpen} 
-        onClose={() => setAlertModal({ ...alertModal, isOpen: false })}
-        title={alertModal.title}
-        message={alertModal.message}
-      />
-      {error && (
-        <div className="bg-red-900/50 border border-red-500 text-red-200 p-4 rounded-lg mb-6">
-            {error}
-        </div>
-      )}
-
-      <div className="bg-global-bg-box border border-global-stroke-box rounded-xl p-6">
-          <div className="flex justify-between mb-4">
-              <button onClick={() => setCurrentCalendarDate(new Date(currentCalendarDate.setMonth(currentCalendarDate.getMonth() - 1)))} className="text-global-blanc hover:text-global-active p-2">
-                  <ArrowLeftIcon />
-              </button>
-              <h2 className="text-xl font-bold text-global-blanc capitalize">
-                  {currentCalendarDate.toLocaleDateString(language === 'en' ? 'en-US' : 'fr-FR', { month: 'long', year: 'numeric' })}
-              </h2>
-              <button onClick={() => setCurrentCalendarDate(new Date(currentCalendarDate.setMonth(currentCalendarDate.getMonth() + 1)))} className="text-global-blanc hover:text-global-active p-2">
-                  <ArrowRightIcon />
-              </button>
-          </div>
-
-          {isCalendarLoading ? (
-              <div className="h-64 flex items-center justify-center text-global-inactive">Chargement...</div>
-          ) : (
-              <div className="grid grid-cols-7 gap-2">
-                  {['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'].map(d => (
-                      <div key={d} className="text-center font-bold text-global-inactive py-2">{d}</div>
-                  ))}
-                  {renderCalendar()}
-              </div>
-          )}
-      </div>
-
-      {isSelecting && (
-          <div className="fixed bottom-0 right-0 w-80 bg-global-bg-box border-l border-global-stroke-box p-6 h-screen shadow-2xl z-50 transform transition-transform translate-x-0">
-              <h3 className="text-lg font-bold text-global-blanc mb-4">Modifier la sélection</h3>
-              <p className="text-global-inactive mb-4">Du {selectionStart} au {selectionEnd}</p>
-              
-              <div className="flex gap-2 mb-4">
-                  <button 
-                    onClick={() => setSelectionMode('booking')} 
-                    className={`flex-1 p-2 rounded ${selectionMode === 'booking' ? 'bg-global-active text-white' : 'bg-global-bg-small-box text-global-inactive'}`}
-                  >
-                      Réservation
-                  </button>
-                  <button 
-                    onClick={() => setSelectionMode('manual')} 
-                    className={`flex-1 p-2 rounded ${selectionMode === 'manual' ? 'bg-global-active text-white' : 'bg-global-bg-small-box text-global-inactive'}`}
-                  >
-                      Prix Manuel
-                  </button>
-              </div>
-
-              {selectionMode === 'booking' ? (
-                  <form onSubmit={handleSaveBooking} className="flex flex-col gap-3">
-                      <input 
-                        type="number" 
-                        placeholder="Prix / Nuit" 
-                        value={bookingPrice} 
-                        onChange={e => setBookingPrice(e.target.value)} 
-                        className="p-2 rounded bg-global-bg-small-box text-global-blanc border border-global-stroke-box outline-none focus:border-global-active"
-                      />
-                      <select 
-                        value={bookingChannel} 
-                        onChange={e => setBookingChannel(e.target.value)}
-                        className="p-2 rounded bg-global-bg-small-box text-global-blanc border border-global-stroke-box outline-none focus:border-global-active"
-                      >
-                          <option value="Direct">Direct</option>
-                          <option value="Airbnb">Airbnb</option>
-                          <option value="Booking">Booking</option>
-                      </select>
-                      <Bouton type="submit" variant="principal" className="mt-2">Enregistrer</Bouton>
-                  </form>
-              ) : (
-                  <form onSubmit={handleSavePriceOverride} className="flex flex-col gap-3">
-                      <input 
-                        type="number" 
-                        placeholder="Nouveau Prix" 
-                        value={manualPrice} 
-                        onChange={e => setManualPrice(e.target.value)} 
-                        className="p-2 rounded bg-global-bg-small-box text-global-blanc border border-global-stroke-box outline-none focus:border-global-active"
-                      />
-                      <label className="flex items-center gap-2 text-global-blanc text-sm cursor-pointer">
-                          <input 
-                            type="checkbox" 
-                            checked={isPriceLocked} 
-                            onChange={e => setIsPriceLocked(e.target.checked)} 
-                            className="accent-global-active"
-                          />
-                          Verrouiller ce prix (ignorer IA)
-                      </label>
-                      <Bouton type="submit" variant="principal" className="mt-2">Mettre à jour</Bouton>
-                  </form>
-              )}
-              
-              <button onClick={clearSelection} className="mt-4 text-sm text-global-inactive hover:text-white w-full text-center transition-colors">Annuler</button>
-          </div>
-      )}
+      <AlertModal isOpen={alertModal.isOpen} onClose={()=>setAlertModal({...alertModal, isOpen:false})} title={alertModal.title} message={alertModal.message} buttonText="OK" />
     </div>
   );
 }

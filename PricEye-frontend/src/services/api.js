@@ -431,9 +431,26 @@ export function updatePropertyStatus(id, status, token) {
 /**
  * Fonctions pour la gestion des groupes
  */
-export function getGroups(token) {
-    return apiRequest('/api/groups', { token });
-}
+export const getGroups = async (token) => {
+  // Utiliser API_BASE_URL défini en haut du fichier
+  const authToken = token || globalAuthToken || localStorage.getItem('authToken');
+  
+  const response = await fetch(`${API_BASE_URL}/api/groups`, {
+    method: 'GET',
+    headers: {
+      'Authorization': `Bearer ${authToken}`,
+      'Content-Type': 'application/json',
+    },
+  });
+
+  if (!response.ok) {
+    // Si l'API n'existe pas encore (pas redéployée), on renvoie null pour tenter le fallback
+    if (response.status === 404) return null;
+    throw new Error('Erreur lors de la récupération des groupes');
+  }
+
+  return await response.json();
+};
 
 export function createGroup(groupData, token) {
     return apiRequest('/api/groups', {
