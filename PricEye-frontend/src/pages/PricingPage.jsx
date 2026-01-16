@@ -1,21 +1,23 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { getProperties, addBooking, getBookingsForMonth, getAutoPricingStatus, getPriceOverrides, updatePriceOverrides, applyPricingStrategy } from '../services/api.js';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { getProperties, generatePricingStrategy, addBooking, getBookingsForMonth, getGroups, updateGroup, getUserProfile, getAutoPricingStatus, enableAutoPricing, getPriceOverrides, updatePriceOverrides, applyPricingStrategy } from '../services/api.js';
 import { jwtDecode } from 'jwt-decode'; 
 import Bouton from '../components/Bouton.jsx';
 import AlertModal from '../components/AlertModal.jsx';
 import { useLanguage } from '../contexts/LanguageContext.jsx';
 import { handleQuotaError, checkQuotaStatus } from '../utils/quotaErrorHandler.js';
 import { supabase } from '../config/supabase.js'; 
-import { ArrowLeftIcon, ArrowRightIcon } from '@heroicons/react/24/outline';
+// Import d'icônes standard (remplacement de Heroicons pour éviter erreur build)
+const ArrowLeftIcon = () => <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" /></svg>;
+const ArrowRightIcon = () => <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6"><path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" /></svg>;
 
 function PricingPage({ token, userProfile }) {
   const { t, language } = useLanguage();
   
-  // États de données
+  // États de données (Logique Corrigée)
   const [properties, setProperties] = useState([]);
   const [allGroups, setAllGroups] = useState([]);
   
-  // États de sélection
+  // États de sélection (Logique Corrigée)
   const [selectedView, setSelectedView] = useState('property'); 
   const [selectedId, setSelectedId] = useState(''); 
 
@@ -47,7 +49,7 @@ function PricingPage({ token, userProfile }) {
   const [alertModal, setAlertModal] = useState({ isOpen: false, message: '', title: 'Information' });
 
   // ---------------------------------------------------------------------------
-  // 1. CHARGEMENT INITIAL (PROPRIÉTÉS + GROUPES)
+  // 1. CHARGEMENT INITIAL (PROPRIÉTÉS + GROUPES) - Logique Corrigée
   // ---------------------------------------------------------------------------
   const fetchInitialData = useCallback(async () => {
     if (!token) return; 
@@ -55,10 +57,7 @@ function PricingPage({ token, userProfile }) {
     setError(''); 
     
     try {
-      // A. Récupérer les propriétés
       const propsData = await getProperties(token);
-      
-      // B. Récupérer les groupes
       const { data: groupsData, error: groupsError } = await supabase
         .from('groups') 
         .select('*');
@@ -67,22 +66,18 @@ function PricingPage({ token, userProfile }) {
 
       setAllGroups(groupsData || []);
 
-      // C. Préparer la liste affichée
-      // On convertit tout en format standard pour le menu déroulant
       const formattedGroups = (groupsData || [])
-        .filter(g => g.main_property_id) // Sécurité : ignorer groupes vides
+        .filter(g => g.main_property_id)
         .map(g => ({
-          uniqueId: `group-${g.id}`, // ID unique pour la liste React
-          realId: g.id,              // Vrai ID pour l'API
+          uniqueId: `group-${g.id}`,
+          realId: g.id,
           type: 'group',
           name: `👥 Groupe: ${g.name}`,
           mainPropertyId: g.main_property_id,
           ...g
         }));
 
-      // On identifie les propriétés qui sont chefs de groupe pour ne pas les afficher en double
       const hiddenPropIds = new Set(formattedGroups.map(g => String(g.mainPropertyId)));
-
       const formattedProps = (propsData || []).filter(p => !hiddenPropIds.has(String(p.id)))
         .map(p => ({
           uniqueId: `property-${p.id}`,
@@ -95,7 +90,6 @@ function PricingPage({ token, userProfile }) {
       const finalList = [...formattedGroups, ...formattedProps];
       setProperties(finalList);
 
-      // D. Sélection par défaut (si rien n'est sélectionné)
       if (finalList.length > 0 && !selectedId) {
         const first = finalList[0];
         setSelectedId(first.realId);
@@ -110,23 +104,20 @@ function PricingPage({ token, userProfile }) {
     }
   }, [token, t]); 
 
-  // Déclencheur chargement initial
   useEffect(() => {
     fetchInitialData();
   }, [fetchInitialData]);
 
 
   // ---------------------------------------------------------------------------
-  // 2. CHARGEMENT DU CALENDRIER (AU CHANGEMENT DE SÉLECTION OU DATE)
+  // 2. CHARGEMENT DU CALENDRIER - Logique Corrigée
   // ---------------------------------------------------------------------------
   const fetchCalendarData = useCallback(async () => {
     if (!selectedId) return;
-    
     setIsCalendarLoading(true);
     setError('');
     
-    // Déterminer sur quelle propriété on tape
-    let targetPropertyId = selectedId; // Par défaut (cas propriété seule)
+    let targetPropertyId = selectedId; 
 
     if (selectedView === 'group') {
         const group = allGroups.find(g => String(g.id) === String(selectedId));
@@ -151,7 +142,6 @@ function PricingPage({ token, userProfile }) {
       const lastDay = new Date(year, month + 1, 0).getDate();
       const endOfMonth = `${year}-${String(month + 1).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
       
-      // A. Overrides (Prix forcés)
       let overridesData = await getPriceOverrides(targetPropertyId, token, startOfMonth, endOfMonth).catch(() => ({}));
       const newOverrides = {};
       if (Array.isArray(overridesData)) {
@@ -161,7 +151,6 @@ function PricingPage({ token, userProfile }) {
       }
       setPriceOverrides(newOverrides);
 
-      // B. Bookings (Réservations)
       let bookingsData = await getBookingsForMonth(targetPropertyId, year, month, token).catch(() => []);
       const newBookings = {};
       if (Array.isArray(bookingsData)) {
@@ -179,7 +168,6 @@ function PricingPage({ token, userProfile }) {
       
     } catch (err) {
       console.error("Erreur calendrier:", err);
-      // On n'affiche pas l'erreur à l'utilisateur pour ne pas bloquer l'UI, juste un log
     } finally {
       setIsCalendarLoading(false);
     }
@@ -191,28 +179,22 @@ function PricingPage({ token, userProfile }) {
 
 
   // ---------------------------------------------------------------------------
-  // 3. HANDLERS ACTIONS
+  // 3. HANDLERS ACTIONS - Logique Corrigée
   // ---------------------------------------------------------------------------
   
-  // GESTION DU CHANGEMENT DE SÉLECTION (CORRIGÉE)
   const handleSelectionChange = (e) => {
-      const selectedValue = e.target.value; // ex: "property-123" ou "group-456"
-      
-      // On cherche l'objet correspondant dans notre liste unifiée
+      const selectedValue = e.target.value;
       const item = properties.find(p => p.uniqueId === selectedValue);
       
       if (item) {
-          // On met à jour l'état proprement
-          setPriceOverrides({}); // Reset visuel immédiat
+          setPriceOverrides({}); 
           setBookings({});
-          
-          setSelectedView(item.type); // 'property' ou 'group'
-          setSelectedId(item.realId); // L'ID technique
+          setSelectedView(item.type); 
+          setSelectedId(item.realId);
       }
   };
 
   const handleGenerateStrategy = async () => {
-    // Logique de génération IA inchangée mais sécurisée
     let targetId = selectedId;
     if (selectedView === 'group') {
         const g = allGroups.find(x => String(x.id) === String(selectedId));
@@ -230,15 +212,13 @@ function PricingPage({ token, userProfile }) {
 
     setIaLoading(true);
     try {
-      // CORRECTION ICI : On passe le token en 3ème argument
       const result = await applyPricingStrategy(
           targetId, 
           selectedView === 'group' ? allGroups.find(g => String(g.id) === String(selectedId)) : null,
           token 
       );
-      
       setAlertModal({ isOpen: true, message: t('pricing.errors.strategySuccess', { count: result.days_generated || 180 }), title: t('pricing.modal.success') });
-      fetchCalendarData(); // Rafraîchir après génération
+      fetchCalendarData(); 
     } catch (err) {
         if (!err.isQuotaExceeded) setError(t('pricing.errors.strategyError', { message: err.message }));
     } finally {
@@ -246,7 +226,6 @@ function PricingPage({ token, userProfile }) {
     }
   };
 
-  // ... (Gestion de la souris et des modales de sélection reste identique) ...
   const handleMouseDown = (dateStr) => {
     setIsSelecting(true);
     setSelectionStart(dateStr);
@@ -266,7 +245,6 @@ function PricingPage({ token, userProfile }) {
       setSelectionEnd(null);
   };
 
-  // Sauvegarde Booking (Simplifiée)
   const handleSaveBooking = async (e) => {
       e.preventDefault();
       let pid = selectedId;
@@ -293,11 +271,9 @@ function PricingPage({ token, userProfile }) {
       } catch(e) { setError(e.message); } finally { setIsLoading(false); }
   };
 
-  // Sauvegarde Prix Manuel (Simplifiée)
   const handleSavePriceOverride = async (e) => {
       e.preventDefault();
       let targets = [selectedId];
-      // Logique propagation groupe
       if (selectedView === 'group') {
           const g = allGroups.find(x => String(x.id) === String(selectedId));
           if (g?.sync_prices) {
@@ -327,7 +303,7 @@ function PricingPage({ token, userProfile }) {
   };
 
   // ---------------------------------------------------------------------------
-  // 4. RENDU
+  // 4. RENDU - Style Restauré (comme votre version originale)
   // ---------------------------------------------------------------------------
   const renderCalendar = () => {
     const year = currentCalendarDate.getFullYear();
@@ -337,27 +313,39 @@ function PricingPage({ token, userProfile }) {
     const startOffset = firstDay === 0 ? 6 : firstDay - 1; 
     
     const cells = [];
-    for (let i=0; i<startOffset; i++) cells.push(<div key={`e-${i}`} />);
+    for (let i=0; i<startOffset; i++) cells.push(<div key={`e-${i}`} className="h-24 bg-transparent"></div>);
     
     for (let d=1; d<=daysInMonth; d++) {
         const dateStr = `${year}-${String(month+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
-        const bk = bookings[dateStr];
-        const pr = priceOverrides[dateStr];
-        const isSel = selectionStart && dateStr >= selectionStart && dateStr <= (selectionEnd||selectionStart);
+        const booking = bookings[dateStr];
+        const overridePrice = priceOverrides[dateStr];
         
+        let bgColor = 'bg-global-bg-box';
+        if (booking) bgColor = 'bg-red-900/50 border-red-500';
+        else if (overridePrice) bgColor = 'bg-blue-900/30 border-blue-500';
+        
+        const isSelected = selectionStart && dateStr >= selectionStart && dateStr <= (selectionEnd || selectionStart);
+        if (isSelected) bgColor = 'bg-global-active text-white border-white';
+
         cells.push(
-            <div key={dateStr} 
-                 onMouseDown={()=>handleMouseDown(dateStr)} 
-                 onMouseOver={()=>handleMouseOver(dateStr)}
-                 className={`h-24 border border-global-stroke-box rounded p-1 cursor-pointer relative transition-colors
-                    ${isSel ? 'bg-global-active text-white' : (bk ? 'bg-red-900/40 border-red-500/50' : (pr ? 'bg-blue-900/30 border-blue-500/50' : 'bg-global-bg-box hover:border-global-active'))}
-                 `}
+            <div 
+                key={dateStr}
+                onMouseDown={() => handleMouseDown(dateStr)}
+                onMouseOver={() => handleMouseOver(dateStr)}
+                className={`h-24 border border-global-stroke-box rounded p-1 cursor-pointer hover:border-global-active transition-all relative ${bgColor}`}
             >
-                <div className="text-xs font-bold opacity-50">{d}</div>
-                <div className="flex items-center justify-center h-full pb-4">
-                    {bk ? <span className="text-xs text-red-200 truncate px-1">{bk.guest_name || 'Réservé'}</span> 
-                        : <span className={`font-bold ${pr ? 'text-lg' : 'text-sm opacity-30'}`}>{pr ? `${pr}€` : '-'}</span>}
-                </div>
+                <div className="text-xs font-bold text-global-inactive">{d}</div>
+                {booking ? (
+                    <div className="text-xs mt-2 text-red-200 truncate">{booking.guest_name || 'Réservé'}</div>
+                ) : (
+                    <div className="mt-2 text-center">
+                        {overridePrice ? (
+                            <span className="font-bold text-lg text-global-blanc">{overridePrice}€</span>
+                        ) : (
+                            <span className="text-xs text-global-inactive">-</span>
+                        )}
+                    </div>
+                )}
             </div>
         );
     }
@@ -365,11 +353,10 @@ function PricingPage({ token, userProfile }) {
   };
 
   return (
-    <div className="p-6">
+    <div className="p-6 relative min-h-screen">
       <div className="flex justify-between items-center mb-6">
         <h1 className="text-2xl font-bold text-global-blanc">{t('pricing.title')}</h1>
-        <div className="flex gap-4">
-            {/* SÉLECTEUR CORRIGÉ */}
+        <div className="flex gap-4 items-center">
             <select
                 value={selectedId ? (selectedView === 'group' ? `group-${selectedId}` : `property-${selectedId}`) : ''}
                 onChange={handleSelectionChange}
@@ -380,55 +367,116 @@ function PricingPage({ token, userProfile }) {
                 ))}
             </select>
             
-            <Bouton variant="principal" onClick={handleGenerateStrategy} disabled={iaLoading || !selectedId}>
-                {iaLoading ? 'Génération IA...' : t('pricing.generateButton')}
+            <Bouton 
+                variant="principal" 
+                onClick={handleGenerateStrategy}
+                disabled={iaLoading || isCalendarLoading || !selectedId}
+            >
+                {iaLoading ? 'Génération...' : t('pricing.generateButton')}
             </Bouton>
         </div>
       </div>
 
-      <AlertModal isOpen={alertModal.isOpen} onClose={()=>setAlertModal({...alertModal, isOpen:false})} title={alertModal.title} message={alertModal.message} />
-      {error && <div className="bg-red-900/50 border-red-500 border text-red-200 p-4 rounded mb-4">{error}</div>}
+      <AlertModal 
+        isOpen={alertModal.isOpen} 
+        onClose={() => setAlertModal({ ...alertModal, isOpen: false })}
+        title={alertModal.title}
+        message={alertModal.message}
+      />
+      {error && (
+        <div className="bg-red-900/50 border border-red-500 text-red-200 p-4 rounded-lg mb-6">
+            {error}
+        </div>
+      )}
 
-      <div className="bg-global-bg-box border border-global-stroke-box rounded-xl p-6 select-none">
+      <div className="bg-global-bg-box border border-global-stroke-box rounded-xl p-6">
           <div className="flex justify-between mb-4">
-              <button onClick={()=>setCurrentCalendarDate(new Date(currentCalendarDate.setMonth(currentCalendarDate.getMonth()-1)))} className="p-2 hover:bg-white/10 rounded"><ArrowLeftIcon className="w-5 h-5 text-white"/></button>
-              <h2 className="text-xl font-bold text-white capitalize">{currentCalendarDate.toLocaleDateString(language==='en'?'en-US':'fr-FR', {month:'long', year:'numeric'})}</h2>
-              <button onClick={()=>setCurrentCalendarDate(new Date(currentCalendarDate.setMonth(currentCalendarDate.getMonth()+1)))} className="p-2 hover:bg-white/10 rounded"><ArrowRightIcon className="w-5 h-5 text-white"/></button>
+              <button onClick={() => setCurrentCalendarDate(new Date(currentCalendarDate.setMonth(currentCalendarDate.getMonth() - 1)))} className="text-global-blanc hover:text-global-active p-2">
+                  <ArrowLeftIcon />
+              </button>
+              <h2 className="text-xl font-bold text-global-blanc capitalize">
+                  {currentCalendarDate.toLocaleDateString(language === 'en' ? 'en-US' : 'fr-FR', { month: 'long', year: 'numeric' })}
+              </h2>
+              <button onClick={() => setCurrentCalendarDate(new Date(currentCalendarDate.setMonth(currentCalendarDate.getMonth() + 1)))} className="text-global-blanc hover:text-global-active p-2">
+                  <ArrowRightIcon />
+              </button>
           </div>
 
-          {isCalendarLoading ? <div className="h-64 flex items-center justify-center text-global-inactive">Chargement...</div> : 
+          {isCalendarLoading ? (
+              <div className="h-64 flex items-center justify-center text-global-inactive">Chargement...</div>
+          ) : (
               <div className="grid grid-cols-7 gap-2">
-                  {['Lun','Mar','Mer','Jeu','Ven','Sam','Dim'].map(d=><div key={d} className="text-center py-2 text-global-inactive font-bold">{d}</div>)}
+                  {['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'].map(d => (
+                      <div key={d} className="text-center font-bold text-global-inactive py-2">{d}</div>
+                  ))}
                   {renderCalendar()}
               </div>
-          }
+          )}
       </div>
 
-      {/* Panel latérale de modification */}
       {isSelecting && (
-          <div className="fixed bottom-0 right-0 w-80 bg-global-bg-box border-l border-global-stroke-box p-6 h-screen shadow-2xl z-50">
-              <h3 className="text-lg font-bold text-white mb-4">Éditer {selectionStart === selectionEnd ? selectionStart : `${selectionStart} -> ${selectionEnd}`}</h3>
-              <div className="flex gap-2 mb-4">
-                  <button onClick={()=>setSelectionMode('booking')} className={`flex-1 p-2 rounded ${selectionMode==='booking'?'bg-global-active text-white':'bg-global-bg-small-box text-gray-400'}`}>Réservation</button>
-                  <button onClick={()=>setSelectionMode('manual')} className={`flex-1 p-2 rounded ${selectionMode==='manual'?'bg-global-active text-white':'bg-global-bg-small-box text-gray-400'}`}>Prix</button>
-              </div>
+          <div className="fixed bottom-0 right-0 w-80 bg-global-bg-box border-l border-global-stroke-box p-6 h-screen shadow-2xl z-50 transform transition-transform translate-x-0">
+              <h3 className="text-lg font-bold text-global-blanc mb-4">Modifier la sélection</h3>
+              <p className="text-global-inactive mb-4">Du {selectionStart} au {selectionEnd}</p>
               
+              <div className="flex gap-2 mb-4">
+                  <button 
+                    onClick={() => setSelectionMode('booking')} 
+                    className={`flex-1 p-2 rounded ${selectionMode === 'booking' ? 'bg-global-active text-white' : 'bg-global-bg-small-box text-global-inactive'}`}
+                  >
+                      Réservation
+                  </button>
+                  <button 
+                    onClick={() => setSelectionMode('manual')} 
+                    className={`flex-1 p-2 rounded ${selectionMode === 'manual' ? 'bg-global-active text-white' : 'bg-global-bg-small-box text-global-inactive'}`}
+                  >
+                      Prix Manuel
+                  </button>
+              </div>
+
               {selectionMode === 'booking' ? (
                   <form onSubmit={handleSaveBooking} className="flex flex-col gap-3">
-                      <input type="number" placeholder="Prix total ou nuit" value={bookingPrice} onChange={e=>setBookingPrice(e.target.value)} className="p-2 rounded bg-global-bg-small-box text-white border border-gray-700"/>
-                      <select value={bookingChannel} onChange={e=>setBookingChannel(e.target.value)} className="p-2 rounded bg-global-bg-small-box text-white border border-gray-700">
-                          <option>Direct</option><option>Airbnb</option><option>Booking</option>
+                      <input 
+                        type="number" 
+                        placeholder="Prix / Nuit" 
+                        value={bookingPrice} 
+                        onChange={e => setBookingPrice(e.target.value)} 
+                        className="p-2 rounded bg-global-bg-small-box text-global-blanc border border-global-stroke-box outline-none focus:border-global-active"
+                      />
+                      <select 
+                        value={bookingChannel} 
+                        onChange={e => setBookingChannel(e.target.value)}
+                        className="p-2 rounded bg-global-bg-small-box text-global-blanc border border-global-stroke-box outline-none focus:border-global-active"
+                      >
+                          <option value="Direct">Direct</option>
+                          <option value="Airbnb">Airbnb</option>
+                          <option value="Booking">Booking</option>
                       </select>
-                      <Bouton type="submit" variant="principal">Sauvegarder</Bouton>
+                      <Bouton type="submit" variant="principal" className="mt-2">Enregistrer</Bouton>
                   </form>
               ) : (
                   <form onSubmit={handleSavePriceOverride} className="flex flex-col gap-3">
-                      <input type="number" placeholder="Nouveau prix" value={manualPrice} onChange={e=>setManualPrice(e.target.value)} className="p-2 rounded bg-global-bg-small-box text-white border border-gray-700"/>
-                      <label className="flex gap-2 text-white text-sm"><input type="checkbox" checked={isPriceLocked} onChange={e=>setIsPriceLocked(e.target.checked)}/> Verrouiller (Stop IA)</label>
-                      <Bouton type="submit" variant="principal">Appliquer</Bouton>
+                      <input 
+                        type="number" 
+                        placeholder="Nouveau Prix" 
+                        value={manualPrice} 
+                        onChange={e => setManualPrice(e.target.value)} 
+                        className="p-2 rounded bg-global-bg-small-box text-global-blanc border border-global-stroke-box outline-none focus:border-global-active"
+                      />
+                      <label className="flex items-center gap-2 text-global-blanc text-sm cursor-pointer">
+                          <input 
+                            type="checkbox" 
+                            checked={isPriceLocked} 
+                            onChange={e => setIsPriceLocked(e.target.checked)} 
+                            className="accent-global-active"
+                          />
+                          Verrouiller ce prix (ignorer IA)
+                      </label>
+                      <Bouton type="submit" variant="principal" className="mt-2">Mettre à jour</Bouton>
                   </form>
               )}
-              <button onClick={clearSelection} className="mt-4 text-gray-500 w-full hover:text-white">Annuler</button>
+              
+              <button onClick={clearSelection} className="mt-4 text-sm text-global-inactive hover:text-white w-full text-center transition-colors">Annuler</button>
           </div>
       )}
     </div>
