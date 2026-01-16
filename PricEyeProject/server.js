@@ -7714,12 +7714,64 @@ app.post('/api/properties/:id/pricing-strategy', authenticateToken, async (req, 
             await db.upsertPriceOverrides(id, overridesToSave);
         }
 
-        // 5. Réponse Client
+        // =================================================================
+        // ÉTAPE D : PROPAGATION AUX GROUPES (SYNC)
+        // =================================================================
+        // Vérifier si cette propriété est la "Main Property" d'un groupe synchronisé
+        const { data: groupData, error: groupError } = await supabase
+            .from('property_groups')
+            .select('id, name, sync_prices')
+            .eq('main_property_id', id)
+            .single();
+
+        let syncCount = 0;
+
+        if (groupData && groupData.sync_prices) {
+            console.log(`[Pricing] 🔄 Propagation détectée pour le groupe "${groupData.name}"...`);
+
+            // 1. Récupérer les enfants
+            const { data: children } = await supabase
+                .from('group_members')
+                .select('property_id')
+                .eq('group_id', groupData.id);
+
+            if (children && children.length > 0) {
+                // 2. Préparer les données pour chaque enfant
+                // On copie exactement les mêmes prix et raisons
+                const bulkOverrides = [];
+                
+                for (const child of children) {
+                    // Pour chaque jour calculé, on crée une entrée pour l'enfant
+                    overridesToSave.forEach(day => {
+                        bulkOverrides.push({
+                            ...day, // date, price, reason...
+                            property_id: child.property_id, // On change l'ID
+                            updatedBy: userId
+                        });
+                    });
+                }
+
+                // 3. Sauvegarde en masse (Batch) pour les enfants
+                // Note: db.upsertPriceOverrides attend un property_id, il faut peut-être adapter db ou faire un insert direct
+                // Pour faire simple et efficace, on utilise supabase directement ici pour le bulk cross-property
+                if (bulkOverrides.length > 0) {
+                    const { error: syncError } = await supabase
+                        .from('price_overrides')
+                        .upsert(bulkOverrides, { onConflict: 'property_id, date' });
+                    
+                    if (syncError) console.error("Erreur sync enfants:", syncError);
+                    else syncCount = children.length;
+                }
+            }
+        }
+
+        // 5. Réponse Client (Mise à jour pour inclure l'info de sync)
         res.status(200).json({
             strategy_summary: aiSummary || "Stratégie algorithmique standard",
             daily_prices: finalCalendar,
             method: method,
-            days_generated: finalCalendar.length
+            days_generated: finalCalendar.length,
+            synced_properties: syncCount // Feedback pour le frontend
         });
 
     } catch (error) {

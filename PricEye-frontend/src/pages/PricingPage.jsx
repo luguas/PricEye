@@ -5,7 +5,8 @@ import { jwtDecode } from 'jwt-decode';
 import Bouton from '../components/Bouton.jsx';
 import AlertModal from '../components/AlertModal.jsx';
 import { useLanguage } from '../contexts/LanguageContext.jsx';
-import { handleQuotaError, checkQuotaStatus } from '../utils/quotaErrorHandler.js'; 
+import { handleQuotaError, checkQuotaStatus } from '../utils/quotaErrorHandler.js';
+import { supabase } from '../config/supabase.js'; 
 
 // Firebase n'est plus utilisé directement côté client pour les price_overrides
 // On utilise maintenant l'API backend
@@ -59,27 +60,50 @@ function PricingPage({ token, userProfile }) {
     setIsLoading(true);
     setError(''); 
     try {
-      const [propertiesData, groupsData] = await Promise.all([
-          getProperties(token),
-          getGroups(token)
-      ]);
+      // 1. Récupérer les propriétés
+      const propsData = await getProperties(token);
       
       // Filtrer les propriétés avec des IDs invalides côté client aussi (double sécurité)
-      const validProperties = propertiesData.filter(prop => {
+      const validProperties = propsData.filter(prop => {
         if (!prop.id || typeof prop.id !== 'string') return false;
         const uuidLength = prop.id.replace(/-/g, '').length;
         return uuidLength >= 32;
       });
       
-      setProperties(validProperties);
-      setAllGroups(groupsData);
+      // 2. Récupérer les groupes depuis Supabase
+      const { data: groupsData, error: groupsError } = await supabase
+        .from('property_groups')
+        .select('*');
+
+      if (groupsError) throw groupsError;
+
+      // 3. Fusionner pour l'affichage
+      // On ajoute un flag 'isGroup' pour les distinguer
+      const formattedGroups = (groupsData || []).map(g => ({
+        id: g.main_property_id, // ASTUCE : On utilise l'ID du chef comme valeur !
+        name: `👥 Groupe: ${g.name}`, // Préfixe visuel
+        isGroup: true,
+        groupId: g.id,
+        // On garde les autres champs au cas où
+        ...g
+      }));
+
+      // On combine : D'abord les groupes, ensuite les propriétés individuelles
+      // Optionnel : Filtrer les propriétés qui sont déjà dans des groupes pour éviter les doublons
+      const mergedList = [...formattedGroups, ...validProperties];
       
-      if (validProperties.length > 0) {
+      setProperties(mergedList);
+      
+      // Garder aussi allGroups pour les autres usages dans le composant
+      setAllGroups(groupsData || []);
+      
+      // Sélection par défaut
+      if (formattedGroups.length > 0) {
+        setSelectedView('property'); // On utilise 'property' car l'ID est celui de la propriété principale
+        setSelectedId(formattedGroups[0].id);
+      } else if (validProperties.length > 0) {
         setSelectedView('property');
         setSelectedId(validProperties[0].id);
-      } else if (groupsData.length > 0) {
-           setSelectedView('group');
-           setSelectedId(groupsData[0].id);
       }
       
     } catch (err) {
@@ -1382,21 +1406,44 @@ function PricingPage({ token, userProfile }) {
            return;
        }
        console.log('[handleViewChange] Changement vers - type:', type, 'id:', id);
+       
+       // Détecter si c'est un groupe en cherchant dans la liste fusionnée
+       const selectedItem = properties.find(p => p.id === id);
+       const isGroup = selectedItem?.isGroup === true;
+       
        // Réinitialiser l'état de chargement et les données avant de changer
        setIsCalendarLoading(true);
        setPriceOverrides({});
        setBookings({});
        clearSelection();
        setSelectedDateForAnalysis(null);
+       
        // Changer la sélection (cela déclenchera fetchCalendarData via useEffect)
-       setSelectedView(type);
-       setSelectedId(id);
-       console.log('[handleViewChange] États mis à jour - selectedView:', type, 'selectedId:', id);
+       if (isGroup) {
+           // Pour un groupe, on utilise 'group' comme view et l'ID du groupe
+           setSelectedView('group');
+           setSelectedId(selectedItem.groupId);
+       } else {
+           // Pour une propriété, on utilise 'property' comme view et l'ID de la propriété
+           setSelectedView('property');
+           setSelectedId(id);
+       }
+       console.log('[handleViewChange] États mis à jour - selectedView:', isGroup ? 'group' : 'property', 'selectedId:', isGroup ? selectedItem.groupId : id);
    };
    
    const getSelectedValue = () => {
        if (!selectedId) return '';
-       return `${selectedView}-${selectedId}`;
+       // Trouver l'item correspondant pour déterminer si c'est un groupe
+       let itemId = selectedId;
+       if (selectedView === 'group') {
+           // Si c'est un groupe, trouver l'item qui correspond à ce groupe
+           const group = allGroups.find(g => g.id === selectedId);
+           if (group) {
+               itemId = group.main_property_id;
+           }
+       }
+       // Toujours utiliser 'property-' car dans le sélecteur, tous les items utilisent ce préfixe
+       return `property-${itemId}`;
    };
 
 
@@ -1438,12 +1485,11 @@ function PricingPage({ token, userProfile }) {
               disabled={isLoading || iaLoading}
             >
               <option value="">{t('pricing.select')}</option>
-              <optgroup label={t('pricing.groups')}>
-                {allGroups.map(g => <option key={g.id} value={`group-${g.id}`}>{g.name}</option>)}
-              </optgroup>
-              <optgroup label={t('pricing.individualProperties')}>
-                {properties.map(p => <option key={p.id} value={`property-${p.id}`}>{p.address}</option>)}
-              </optgroup>
+              {properties.map(item => (
+                <option key={item.id} value={`property-${item.id}`}>
+                  {item.isGroup ? item.name : (item.address || item.name)}
+                </option>
+              ))}
             </select>
             
             {/* Navigation mois */}
