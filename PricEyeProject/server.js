@@ -7718,8 +7718,9 @@ app.post('/api/properties/:id/pricing-strategy', authenticateToken, async (req, 
         // ÉTAPE D : PROPAGATION AUX GROUPES (SYNC)
         // =================================================================
         // Vérifier si cette propriété est la "Main Property" d'un groupe synchronisé
+        // CORRECTION : Table 'groups' au lieu de 'property_groups'
         const { data: groupData, error: groupError } = await supabase
-            .from('property_groups')
+            .from('groups')
             .select('id, name, sync_prices')
             .eq('main_property_id', id)
             .single();

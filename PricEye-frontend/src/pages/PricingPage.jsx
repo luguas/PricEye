@@ -71,8 +71,9 @@ function PricingPage({ token, userProfile }) {
       });
       
       // 2. Récupérer les groupes depuis Supabase
+      // CORRECTION : Utilisation du nom de table 'groups'
       const { data: groupsData, error: groupsError } = await supabase
-        .from('property_groups')
+        .from('groups')
         .select('*');
 
       if (groupsError) throw groupsError;
