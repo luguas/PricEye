@@ -60,7 +60,7 @@ function PricingPage({ token, userProfile }) {
     setIsLoading(true);
     setError(''); 
     try {
-      // 1. Récupérer les propriétés
+      // 1. Récupérer les propriétés individuelles
       const propsData = await getProperties(token);
       
       // Filtrer les propriétés avec des IDs invalides côté client aussi (double sécurité)
@@ -70,44 +70,47 @@ function PricingPage({ token, userProfile }) {
         return uuidLength >= 32;
       });
       
-      // 2. Récupérer les groupes depuis Supabase
-      // CORRECTION : Utilisation du nom de table 'groups'
+      // 2. Récupérer les groupes (Table 'groups')
       const { data: groupsData, error: groupsError } = await supabase
-        .from('groups')
+        .from('groups') // <--- Attention au nom de table ici
         .select('*');
 
-      if (groupsError) throw groupsError;
+      if (groupsError) {
+        console.error("Erreur chargement groupes:", groupsError);
+      }
 
-      // 3. Fusionner pour l'affichage
-      // On ajoute un flag 'isGroup' pour les distinguer
-      const formattedGroups = (groupsData || []).map(g => ({
-        id: g.main_property_id, // ASTUCE : On utilise l'ID du chef comme valeur !
-        name: `👥 Groupe: ${g.name}`, // Préfixe visuel
-        isGroup: true,
-        groupId: g.id,
-        // On garde les autres champs au cas où
-        ...g
-      }));
+      // 3. Formater les groupes pour la liste
+      const formattedGroups = (groupsData || [])
+        .filter(g => g.main_property_id) // IMPORTANT : On ignore les groupes sans propriété principale
+        .map(g => ({
+          id: g.main_property_id, // L'ID technique est celui de la propriété principale
+          name: `👥 Groupe: ${g.name}`, // Label visuel
+          isGroup: true,
+          groupId: g.id,
+          // On garde les infos de base
+          currency: 'EUR', // Fallback
+          ...g
+        }));
 
-      // On combine : D'abord les groupes, ensuite les propriétés individuelles
-      // Optionnel : Filtrer les propriétés qui sont déjà dans des groupes pour éviter les doublons
-      const mergedList = [...formattedGroups, ...validProperties];
-      
-      setProperties(mergedList);
+      // 4. Fusionner : Groupes en premier, Propriétés ensuite
+      // Astuce : On retire des "validProperties" les propriétés qui sont déjà "Chefs de groupe" pour éviter les doublons visuels
+      const groupMainIds = new Set(formattedGroups.map(g => g.id));
+      const filteredProps = validProperties.filter(p => !groupMainIds.has(p.id));
+
+      const finalList = [...formattedGroups, ...filteredProps];
+      setProperties(finalList);
       
       // Garder aussi allGroups pour les autres usages dans le composant
       setAllGroups(groupsData || []);
-      
-      // Sélection par défaut
-      if (formattedGroups.length > 0) {
+
+      // 5. Sélection par défaut intelligente
+      if (finalList.length > 0) {
         setSelectedView('property'); // On utilise 'property' car l'ID est celui de la propriété principale
-        setSelectedId(formattedGroups[0].id);
-      } else if (validProperties.length > 0) {
-        setSelectedView('property');
-        setSelectedId(validProperties[0].id);
+        setSelectedId(finalList[0].id);
       }
       
     } catch (err) {
+      console.error('Erreur chargement global:', err);
       setError(t('pricing.errors.loadData', { message: err.message }));
     } finally {
       setIsLoading(false);
