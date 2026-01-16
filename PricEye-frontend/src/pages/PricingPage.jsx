@@ -63,16 +63,12 @@ function PricingPage({ token, userProfile }) {
       // 1. Récupérer les propriétés individuelles
       const propsData = await getProperties(token);
       
-      // Filtrer les propriétés avec des IDs invalides côté client aussi (double sécurité)
-      const validProperties = propsData.filter(prop => {
-        if (!prop.id || typeof prop.id !== 'string') return false;
-        const uuidLength = prop.id.replace(/-/g, '').length;
-        return uuidLength >= 32;
-      });
+      // Filtrage de sécurité basique (assoupli)
+      const validProperties = propsData.filter(prop => prop.id && typeof prop.id === 'string');
       
       // 2. Récupérer les groupes (Table 'groups')
       const { data: groupsData, error: groupsError } = await supabase
-        .from('groups') // <--- Attention au nom de table ici
+        .from('groups') 
         .select('*');
 
       if (groupsError) {
@@ -80,33 +76,41 @@ function PricingPage({ token, userProfile }) {
       }
 
       // 3. Formater les groupes pour la liste
+      // CORRECTION IMPORTANTE : L'ID de l'item DOIT être l'ID du GROUPE (g.id), pas g.main_property_id
       const formattedGroups = (groupsData || [])
-        .filter(g => g.main_property_id) // IMPORTANT : On ignore les groupes sans propriété principale
+        .filter(g => g.main_property_id) // On ignore les groupes vides
         .map(g => ({
-          id: g.main_property_id, // L'ID technique est celui de la propriété principale
-          name: `👥 Groupe: ${g.name}`, // Label visuel
+          id: g.id, // ICI : On utilise l'ID du groupe comme identifiant unique dans la liste
+          mainPropertyId: g.main_property_id, // On garde la référence vers la propriété principale
+          name: `👥 Groupe: ${g.name}`, 
           isGroup: true,
           groupId: g.id,
-          // On garde les infos de base
-          currency: 'EUR', // Fallback
+          currency: 'EUR', 
           ...g
         }));
 
       // 4. Fusionner : Groupes en premier, Propriétés ensuite
-      // Astuce : On retire des "validProperties" les propriétés qui sont déjà "Chefs de groupe" pour éviter les doublons visuels
-      const groupMainIds = new Set(formattedGroups.map(g => g.id));
-      const filteredProps = validProperties.filter(p => !groupMainIds.has(p.id));
+      // Astuce : On retire des "validProperties" les propriétés qui sont déjà "Chefs de groupe" pour éviter les doublons
+      // On utilise mainPropertyId pour identifier les propriétés à masquer
+      const groupMainPropertyIds = new Set(formattedGroups.map(g => g.mainPropertyId));
+      const filteredProps = validProperties.filter(p => !groupMainPropertyIds.has(p.id));
 
       const finalList = [...formattedGroups, ...filteredProps];
       setProperties(finalList);
       
-      // Garder aussi allGroups pour les autres usages dans le composant
+      // Garder aussi allGroups pour les autres usages
       setAllGroups(groupsData || []);
 
       // 5. Sélection par défaut intelligente
-      if (finalList.length > 0) {
-        setSelectedView('property'); // On utilise 'property' car l'ID est celui de la propriété principale
-        setSelectedId(finalList[0].id);
+      if (finalList.length > 0 && !selectedId) {
+        const firstItem = finalList[0];
+        if (firstItem.isGroup) {
+            setSelectedView('group');
+            setSelectedId(firstItem.id); // ID du groupe
+        } else {
+            setSelectedView('property');
+            setSelectedId(firstItem.id); // ID de la propriété
+        }
       }
       
     } catch (err) {
@@ -115,7 +119,7 @@ function PricingPage({ token, userProfile }) {
     } finally {
       setIsLoading(false);
     }
-  }, [token, userProfile, t]); 
+  }, [token, t]); // Retiré selectedId et userProfile des dépendances pour éviter boucle 
 
   useEffect(() => {
     fetchInitialData();
@@ -465,21 +469,22 @@ function PricingPage({ token, userProfile }) {
           } else { // 'group'
               const group = allGroups.find(g => g.id === selectedId);
               if (group) {
+                  const mainPropId = group.mainPropertyId || group.main_property_id;
                   if (!group.syncPrices) {
-                      if (!group.mainPropertyId) {
+                      if (!mainPropId) {
                           setAutoPricingError(t('pricing.autoPricing.noMainProperty'));
                           setIsAutoGenerationEnabled(false);
                           return;
                       }
-                      propertyIdToAnalyze = group.mainPropertyId;
+                      propertyIdToAnalyze = mainPropId;
                       groupToSync = null;
                   } else {
-                      if (!group.mainPropertyId) {
+                      if (!mainPropId) {
                           setAutoPricingError(t('pricing.autoPricing.noMainProperty'));
                           setIsAutoGenerationEnabled(false);
                           return;
                       }
-                      propertyIdToAnalyze = group.mainPropertyId;
+                      propertyIdToAnalyze = mainPropId;
                       groupToSync = group;
                   }
               } else {
@@ -553,14 +558,8 @@ function PricingPage({ token, userProfile }) {
 
     if (selectedView === 'property') {
         propertyIdToFetch = selectedId;
-        // Valider que selectedId est un UUID valide
-        const uuidLength = propertyIdToFetch?.replace(/-/g, '').length || 0;
-        if (!propertyIdToFetch || typeof propertyIdToFetch !== 'string' || uuidLength < 32) {
-          console.error('[fetchCalendarData] UUID invalide pour la propriété:', {
-            propertyIdToFetch,
-            length: propertyIdToFetch?.length,
-            uuidLength
-          });
+        // Validation simple : doit être une string non vide
+        if (!propertyIdToFetch || typeof propertyIdToFetch !== 'string') {
           setError(t('pricing.errors.invalidPropertyId') || 'ID de propriété invalide');
           setIsCalendarLoading(false);
           setPriceOverrides({});
@@ -569,42 +568,24 @@ function PricingPage({ token, userProfile }) {
         }
         currentProperty = properties.find(p => p.id === selectedId);
         console.log('[fetchCalendarData] Mode property - propertyIdToFetch:', propertyIdToFetch, 'currentProperty:', currentProperty);
-    } else { 
+    } else { // Mode Groupe
+        // ICI : selectedId est l'ID du GROUPE. On cherche le groupe dans allGroups par son ID.
         const group = allGroups.find(g => g.id === selectedId);
+        
         if (!group) {
-          console.log('[fetchCalendarData] Groupe non trouvé pour selectedId:', selectedId);
+          // Si on ne trouve pas le groupe (ex: changement de données), on reset silencieusement ou on log
+          console.warn('Groupe non trouvé pour ID:', selectedId);
           setIsCalendarLoading(false);
           setPriceOverrides({});
           setBookings({});
           return;
         }
-        propertyIdToFetch = group.mainPropertyId || group.properties?.[0];
-        console.log('[fetchCalendarData] Mode group - propertyIdToFetch:', propertyIdToFetch, 'mainPropertyId:', group.mainPropertyId, 'properties:', group.properties);
+        
+        // On récupère la propriété principale du groupe pour afficher le calendrier
+        propertyIdToFetch = group.mainPropertyId || group.main_property_id;
         
         if (!propertyIdToFetch) {
-          console.log('[fetchCalendarData] Pas de propertyIdToFetch pour le groupe');
-          setIsCalendarLoading(false);
-          setPriceOverrides({});
-          setBookings({});
-          return;
-        }
-        
-        // Valider que propertyIdToFetch est un UUID valide (au moins 32 caractères sans tirets, ou 36 avec tirets)
-        const uuidLength = propertyIdToFetch.replace(/-/g, '').length;
-        if (typeof propertyIdToFetch !== 'string' || uuidLength < 32) {
-          console.error('[fetchCalendarData] UUID invalide pour le groupe:', {
-            propertyIdToFetch,
-            length: propertyIdToFetch?.length,
-            uuidLength,
-            mainPropertyId: group.mainPropertyId,
-            mainPropertyIdLength: group.mainPropertyId?.replace(/-/g, '').length,
-            firstProperty: group.properties?.[0],
-            firstPropertyLength: group.properties?.[0]?.replace(/-/g, '').length,
-            allProperties: group.properties,
-            groupId: group.id,
-            groupName: group.name
-          });
-          setError(t('pricing.errors.invalidGroupPropertyId', { groupName: group.name || group.id }));
+          setError(t('pricing.errors.invalidGroupPropertyId', { groupName: group.name }));
           setIsCalendarLoading(false);
           setPriceOverrides({});
           setBookings({});
@@ -735,21 +716,22 @@ function PricingPage({ token, userProfile }) {
              setError(t('pricing.errors.groupNotFound'));
              return;
         }
+        const mainPropId = group.mainPropertyId || group.main_property_id;
         if (!group.syncPrices) {
              setAlertModal({ isOpen: true, message: t('pricing.errors.syncNotEnabled'), title: t('pricing.modal.information') });
-             if (!group.mainPropertyId) {
+             if (!mainPropId) {
                  setAlertModal({ isOpen: true, message: t('pricing.errors.noMainProperty'), title: t('pricing.modal.attention') });
                  return;
              }
-             propertyIdToAnalyze = group.mainPropertyId;
+             propertyIdToAnalyze = mainPropId;
              groupToSync = null; // Ne pas synchroniser si la case n'est pas cochée
         } else {
             // Synchro activée
-             if (!group.mainPropertyId) {
+             if (!mainPropId) {
                  setAlertModal({ isOpen: true, message: t('pricing.errors.noMainPropertyDashboard'), title: t('pricing.modal.attention') });
                  return;
              }
-            propertyIdToAnalyze = group.mainPropertyId;
+            propertyIdToAnalyze = mainPropId;
             groupToSync = group; // Passer le groupe pour la synchro
         }
     }
@@ -875,11 +857,12 @@ function PricingPage({ token, userProfile }) {
        let propertyIdForBooking = selectedId;
        if (selectedView === 'group') {
            const group = allGroups.find(g => g.id === selectedId);
-           if (!group || !group.mainPropertyId) {
+           const mainPropId = group?.mainPropertyId || group?.main_property_id;
+           if (!group || !mainPropId) {
                 setError(t('pricing.errors.bookingNoMainProperty'));
                 return;
            }
-           propertyIdForBooking = group.mainPropertyId;
+           propertyIdForBooking = mainPropId;
        }
        
       if (!selectionStart || !selectionEnd || !bookingPrice || !propertyIdForBooking) return;
@@ -965,9 +948,10 @@ function PricingPage({ token, userProfile }) {
               setError(t('pricing.errors.groupNotFound'));
               return;
           }
+          const mainPropId = group.mainPropertyId || group.main_property_id;
           if (!group.syncPrices) {
               setAlertModal({ isOpen: true, message: t('pricing.errors.syncNotEnabledPrice'), title: t('pricing.modal.information') });
-              propertyIdsToUpdate = [group.mainPropertyId].filter(Boolean); 
+              propertyIdsToUpdate = mainPropId ? [mainPropId] : []; 
           } else {
               propertyIdsToUpdate = group.properties || []; 
           }
@@ -1041,7 +1025,8 @@ function PricingPage({ token, userProfile }) {
         const group = allGroups.find(g => g.id === selectedId);
         if (!group) return null;
         // Pour un groupe, on utilise les infos de la prop principale (ou de la 1ère)
-        return properties.find(p => p.id === group.mainPropertyId) ||
+        const mainPropId = group.mainPropertyId || group.main_property_id;
+        return properties.find(p => p.id === mainPropId) ||
                properties.find(p => p.id === group.properties?.[0]);
      }
   }, [selectedId, selectedView, properties, allGroups]);
@@ -1065,7 +1050,7 @@ function PricingPage({ token, userProfile }) {
         return selectedId;
      } else {
         const group = allGroups.find(g => g.id === selectedId);
-        return group?.mainPropertyId || group?.properties?.[0];
+        return group?.mainPropertyId || group?.main_property_id || group?.properties?.[0];
      }
   }, [selectedId, selectedView, allGroups]);
 
@@ -1424,30 +1409,31 @@ function PricingPage({ token, userProfile }) {
        
        // Changer la sélection (cela déclenchera fetchCalendarData via useEffect)
        if (isGroup) {
-           // Pour un groupe, on utilise 'group' comme view et l'ID du groupe
+           // Pour un groupe, on utilise 'group' comme view et l'ID du groupe (qui est maintenant g.id)
            setSelectedView('group');
-           setSelectedId(selectedItem.groupId);
+           setSelectedId(selectedItem.id); // L'ID est maintenant celui du groupe
        } else {
            // Pour une propriété, on utilise 'property' comme view et l'ID de la propriété
            setSelectedView('property');
            setSelectedId(id);
        }
-       console.log('[handleViewChange] États mis à jour - selectedView:', isGroup ? 'group' : 'property', 'selectedId:', isGroup ? selectedItem.groupId : id);
+       console.log('[handleViewChange] États mis à jour - selectedView:', isGroup ? 'group' : 'property', 'selectedId:', isGroup ? selectedItem.id : id);
    };
    
    const getSelectedValue = () => {
        if (!selectedId) return '';
-       // Trouver l'item correspondant pour déterminer si c'est un groupe
-       let itemId = selectedId;
-       if (selectedView === 'group') {
-           // Si c'est un groupe, trouver l'item qui correspond à ce groupe
-           const group = allGroups.find(g => g.id === selectedId);
-           if (group) {
-               itemId = group.main_property_id;
+       // Trouver l'item correspondant dans la liste fusionnée
+       const item = properties.find(p => {
+           if (selectedView === 'group') {
+               return p.isGroup && p.id === selectedId;
+           } else {
+               return !p.isGroup && p.id === selectedId;
            }
+       });
+       if (item) {
+           return `property-${item.id}`;
        }
-       // Toujours utiliser 'property-' car dans le sélecteur, tous les items utilisent ce préfixe
-       return `property-${itemId}`;
+       return '';
    };
 
 
