@@ -65,9 +65,13 @@ async function calculateDeterministicPrice({ property, date, marketFeatures = nu
     const weekday = targetDate.getDay(); // 0=Dim, 6=Sam
     const isWeekend = (weekday === 5 || weekday === 6); // Vendredi et Samedi
     
+    // La bonne façon de récupérer le markup, avec une valeur par défaut de 15%
     const weekendMarkup = property.weekend_markup_percent !== undefined 
         ? Number(property.weekend_markup_percent) 
         : 15; 
+    
+    // Si property.weekend_markup_percent vaut 0 en base de données, cela fera 0% d'augmentation.
+    // Vérifiez dans votre base Supabase que ce champ n'est pas à 0. 
 
     if (isWeekend && weekendMarkup > 0) {
         const adjustment = currentPrice * (weekendMarkup / 100);
