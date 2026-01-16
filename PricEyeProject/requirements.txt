@@ -23,7 +23,7 @@ python-dotenv>=1.0.0
 pytz>=2023.3
 python-dateutil>=2.8.0
 
-# Testing (optionnel)
+# Testing (optionnel - peut être omis en production)
 pytest>=7.4.0
 pytest-mock>=3.11.1
 
