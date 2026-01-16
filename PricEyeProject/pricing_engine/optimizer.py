@@ -10,6 +10,7 @@ Il s’appuie sur le modèle de demande défini dans `models.demand_model`.
 """
 
 from typing import List, Dict, Any, Optional
+from datetime import datetime, timedelta, date
 
 from .config import get_pricing_config_for_property, PricingConfig
 from .interfaces.data_access import get_internal_pricing_data, get_property_pricing_constraints
@@ -107,6 +108,118 @@ def _build_price_grid(
     return price_grid
 
 
+def _calculate_heuristic_confidence(target_date_str, history_days=None):
+    """
+    Calcule un score de confiance (0.0 à 1.0) basé sur des heuristiques simples.
+    Plus on s'éloigne dans le temps ou moins on a de données, moins on est confiant.
+    """
+    confidence = 0.80  # Score de base (modèle supposé décent)
+
+    try:
+        # 1. Pénalité de distance temporelle (Horizon de prédiction)
+        # L'IA est moins précise au-delà de 3 mois
+        target_date = datetime.strptime(target_date_str, "%Y-%m-%d").date()
+        today = date.today()
+        days_ahead = (target_date - today).days
+
+        if days_ahead < 0:
+            return 0.0 # Date passée
+        
+        if days_ahead > 180:
+            confidence -= 0.30 # Très loin -> grosse pénalité
+        elif days_ahead > 90:
+            confidence -= 0.15 # Loin -> petite pénalité
+        elif days_ahead < 7:
+            confidence += 0.05 # Très proche -> bonus de confiance (données marché fraîches)
+
+        # 2. Pénalité d'historique (Cold Start)
+        # Si history_days est fourni, on l'utilise. Sinon on reste neutre.
+        if history_days is not None:
+            if history_days < 30:
+                confidence -= 0.30 # Cold start critique (moins d'un mois)
+            elif history_days < 90:
+                confidence -= 0.10 # Historique faible (moins d'une saison)
+            elif history_days > 365:
+                confidence += 0.05 # Bonus historique solide (> 1 an)
+
+    except Exception as e:
+        # En cas d'erreur de calcul (ex: format date), on retourne une confiance neutre basse
+        print(f"Warning: Confidence calculation error: {e}")
+        return 0.5
+
+    # Clamp entre 0.0 et 1.0 et arrondi
+    return max(0.0, min(1.0, round(confidence, 2)))
+
+
+def calculate_confidence_score(
+    property_id: str,
+    date: str,
+) -> float:
+    """
+    Calcule un score de confiance (0.0 à 1.0) pour la prédiction de prix.
+    
+    Heuristique simple pour le MVP :
+    - Score de base : 0.8
+    - Pénalité si la date est très éloignée (> 90 jours) : l'IA prédit mal le long terme
+    - Pénalité si l'historique de la propriété est faible (Cold Start) : peu de données
+    
+    Retourne un float entre 0.0 et 1.0.
+    """
+    base_confidence = 0.8
+    
+    try:
+        # Calculer la distance en jours depuis aujourd'hui
+        today = datetime.now().date()
+        target_date = datetime.strptime(date, "%Y-%m-%d").date()
+        days_away = (target_date - today).days
+        
+        # Pénalité pour les dates éloignées (> 90 jours)
+        date_penalty = 0.0
+        if days_away > 90:
+            # Pénalité progressive : -0.1 par tranche de 30 jours au-delà de 90
+            extra_days = days_away - 90
+            date_penalty = min(0.3, (extra_days / 30) * 0.1)  # Max -0.3
+        
+        # Vérifier l'historique de la propriété (Cold Start)
+        # On regarde les 90 derniers jours pour voir s'il y a des données
+        history_start_date = (today - timedelta(days=90)).isoformat()
+        history_end_date = today.isoformat()
+        
+        try:
+            historical_records = get_internal_pricing_data(
+                property_id=property_id,
+                start_date=history_start_date,
+                end_date=history_end_date,
+            )
+            
+            # Compter les jours avec des bookings (données significatives)
+            days_with_data = sum(1 for record in historical_records if record.bookings > 0)
+            
+            # Pénalité si moins de 7 jours avec des données (Cold Start)
+            cold_start_penalty = 0.0
+            if days_with_data < 7:
+                # Pénalité progressive : -0.2 si 0 jours, -0.1 si < 7 jours
+                if days_with_data == 0:
+                    cold_start_penalty = 0.2
+                else:
+                    cold_start_penalty = 0.1
+        except Exception:
+            # En cas d'erreur, on considère qu'il n'y a pas d'historique (Cold Start)
+            cold_start_penalty = 0.2
+        
+        # Calculer le score final
+        confidence = base_confidence - date_penalty - cold_start_penalty
+        
+        # S'assurer que le score reste entre 0.0 et 1.0
+        confidence = max(0.0, min(1.0, confidence))
+        
+        return round(confidence, 2)
+        
+    except Exception:
+        # En cas d'erreur, retourner un score de confiance minimal
+        return 0.5
+
+
 def choose_optimal_price(
     property_id: str,
     room_type: str,
@@ -141,8 +254,10 @@ def choose_optimal_price(
     # Gérer les cas limites
     if effective_min_price <= 0 or effective_max_price <= 0 or effective_max_price <= effective_min_price:
         # Fallback si la config est incohérente
+        confidence_score = calculate_confidence_score(property_id, date)
         return {
             "price": config.fallback_price,
+            "confidence_score": confidence_score,
             "strategy": "fallback_invalid_config",
             "details": {
                 "reason": "Configuration de prix invalide, utilisation du fallback.",
@@ -193,8 +308,10 @@ def choose_optimal_price(
     # Filtrer les prix avec un revenu défini
     valid_simulations = [s for s in simulations if s["expected_revenue"] is not None]
     if not valid_simulations:
+        confidence_score = calculate_confidence_score(property_id, date)
         return {
             "price": config.fallback_price,
+            "confidence_score": confidence_score,
             "strategy": "fallback_no_valid_simulation",
             "details": {
                 "reason": "Aucune simulation valide, utilisation du fallback.",
@@ -209,10 +326,14 @@ def choose_optimal_price(
     sorted_sims = sorted(valid_simulations, key=lambda s: s["expected_revenue"], reverse=True)
     alternatives = sorted_sims[1:4]
 
+    # Calculer le score de confiance
+    confidence_score = calculate_confidence_score(property_id, date)
+
     return {
         "price": best["price"],
         "expected_revenue": best["expected_revenue"],
         "predicted_demand": best["predicted_demand"],
+        "confidence_score": confidence_score,
         "strategy": "demand_simulation_grid_search",
         "details": {
             "date": date,
@@ -269,7 +390,8 @@ def get_recommended_price(
         # Fallback : considérer une capacité de 1 pour éviter les incohérences
         capacity_remaining = 1
 
-    return choose_optimal_price(
+    # Obtenir la recommandation de prix via choose_optimal_price
+    optimal_result = choose_optimal_price(
         property_id=property_id,
         room_type=room_type,
         date=date,
@@ -279,5 +401,52 @@ def get_recommended_price(
         max_price=ceiling_price,
         base_price=base_price,
     )
+    
+    # Calculer history_days (nombre de jours d'historique disponible)
+    history_days = None
+    try:
+        today = date.today()
+        history_start_date = (today - timedelta(days=365)).isoformat()
+        history_end_date = today.isoformat()
+        historical_records = get_internal_pricing_data(
+            property_id=property_id,
+            start_date=history_start_date,
+            end_date=history_end_date,
+        )
+        if historical_records:
+            # Compter les jours uniques avec des données
+            unique_dates = set()
+            for record in historical_records:
+                if hasattr(record, 'date'):
+                    unique_dates.add(record.date)
+            history_days = len(unique_dates)
+    except Exception:
+        # En cas d'erreur, on laisse history_days à None
+        history_days = None
+
+    # Calculer le score de confiance avec la nouvelle fonction heuristique
+    confidence_score = _calculate_heuristic_confidence(date, history_days)
+
+    # Construire la réponse enrichie avec le format JSON demandé
+    result = {
+        "property_id": property_id,
+        "date": date,
+        "recommended_price": float(optimal_result.get("price", 0.0)),
+        "currency": "EUR",
+        
+        # Le champ critique pour l'hybridation
+        "confidence": confidence_score,
+        
+        "meta": {
+            "strategy": optimal_result.get("strategy", "unknown"),
+            "horizon_days": (datetime.strptime(date, "%Y-%m-%d").date() - datetime.now().date()).days,
+            "data_quality": "high" if confidence_score > 0.7 else "low",
+            "expected_revenue": optimal_result.get("expected_revenue"),
+            "predicted_demand": optimal_result.get("predicted_demand"),
+            "details": optimal_result.get("details", {}),
+        }
+    }
+
+    return result
 
 

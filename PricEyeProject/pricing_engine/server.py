@@ -83,6 +83,9 @@ def process_request(data):
         "status": "success",
         "propertyId": property_id,
         "price": result.get("price"),
+        "recommended_price": result.get("price"),  # Alias pour compatibilité
+        "confidence": result.get("confidence_score"),
+        "confidence_score": result.get("confidence_score"),  # Alias pour compatibilité
         "expected_revenue": result.get("expected_revenue"),
         "predicted_demand": result.get("predicted_demand"),
         "strategy": result.get("strategy"),
