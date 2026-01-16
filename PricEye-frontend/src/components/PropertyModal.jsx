@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { addProperty, updateProperty, syncPropertyData } from '../services/api.js';
 import { useLanguage } from '../contexts/LanguageContext.jsx';
 import TrialLimitModal from './TrialLimitModal.jsx';
@@ -90,6 +90,9 @@ function PropertyModal({ token, onClose, onSave, property, initialStep = 1 }) {
     // Champs existants pour compatibilité
     capacity: '',
     daily_revenue: '',
+    // Gestion des images
+    images: [],
+    previewImages: [],
   });
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -97,6 +100,7 @@ function PropertyModal({ token, onClose, onSave, property, initialStep = 1 }) {
   const [syncMessage, setSyncMessage] = useState('');
   const [showTrialLimitModal, setShowTrialLimitModal] = useState(false);
   const [trialLimitData, setTrialLimitData] = useState({ currentCount: 0, maxAllowed: 10 });
+  const imageUrlsRef = useRef([]); // Ref pour stocker les URLs d'objets créées
 
   const isEditing = !!property; 
   const totalSteps = 6; 
@@ -149,6 +153,9 @@ function PropertyModal({ token, onClose, onSave, property, initialStep = 1 }) {
         tax_info: property.tax_info || '',
         capacity: property.capacity || '',
         daily_revenue: property.daily_revenue || '',
+        // Gestion des images
+        images: [],
+        previewImages: property.images || [],
       });
     } else {
        setFormData({
@@ -163,6 +170,7 @@ function PropertyModal({ token, onClose, onSave, property, initialStep = 1 }) {
         smoking_allowed: false, pets_allowed: false, events_allowed: false, children_welcome: false, instant_booking: false,
         license_number: '', insurance: '', tax_info: '',
         capacity: '', daily_revenue: '100',
+        images: [], previewImages: [],
       });
     }
     setError('');
@@ -358,6 +366,65 @@ function PropertyModal({ token, onClose, onSave, property, initialStep = 1 }) {
     }
   };
 
+  // Fonctions de gestion des images
+  const handleImageUpload = (e) => {
+    const files = Array.from(e.target.files);
+    if (files.length > 0) {
+      // 1. Stocker les fichiers réels pour l'envoi futur
+      setFormData(prev => ({
+        ...prev,
+        images: [...(prev.images || []), ...files]
+      }));
+
+      // 2. Créer des URL locales pour la prévisualisation immédiate ("images provisoires")
+      const newPreviews = files.map(file => {
+        const url = URL.createObjectURL(file);
+        imageUrlsRef.current.push(url); // Stocker l'URL dans la ref
+        return url;
+      });
+      setFormData(prev => ({
+        ...prev,
+        previewImages: [...(prev.previewImages || []), ...newPreviews]
+      }));
+    }
+    // Réinitialiser l'input pour permettre de sélectionner à nouveau les mêmes fichiers
+    e.target.value = '';
+  };
+
+  const removeImage = (index) => {
+    setFormData(prev => {
+      const newImages = [...prev.images];
+      const newPreviews = [...prev.previewImages];
+      
+      // Libérer l'URL de l'objet pour éviter les fuites mémoire
+      if (newPreviews[index]) {
+        const urlToRemove = newPreviews[index];
+        URL.revokeObjectURL(urlToRemove);
+        // Retirer l'URL de la ref également
+        imageUrlsRef.current = imageUrlsRef.current.filter(url => url !== urlToRemove);
+      }
+      
+      newImages.splice(index, 1);
+      newPreviews.splice(index, 1);
+      return { ...prev, images: newImages, previewImages: newPreviews };
+    });
+  };
+
+  // Nettoyer les URLs d'objets lors du démontage du composant
+  useEffect(() => {
+    return () => {
+      // Nettoyer toutes les URLs stockées dans la ref
+      imageUrlsRef.current.forEach(url => {
+        try {
+          URL.revokeObjectURL(url);
+        } catch (error) {
+          console.warn('Erreur lors de la libération de l\'URL:', error);
+        }
+      });
+      imageUrlsRef.current = [];
+    };
+  }, []);
+
   const renderStepIndicator = () => {
     const steps = [
       t('propertyModal.steps.basicInfo'),
@@ -441,6 +508,49 @@ function PropertyModal({ token, onClose, onSave, property, initialStep = 1 }) {
                 <div>
                   <label htmlFor="capacity" className="block text-sm font-medium text-global-inactive">{t('propertyModal.capacity')}</label>
                   <input name="capacity" id="capacity" type="number" placeholder={t('propertyModal.capacity')} value={formData.capacity} onChange={handleChange} className="w-full bg-global-bg-small-box border border-global-stroke-box text-global-blanc p-2.5 rounded-[8px] mt-1 focus:outline-none focus:border-global-content-highlight-2nd transition-colors" required />
+                </div>
+                
+                {/* Section Images Provisoires */}
+                <div className="space-y-4">
+                  <label className="block text-sm font-medium text-global-inactive mb-2">
+                    Photos du logement
+                  </label>
+                  
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    {/* Bouton d'ajout */}
+                    <label className="border-2 border-dashed border-global-stroke-box rounded-xl flex flex-col items-center justify-center p-4 cursor-pointer hover:border-global-content-highlight-2nd hover:bg-global-bg-small-box/50 transition-all h-32">
+                      <span className="text-2xl text-global-inactive">+</span>
+                      <span className="text-xs text-global-inactive mt-2">Ajouter photos</span>
+                      <input 
+                        type="file" 
+                        multiple 
+                        accept="image/*" 
+                        className="hidden" 
+                        onChange={handleImageUpload} 
+                      />
+                    </label>
+
+                    {/* Affichage des images provisoires */}
+                    {formData.previewImages && formData.previewImages.map((src, index) => (
+                      <div key={index} className="relative group h-32">
+                        <img 
+                          src={src} 
+                          alt={`Aperçu ${index}`} 
+                          className="w-full h-full object-cover rounded-xl border border-global-stroke-box"
+                        />
+                        {/* Bouton supprimer au survol */}
+                        <button
+                          type="button"
+                          onClick={() => removeImage(index)}
+                          className="absolute top-1 right-1 bg-red-500/80 text-white rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity"
+                        >
+                          <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                          </svg>
+                        </button>
+                      </div>
+                    ))}
+                  </div>
                 </div>
           </div>
         );
