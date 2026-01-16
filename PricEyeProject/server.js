@@ -37,6 +37,9 @@ const { validatePrice: validatePriceSafety } = require('./utils/safety_guardrail
 // --- IMPORT DU MODULE DE PRICING DÉTERMINISTE (Fallback) ---
 const deterministicPricing = require('./utils/deterministic_pricing');
 
+// --- IMPORT DES UTILITAIRES DE DATES ---
+const { getDatesBetween } = require('./utils/dateUtils');
+
 // --- INITIALISATION DE SUPABASE ---
 const { supabase } = require('./config/supabase.js');
 console.log('✅ Connecté à Supabase avec succès.');
@@ -8381,16 +8384,8 @@ RAPPEL CRITIQUE : La réponse finale doit être UNIQUEMENT ce JSON, sans texte a
  */
 app.post('/api/pricing/recommend', authenticateToken, validatePricingRequest, async (req, res) => {
     const userId = req.user.uid;
-    const { property_id, room_type = 'default', date } = req.body;
+    const { property_id, room_type = 'default', date, dateRange, options } = req.body;
     
-    // Variables pour le logging final
-    let finalPrice = null;
-    let pricingSource = 'unknown'; // 'ai' | 'deterministic'
-    let wasAdjusted = false;
-    let adjustmentReason = null;
-    let rawPrice = null;
-    let propertyContext = null;
-
     try {
         // -----------------------------------------------------------
         // 1. VALIDATION ET SANITIZATION (Pare-feu entrée)
@@ -8398,15 +8393,30 @@ app.post('/api/pricing/recommend', authenticateToken, validatePricingRequest, as
         // Note: Le middleware validatePricingRequest a déjà fait une première sanitization
         // On fait une sanitization supplémentaire avec les fonctions strictes
         const safePropertyId = sanitizePropertyIdStrict(property_id);
-        const safeDate = sanitizeDateStrict(date);
-        const safeOptions = sanitizePricingParams({ room_type });
+        const safeOptions = sanitizePricingParams({ room_type, ...options });
 
-        // Vérification que les champs requis sont présents
-        if (!safeDate) {
+        // Support de deux formats : date unique (compatibilité) ou dateRange
+        let safeStartDate, safeEndDate;
+        if (dateRange && dateRange.start && dateRange.end) {
+            safeStartDate = sanitizeDateStrict(dateRange.start);
+            safeEndDate = sanitizeDateStrict(dateRange.end);
+        } else if (date) {
+            // Compatibilité : si date unique fournie, on crée une plage d'un jour
+            safeStartDate = sanitizeDateStrict(date);
+            safeEndDate = safeStartDate;
+        } else {
             return res.status(400).json({
                 status: 'error',
                 code: 'VALIDATION_ERROR',
-                message: 'date est requis'
+                message: 'date ou dateRange (avec start et end) est requis'
+            });
+        }
+
+        if (!safeStartDate || !safeEndDate) {
+            return res.status(400).json({
+                status: 'error',
+                code: 'VALIDATION_ERROR',
+                message: 'Dates invalides'
             });
         }
 
@@ -8443,103 +8453,138 @@ app.post('/api/pricing/recommend', authenticateToken, validatePricingRequest, as
         // -----------------------------------------------------------
         // 3. RÉCUPÉRATION DU CONTEXTE (Pour Safety Guardrails)
         // -----------------------------------------------------------
-        // On a besoin des min/max/base price de la propriété pour vérifier le prix
-        propertyContext = {
+        const propertyContext = {
             base_price: property.base_price || 100,
             min_price: property.min_price || property.floor_price || 0,
             max_price: property.max_price || property.ceiling_price || Infinity,
-            ...safeOptions // L'utilisateur peut surcharger temporairement via l'UI
+            ...safeOptions
         };
 
         // -----------------------------------------------------------
-        // 4. TENTATIVE DE PRICING IA (Python)
+        // 4. GÉNÉRATION DE LA LISTE DES JOURS
         // -----------------------------------------------------------
-        try {
-            // Appel au processus Python persistant (Rapide < 200ms)
-            const aiResult = await pricingBridge.getPricingPrediction({
-                propertyId: safePropertyId,
-                date: safeDate,
-                roomType: safeOptions.room_type || 'default',
-                // On passe les infos utiles au modèle pour éviter qu'il re-fetch tout
-                contextFeatures: { base_price: property.base_price } 
-            });
+        const allDates = getDatesBetween(safeStartDate, safeEndDate);
 
-            rawPrice = aiResult.price; // Prix brut sorti du modèle
-            pricingSource = 'ai';
-
-        } catch (aiError) {
-            console.warn(`⚠️ Échec IA (${aiError.message}). Bascule sur Fallback Déterministe.`);
-            
-            // ---------------------------------------------------------
-            // 5. FALLBACK DÉTERMINISTE (Si Python échoue)
-            // ---------------------------------------------------------
-            // Utilisation de votre algo JS existant
-            const detResult = await deterministicPricing.calculateDeterministicPrice({
-                property: property, 
-                date: safeDate,
+        // -----------------------------------------------------------
+        // 5. CALCUL DÉTERMINISTE POUR CHAQUE JOUR
+        // -----------------------------------------------------------
+        // L'algo est rapide, on peut boucler sans problème.
+        const dailyPricesAlgo = await Promise.all(allDates.map(async (dateStr) => {
+            const result = await deterministicPricing.calculateDeterministicPrice({
+                property: property,
+                date: dateStr,
                 city: property.city || '',
                 country: property.country || ''
             });
+            return { 
+                date: dateStr, 
+                price: result.price, 
+                details: result.reasoning || result.breakdown || {}
+            };
+        }));
+
+        // -----------------------------------------------------------
+        // 6. APPEL IA (Une seule fois pour obtenir un facteur global)
+        // -----------------------------------------------------------
+        // NOTE: Appeler Python 30 fois serait trop lent. On utilise l'IA pour donner la "Tendance".
+        let aiFactor = 1.0; // Neutre par défaut
+        let aiConfidence = 0;
+        let source = 'deterministic';
+
+        try {
+            // On utilise la première date (ou une date médiane) pour obtenir une tendance globale
+            const referenceDate = allDates[Math.floor(allDates.length / 2)] || allDates[0];
             
-            rawPrice = detResult.price || property.base_price;
-            pricingSource = 'deterministic';
+            const aiResult = await pricingBridge.getPricingPrediction({
+                propertyId: safePropertyId,
+                date: referenceDate,
+                roomType: safeOptions.room_type || 'default',
+                contextFeatures: { base_price: property.base_price }
+            });
+
+            // Calcul du facteur d'ajustement IA par rapport au prix de base
+            // Si l'IA dit 150€ et le prix de base est 100€, l'IA suggère +50% (Facteur 1.5)
+            if (aiResult && aiResult.price) {
+                aiFactor = aiResult.price / propertyContext.base_price;
+                aiConfidence = aiResult.confidence_score || aiResult.confidence || 0.5;
+                source = 'hybrid';
+            }
+        } catch (err) {
+            console.warn("IA non disponible, utilisation courbe déterministe pure:", err.message);
         }
 
         // -----------------------------------------------------------
-        // 6. SAFETY GUARDRAILS (Filet de sécurité final)
+        // 7. FUSION & CALCUL FINAL PAR JOUR
         // -----------------------------------------------------------
-        // Quelque soit la source (IA ou Algo), on vérifie que le prix n'est pas fou
-        const safetyCheck = validatePriceSafety(rawPrice, propertyContext);
+        const finalCalendar = dailyPricesAlgo.map(dayItem => {
+            // Prix Algo (qui contient déjà la logique Weekend/Saison)
+            const algoPrice = dayItem.price;
 
-        finalPrice = safetyCheck.safePrice;
-        wasAdjusted = safetyCheck.wasAdjusted;
-        adjustmentReason = safetyCheck.reason;
-
-        // -----------------------------------------------------------
-        // 7. LOGGING (Traçabilité)
-        // -----------------------------------------------------------
-        // On ne bloque pas la réponse pour le logging (fire and forget)
-        // Note: Assurez-vous que la table 'pricing_recommendations' existe
-        supabase.from('pricing_recommendations').insert({
-            property_id: safePropertyId,
-            user_id: userId,
-            room_type: safeOptions.room_type || 'default',
-            stay_date: safeDate,
-            recommended_price: finalPrice,
-            raw_price: rawPrice,
-            source: pricingSource,
-            is_adjusted: wasAdjusted,
-            adjustment_reason: adjustmentReason,
-            created_at: new Date().toISOString()
-        }).then(({ error }) => {
-            if (error) {
-                console.error(`[Pricing] Erreur logging pricing pour ${safePropertyId}:`, error);
-            } else {
-                console.log(`[Pricing] Recommandation loggée: ${safePropertyId} - ${finalPrice}€ (source: ${pricingSource})`);
+            // Prix Hybride : On applique le facteur IA pondéré par la confiance
+            // Formule : Prix = PrixAlgo * (1 + (VariationIA * Confiance))
+            // C'est une façon simple de dire : "Garde la forme de la courbe Algo (Weekends chers), mais monte/descend le niveau selon l'IA"
+            
+            let finalDailyPrice = algoPrice;
+            
+            if (source === 'hybrid') {
+                // Exemple : Algo dit 100 (lundi), IA facteur 1.2 (demande forte), Confiance 0.8
+                // Ajustement = 100 * (1 + (0.2 * 0.8)) = 100 * 1.16 = 116€
+                const adjustmentRatio = (aiFactor - 1) * aiConfidence;
+                finalDailyPrice = algoPrice * (1 + adjustmentRatio);
             }
+
+            // Guardrails (Min/Max)
+            const safety = validatePriceSafety(finalDailyPrice, propertyContext);
+
+            return {
+                date: dayItem.date,
+                price: safety.safePrice,
+                source: source,
+                is_adjusted: safety.wasAdjusted,
+                details: dayItem.details // Garde les infos "Pourquoi" (ex: "Weekend")
+            };
         });
 
         // -----------------------------------------------------------
-        // 8. RÉPONSE API (Format compatible avec l'ancien endpoint)
+        // 8. LOGGING (Traçabilité - pour chaque jour)
+        // -----------------------------------------------------------
+        // On log chaque jour dans la base (fire and forget)
+        finalCalendar.forEach(dayItem => {
+            supabase.from('pricing_recommendations').insert({
+                property_id: safePropertyId,
+                user_id: userId,
+                room_type: safeOptions.room_type || 'default',
+                stay_date: dayItem.date,
+                recommended_price: dayItem.price,
+                raw_price: dayItem.price, // Pour simplifier, on met le même prix
+                source: dayItem.source,
+                is_adjusted: dayItem.is_adjusted,
+                adjustment_reason: dayItem.is_adjusted ? 'Ajusté par guardrails' : null,
+                created_at: new Date().toISOString()
+            }).then(({ error }) => {
+                if (error) {
+                    console.error(`[Pricing] Erreur logging pricing pour ${safePropertyId} - ${dayItem.date}:`, error);
+                }
+            });
+        });
+
+        // -----------------------------------------------------------
+        // 9. RÉPONSE API
         // -----------------------------------------------------------
         return res.status(200).json({
-            recommended_price: finalPrice,
-            expected_revenue: null,
-            predicted_demand: null,
-            strategy: pricingSource === 'ai' ? 'ai_recommendation' : 'deterministic_fallback',
-            fallback_used: pricingSource === 'deterministic',
-            model_available: pricingSource === 'ai',
-            is_adjusted: wasAdjusted,
-            adjustment_reason: adjustmentReason,
-            raw: {
-                price: rawPrice,
-                source: pricingSource,
-                details: {
-                    raw_price: rawPrice,
-                    reason: adjustmentReason
+            status: 'success',
+            data: {
+                // On renvoie le tableau complet
+                calendar: finalCalendar,
+                // On garde un résumé global pour la compatibilité
+                summary: {
+                    average_price: Math.round(finalCalendar.reduce((acc, d) => acc + d.price, 0) / finalCalendar.length),
+                    currency: 'EUR',
+                    source: source
                 }
             }
         });
+
     } catch (error) {
         // Gestion des erreurs de validation (400) vs erreurs serveur (500)
         if (error instanceof InputValidationError) {
