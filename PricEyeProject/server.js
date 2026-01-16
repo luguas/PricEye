@@ -16,6 +16,7 @@ const PYTHON_COMMAND = process.platform === 'win32' ? 'python' : 'python3';
 // --- IMPORT DES UTILITAIRES DE SANITISATION ---
 const { sanitizeForPrompt, validateAndSanitizeDate, validateDateRange, validateDateFormat, validateNumber, sanitizeNumber, sanitizeArray, validateStringLength, sanitizeUrl, sanitizeFilename, safeJSONStringify, validatePropertyObject, validatePropertyId, validatePrice, validatePercentage, validateCapacity, validateInteger, validateEnum, validateTimezone } = require('./utils/promptSanitizer');
 const { ALLOWED_STRATEGIES } = require('./utils/whitelists');
+const { sanitizePropertyId: sanitizePropertyIdStrict, sanitizeDate: sanitizeDateStrict, sanitizePricingParams, ValidationError: InputValidationError } = require('./utils/input_sanitizer');
 
 // --- IMPORT DU SYSTÈME DE MONITORING DES INJECTIONS ---
 const { 
@@ -25,8 +26,16 @@ const {
     analyzeInput 
 } = require('./utils/injectionMonitor');
 
-// --- IMPORT DU BRIDGE PRICING ENGINE ---
-const pricingBridge = require('./pricing_engine_bridge');
+// --- IMPORT DU BRIDGE PRICING ENGINE (Processus Persistant) ---
+const pricingBridge = require('./utils/pythonBridge');
+// Fallback vers l'ancien bridge pour simulatePrices si nécessaire
+const oldPricingBridge = require('./pricing_engine_bridge');
+
+// --- IMPORT DU MODULE DE SÉCURITÉ POUR LES PRIX ---
+const { validatePrice: validatePriceSafety } = require('./utils/safety_guardrails');
+
+// --- IMPORT DU MODULE DE PRICING DÉTERMINISTE (Fallback) ---
+const deterministicPricing = require('./utils/deterministic_pricing');
 
 // --- INITIALISATION DE SUPABASE ---
 const { supabase } = require('./config/supabase.js');
@@ -155,6 +164,101 @@ const authenticateToken = async (req, res, next) => {
         console.error('Erreur de vérification du jeton:', error);
         res.status(403).send({ error: 'Jeton invalide ou expiré.' });
     }
+};
+
+/**
+ * Middleware Express pour valider et sanitizer les requêtes de pricing
+ * Valide propertyId, dates, et paramètres optionnels selon une whitelist stricte
+ * Remplace req.body par une version sécurisée
+ */
+const validatePricingRequest = (req, res, next) => {
+  try {
+    const { property_id, propertyId, date, startDate, endDate, ...otherParams } = req.body;
+
+    // Support des deux formats: property_id et propertyId
+    const propertyIdToValidate = property_id || propertyId;
+    
+    // 1. Validation ID
+    const safePropertyId = sanitizePropertyIdStrict(propertyIdToValidate);
+
+    // 2. Validation Date (pour /api/pricing/recommend et /api/pricing/simulate)
+    let safeDate = null;
+    if (date) {
+      safeDate = sanitizeDateStrict(date);
+    }
+
+    // 3. Validation Dates de plage (pour les futures routes avec dateRange)
+    let safeStartDate = null;
+    let safeEndDate = null;
+    if (startDate) {
+      safeStartDate = sanitizeDateStrict(startDate);
+    }
+    if (endDate) {
+      safeEndDate = sanitizeDateStrict(endDate);
+      // Vérifier que la date de fin est après la date de début
+      if (safeStartDate && safeEndDate < safeStartDate) {
+        throw new InputValidationError("La date de fin doit être après la date de début.", "endDate");
+      }
+    }
+
+    // 4. Validation Paramètres optionnels (Whitelist)
+    const safeParams = sanitizePricingParams(otherParams);
+
+    // 5. Remplacement du body par les données sécurisées
+    // On écrase req.body pour être sûr que le contrôleur suivant n'utilise QUE des données propres
+    const sanitizedBody = {
+      property_id: safePropertyId,
+      propertyId: safePropertyId, // Support des deux formats
+    };
+
+    if (safeDate) {
+      sanitizedBody.date = safeDate;
+    }
+
+    if (safeStartDate || safeEndDate) {
+      sanitizedBody.dateRange = {};
+      if (safeStartDate) sanitizedBody.dateRange.start = safeStartDate;
+      if (safeEndDate) sanitizedBody.dateRange.end = safeEndDate;
+    }
+
+    // Ajouter les paramètres optionnels sanitizés
+    Object.assign(sanitizedBody, safeParams);
+
+    // Préserver les champs spéciaux qui ne sont pas dans la whitelist mais nécessaires
+    // (ex: room_type, price_grid pour simulate)
+    if (otherParams.room_type && typeof otherParams.room_type === 'string') {
+      sanitizedBody.room_type = otherParams.room_type.trim();
+    }
+    if (Array.isArray(otherParams.price_grid)) {
+      // Validation basique de la grille de prix (nombres positifs)
+      const validPriceGrid = otherParams.price_grid
+        .map(p => parseFloat(p))
+        .filter(p => !isNaN(p) && p > 0 && p < 100000);
+      if (validPriceGrid.length > 0) {
+        sanitizedBody.price_grid = validPriceGrid;
+      }
+    }
+
+    req.body = sanitizedBody;
+    next();
+
+  } catch (error) {
+    if (error instanceof InputValidationError) {
+      return res.status(400).json({
+        status: 'error',
+        code: 'VALIDATION_ERROR',
+        field: error.field,
+        message: error.message
+      });
+    }
+    // Erreur technique imprévue
+    console.error("Erreur Sanitization:", error);
+    return res.status(500).json({ 
+      status: 'error',
+      code: 'INTERNAL_ERROR',
+      message: "Erreur interne lors de la validation des données." 
+    });
+  }
 };
 
 // Importer les helpers Supabase
@@ -8072,15 +8176,25 @@ RAPPEL CRITIQUE : La réponse finale doit être UNIQUEMENT ce JSON, sans texte a
                     }
                 } else {
                     // Adapter le nouveau format (calendar) en daily_prices pour le reste du backend
+                    // Utiliser safety_guardrails dès l'extraction pour sécuriser les prix de l'IA
                     const daily_prices = iaResult.calendar.map(day => {
                         const rawPrice = day.final_suggested_price;
-                        let priceNum = Number(rawPrice);
-                        if (isNaN(priceNum)) {
-                            priceNum = property.base_price;
+                        // Validation initiale avec safety_guardrails
+                        const validationResult = validatePriceSafety(rawPrice, {
+                            base_price: property.base_price,
+                            min_price: property.floor_price || 0,
+                            max_price: property.ceiling_price || Infinity,
+                            allow_override: false,
+                            sanity_threshold: 0.5
+                        });
+                        
+                        if (validationResult.wasAdjusted) {
+                            console.log(`[SAFETY_GUARD] Prix IA ajusté pour ${day.date}: ${rawPrice} → ${validationResult.safePrice} (${validationResult.reason})`);
                         }
+                        
                         return {
                             date: day.date,
-                            price: priceNum,
+                            price: validationResult.safePrice,
                             reason: day.reasoning || "Tarification IA dynamique"
                         };
                     });
@@ -8149,33 +8263,31 @@ RAPPEL CRITIQUE : La réponse finale doit être UNIQUEMENT ce JSON, sans texte a
         });
         console.log(`Trouvé ${lockedPrices.size} prix verrouillés pour ${id}. Ils ne seront pas modifiés.`);
 
-        // Préparer les overrides à sauvegarder
+        // Préparer les overrides à sauvegarder avec validation via safety_guardrails
         const overridesToSave = [];
         for (const day of strategyResult.daily_prices) {
-            const priceNum = Number(day.price);
-            if (isNaN(priceNum)) {
-                console.warn(`Prix invalide reçu pour ${day.date}: ${day.price}. Utilisation du prix plancher.`);
-                continue;
-            }
-             
+            // Ignorer les prix verrouillés
             if (lockedPrices.has(day.date)) {
                 console.log(`Ignoré ${day.date}: prix verrouillé manuellement.`);
                 continue; 
             }
 
-            let finalPrice = priceNum;
-            if (priceNum < floor) {
-                console.warn(`Prix ${priceNum}€ pour ${day.date} inférieur au plancher ${floor}€. Ajustement.`);
-                finalPrice = floor;
-            }
-            if (ceiling != null && priceNum > ceiling) {
-                console.warn(`Prix ${priceNum}€ pour ${day.date} supérieur au plafond ${ceiling}€. Ajustement.`);
-                finalPrice = ceiling;
+            // Utiliser le module safety_guardrails pour valider et sécuriser le prix
+            const validationResult = validatePriceSafety(day.price, {
+                base_price: property.base_price,
+                min_price: floor || 0,
+                max_price: ceiling || Infinity,
+                allow_override: false,
+                sanity_threshold: 0.5 // 50% de variation max par défaut
+            });
+
+            if (validationResult.wasAdjusted) {
+                console.log(`[SAFETY_GUARD] Prix ajusté pour ${day.date}: ${day.price} → ${validationResult.safePrice} (${validationResult.reason})`);
             }
             
             overridesToSave.push({
                 date: day.date,
-                price: finalPrice,
+                price: validationResult.safePrice,
                 reason: day.reason || (strategyResult.method === 'deterministic' ? "Tarification basée sur données marché" : "Stratégie IA"),
                 isLocked: false,
                 updatedBy: req.user.uid
@@ -8261,277 +8373,189 @@ RAPPEL CRITIQUE : La réponse finale doit être UNIQUEMENT ce JSON, sans texte a
 /**
  * POST /api/pricing/recommend
  * Retourne un prix recommandé par le moteur de pricing IA pour une propriété / date donnée.
+ * 
+ * Cette version intègre les trois couches de sécurité :
+ * 1. Sanitizer (validation et nettoyage des entrées)
+ * 2. Bridge (communication avec le processus Python persistant)
+ * 3. Guardrails (validation finale du prix avant retour)
  */
-app.post('/api/pricing/recommend', authenticateToken, async (req, res) => {
+app.post('/api/pricing/recommend', authenticateToken, validatePricingRequest, async (req, res) => {
+    const userId = req.user.uid;
+    const { property_id, room_type = 'default', date } = req.body;
+    
+    // Variables pour le logging final
+    let finalPrice = null;
+    let pricingSource = 'unknown'; // 'ai' | 'deterministic'
+    let wasAdjusted = false;
+    let adjustmentReason = null;
+    let rawPrice = null;
+    let propertyContext = null;
+
     try {
-        const userId = req.user.uid;
-        const { property_id, room_type = 'default', date } = req.body || {};
+        // -----------------------------------------------------------
+        // 1. VALIDATION ET SANITIZATION (Pare-feu entrée)
+        // -----------------------------------------------------------
+        // Note: Le middleware validatePricingRequest a déjà fait une première sanitization
+        // On fait une sanitization supplémentaire avec les fonctions strictes
+        const safePropertyId = sanitizePropertyIdStrict(property_id);
+        const safeDate = sanitizeDateStrict(date);
+        const safeOptions = sanitizePricingParams({ room_type });
 
-        if (!property_id || !date) {
+        // Vérification que les champs requis sont présents
+        if (!safeDate) {
             return res.status(400).json({
-                error: 'Paramètres manquants',
-                message: 'property_id et date sont requis'
+                status: 'error',
+                code: 'VALIDATION_ERROR',
+                message: 'date est requis'
             });
         }
 
-        try {
-            validatePropertyId(property_id, 'propertyId', userId);
-        } catch (validationError) {
-            console.error(`[Validation Error] [Endpoint: /api/pricing/recommend] [userId: ${userId}] ${validationError.message}`);
-            return res.status(400).json({
-                error: 'Validation échouée',
-                message: validationError.message
-            });
-        }
-
-        const property = await db.getProperty(property_id);
+        // -----------------------------------------------------------
+        // 2. VÉRIFICATION DES PERMISSIONS UTILISATEUR
+        // -----------------------------------------------------------
+        const property = await db.getProperty(safePropertyId);
         if (!property) {
-            return res.status(404).json({ error: 'Propriété non trouvée.' });
+            return res.status(404).json({ 
+                status: 'error',
+                code: 'PROPERTY_NOT_FOUND',
+                message: 'Propriété non trouvée.' 
+            });
         }
 
         const userProfile = await db.getUser(userId);
         if (!userProfile) {
-            return res.status(404).json({ error: 'Profil utilisateur non trouvé.' });
+            return res.status(404).json({ 
+                status: 'error',
+                code: 'USER_NOT_FOUND',
+                message: 'Profil utilisateur non trouvé.' 
+            });
         }
 
         const propertyTeamId = property.team_id || property.owner_id;
         if (userProfile.team_id !== propertyTeamId) {
-            return res.status(403).json({ error: 'Action non autorisée sur cette propriété (pas dans la bonne équipe).' });
+            return res.status(403).json({ 
+                status: 'error',
+                code: 'UNAUTHORIZED',
+                message: 'Action non autorisée sur cette propriété (pas dans la bonne équipe).' 
+            });
         }
 
-        // Vérifier si un modèle existe pour cette propriété
-        const modelExists = await pricingBridge.checkModelExists(property_id);
-        
-        // Mesurer le temps de computation (inclut tout le processus jusqu'à la recommandation finale)
-        const computationStartTime = Date.now();
-        
-        // Utiliser le bridge pour obtenir la recommandation
-        let recommendation = null;
-        let fallbackUsed = false;
-        let fallbackReason = null;
-        
-        if (modelExists) {
-            console.log(`[Pricing IA] [${property_id}] Modèle détecté, tentative de recommandation IA pour ${date}`);
-            recommendation = await pricingBridge.getRecommendedPrice(
-                property_id,
-                date,
-                room_type
-            );
-        } else {
-            console.log(`[Pricing IA] [${property_id}] Aucun modèle entraîné détecté, utilisation directe du fallback déterministe`);
-            fallbackReason = 'Modèle IA non entraîné pour cette propriété';
-        }
-
-        // Si le bridge retourne null (modèle non trouvé, erreur, etc.), utiliser le pricing déterministe comme fallback
-        if (!recommendation) {
-            if (!fallbackReason) {
-                fallbackReason = 'Modèle IA non disponible ou erreur lors de la prédiction';
-            }
-            
-            console.log(`[Pricing IA] [${property_id}] ${fallbackReason}, utilisation du pricing déterministe comme fallback`);
-            fallbackUsed = true;
-            
-            try {
-                const deterministicPricing = require('./utils/deterministic_pricing');
-                const deterministicResult = await deterministicPricing.calculateDeterministicPrice({
-                    property: property,
-                    date: date,
-                    city: property.city || '',
-                    country: property.country || ''
-                });
-                
-                recommendation = {
-                    price: deterministicResult.price,
-                    expected_revenue: null,
-                    predicted_demand: null,
-                    strategy: 'deterministic_fallback',
-                    details: {
-                        reason: fallbackReason,
-                        breakdown: deterministicResult.breakdown,
-                        reasoning: deterministicResult.reasoning,
-                        model_available: modelExists
-                    }
-                };
-                
-                console.log(`[Pricing IA] [${property_id}] Fallback déterministe réussi: prix ${deterministicResult.price}`);
-            } catch (fallbackError) {
-                console.error(`[Pricing IA] [${property_id}] Erreur lors du fallback déterministe:`, fallbackError);
-                console.error(`[Pricing IA] [${property_id}] Stack trace:`, fallbackError.stack);
-                
-                // Dernier recours : utiliser le prix de base de la propriété
-                const basePrice = property.base_price || 100;
-                recommendation = {
-                    price: basePrice,
-                    expected_revenue: null,
-                    predicted_demand: null,
-                    strategy: 'base_price_fallback',
-                    details: {
-                        reason: `Erreur lors du fallback déterministe: ${fallbackError.message}. Utilisation du prix de base.`,
-                        original_fallback_reason: fallbackReason,
-                        model_available: modelExists
-                    }
-                };
-                
-                console.log(`[Pricing IA] [${property_id}] Utilisation du prix de base: ${basePrice}`);
-            }
-        } else {
-            console.log(`[Pricing IA] [${property_id}] Recommandation IA réussie: prix ${recommendation.price}, stratégie ${recommendation.strategy}`);
-        }
-
-        // Calculer le temps de computation total (inclut tout le processus jusqu'à la recommandation finale)
-        const computationTime = Date.now() - computationStartTime;
-
-        // Préparer le contexte enrichi pour le logging
-        
-        // Récupérer la version du modèle si disponible
-        let modelVersion = null;
-        if (!fallbackUsed && modelExists) {
-            try {
-                const { data: latestMetrics } = await supabase
-                    .from('pricing_model_metrics')
-                    .select('model_version')
-                    .eq('property_id', property_id)
-                    .order('trained_at', { ascending: false })
-                    .limit(1)
-                    .single();
-                
-                if (latestMetrics) {
-                    modelVersion = latestMetrics.model_version;
-                }
-            } catch (e) {
-                // Ignorer l'erreur, modelVersion reste null
-            }
-        }
-
-        // Vérifier si les features marché sont disponibles
-        let marketFeaturesAvailable = false;
-        try {
-            const { data: marketFeatures } = await supabase
-                .from('features_pricing_daily')
-                .select('id')
-                .eq('property_id', property_id)
-                .eq('date', date)
-                .limit(1);
-            
-            marketFeaturesAvailable = marketFeatures && marketFeatures.length > 0;
-        } catch (e) {
-            // Ignorer l'erreur, marketFeaturesAvailable reste false
-        }
-
-        // Calculer la capacité restante si disponible
-        let capacity_remaining = null;
-        try {
-            // Essayer de récupérer depuis les détails de la recommandation
-            if (recommendation.details && recommendation.details.capacity_remaining !== undefined) {
-                capacity_remaining = recommendation.details.capacity_remaining;
-            } else {
-                // Sinon, essayer de la calculer depuis les données de la propriété
-                // Récupérer les réservations pour cette date
-                const { data: bookings } = await supabase
-                    .from('bookings')
-                    .select('id')
-                    .eq('property_id', property_id)
-                    .eq('check_in_date', date)
-                    .eq('status', 'confirmed');
-                
-                const bookingsCount = bookings ? bookings.length : 0;
-                
-                // Récupérer la capacité de la propriété
-                const propertyCapacity = property.max_guests || property.capacity || null;
-                
-                if (propertyCapacity !== null) {
-                    capacity_remaining = Math.max(propertyCapacity - bookingsCount, 0);
-                }
-            }
-        } catch (e) {
-            // Ignorer l'erreur, capacity_remaining reste null
-            console.warn(`[Pricing IA] [${property_id}] Impossible de calculer capacity_remaining:`, e.message);
-        }
-
-        // Construire le contexte enrichi
-        const enrichedContext = {
-            ...(recommendation.details || {}),
-            model_used: fallbackUsed ? 'deterministic' : 'ia',
-            model_version: modelVersion,
-            model_available: modelExists,
-            capacity_remaining: capacity_remaining,
-            market_features_available: marketFeaturesAvailable,
-            computation_time_ms: computationTime,
-            fallback_used: fallbackUsed,
-            fallback_reason: fallbackReason || null
+        // -----------------------------------------------------------
+        // 3. RÉCUPÉRATION DU CONTEXTE (Pour Safety Guardrails)
+        // -----------------------------------------------------------
+        // On a besoin des min/max/base price de la propriété pour vérifier le prix
+        propertyContext = {
+            base_price: property.base_price || 100,
+            min_price: property.min_price || property.floor_price || 0,
+            max_price: property.max_price || property.ceiling_price || Infinity,
+            ...safeOptions // L'utilisateur peut surcharger temporairement via l'UI
         };
 
-        // Log dans pricing_recommendations avec gestion d'erreur robuste
+        // -----------------------------------------------------------
+        // 4. TENTATIVE DE PRICING IA (Python)
+        // -----------------------------------------------------------
         try {
-            const { error: logError, data: logData } = await supabase
-                .from('pricing_recommendations')
-                .insert({
-                    property_id: property_id,
-                    user_id: userId,
-                    room_type: room_type,
-                    stay_date: date,
-                    recommended_price: recommendation.price,
-                    expected_revenue: recommendation.expected_revenue || null,
-                    predicted_demand: recommendation.predicted_demand || null,
-                    strategy: recommendation.strategy || null,
-                    context: enrichedContext
-                })
-                .select()
-                .single();
+            // Appel au processus Python persistant (Rapide < 200ms)
+            const aiResult = await pricingBridge.getPricingPrediction({
+                propertyId: safePropertyId,
+                date: safeDate,
+                roomType: safeOptions.room_type || 'default',
+                // On passe les infos utiles au modèle pour éviter qu'il re-fetch tout
+                contextFeatures: { base_price: property.base_price } 
+            });
 
-            if (logError) {
-                console.error(`[Pricing IA] [${property_id}] Erreur lors du logging dans pricing_recommendations:`, logError);
-                console.error(`[Pricing IA] [${property_id}] Détails de l'erreur:`, JSON.stringify(logError, null, 2));
-                // Ne pas faire échouer la requête si le logging échoue
+            rawPrice = aiResult.price; // Prix brut sorti du modèle
+            pricingSource = 'ai';
+
+        } catch (aiError) {
+            console.warn(`⚠️ Échec IA (${aiError.message}). Bascule sur Fallback Déterministe.`);
+            
+            // ---------------------------------------------------------
+            // 5. FALLBACK DÉTERMINISTE (Si Python échoue)
+            // ---------------------------------------------------------
+            // Utilisation de votre algo JS existant
+            const detResult = await deterministicPricing.calculateDeterministicPrice({
+                property: property, 
+                date: safeDate,
+                city: property.city || '',
+                country: property.country || ''
+            });
+            
+            rawPrice = detResult.price || property.base_price;
+            pricingSource = 'deterministic';
+        }
+
+        // -----------------------------------------------------------
+        // 6. SAFETY GUARDRAILS (Filet de sécurité final)
+        // -----------------------------------------------------------
+        // Quelque soit la source (IA ou Algo), on vérifie que le prix n'est pas fou
+        const safetyCheck = validatePriceSafety(rawPrice, propertyContext);
+
+        finalPrice = safetyCheck.safePrice;
+        wasAdjusted = safetyCheck.wasAdjusted;
+        adjustmentReason = safetyCheck.reason;
+
+        // -----------------------------------------------------------
+        // 7. LOGGING (Traçabilité)
+        // -----------------------------------------------------------
+        // On ne bloque pas la réponse pour le logging (fire and forget)
+        // Note: Assurez-vous que la table 'pricing_recommendations' existe
+        supabase.from('pricing_recommendations').insert({
+            property_id: safePropertyId,
+            user_id: userId,
+            room_type: safeOptions.room_type || 'default',
+            stay_date: safeDate,
+            recommended_price: finalPrice,
+            raw_price: rawPrice,
+            source: pricingSource,
+            is_adjusted: wasAdjusted,
+            adjustment_reason: adjustmentReason,
+            created_at: new Date().toISOString()
+        }).then(({ error }) => {
+            if (error) {
+                console.error(`[Pricing] Erreur logging pricing pour ${safePropertyId}:`, error);
             } else {
-                console.log(`[Pricing IA] [${property_id}] Recommandation loggée avec succès (strategy: ${recommendation.strategy}, id: ${logData?.id})`);
+                console.log(`[Pricing] Recommandation loggée: ${safePropertyId} - ${finalPrice}€ (source: ${pricingSource})`);
             }
-        } catch (logError) {
-            // Gestion d'erreur robuste : ne pas faire échouer la requête
-            console.error(`[Pricing IA] [${property_id}] Exception lors du logging dans pricing_recommendations:`, logError);
-            console.error(`[Pricing IA] [${property_id}] Stack trace:`, logError.stack);
-            // Optionnel : envoyer une alerte si le logging échoue trop souvent
-            // (à implémenter avec un système de monitoring)
-        }
+        });
 
-        // Préparer la réponse avec des informations sur le fallback si utilisé
-        const response = {
-            recommended_price: recommendation.price,
-            expected_revenue: recommendation.expected_revenue,
-            predicted_demand: recommendation.predicted_demand,
-            strategy: recommendation.strategy,
-            fallback_used: fallbackUsed,
-            model_available: modelExists,
-            raw: recommendation
-        };
-
-        // Ajouter un message informatif si un fallback a été utilisé
-        if (fallbackUsed) {
-            response.message = fallbackReason || 'Modèle IA non disponible, prix calculé avec le système déterministe';
-        }
-
-        return res.status(200).json(response);
+        // -----------------------------------------------------------
+        // 8. RÉPONSE API (Format compatible avec l'ancien endpoint)
+        // -----------------------------------------------------------
+        return res.status(200).json({
+            recommended_price: finalPrice,
+            expected_revenue: null,
+            predicted_demand: null,
+            strategy: pricingSource === 'ai' ? 'ai_recommendation' : 'deterministic_fallback',
+            fallback_used: pricingSource === 'deterministic',
+            model_available: pricingSource === 'ai',
+            is_adjusted: wasAdjusted,
+            adjustment_reason: adjustmentReason,
+            raw: {
+                price: rawPrice,
+                source: pricingSource,
+                details: {
+                    raw_price: rawPrice,
+                    reason: adjustmentReason
+                }
+            }
+        });
     } catch (error) {
-        console.error(`[Pricing IA] [${req.body?.property_id || 'unknown'}] Erreur dans /api/pricing/recommend:`, error);
-        console.error(`[Pricing IA] Stack trace:`, error.stack);
-        
-        // Détecter le type d'erreur pour un code HTTP approprié
-        let statusCode = 500;
-        let errorMessage = 'Erreur interne du serveur lors de la recommandation de prix';
-        
-        if (error.message && error.message.includes('validation')) {
-            statusCode = 400;
-            errorMessage = 'Erreur de validation: ' + error.message;
-        } else if (error.message && error.message.includes('not found')) {
-            statusCode = 404;
-            errorMessage = 'Ressource non trouvée: ' + error.message;
+        // Gestion des erreurs de validation (400) vs erreurs serveur (500)
+        if (error instanceof InputValidationError) {
+            return res.status(400).json({
+                status: 'error',
+                code: 'VALIDATION_ERROR',
+                message: error.message,
+                field: error.field
+            });
         }
-        
-        return res.status(statusCode).json({
-            error: errorMessage,
-            message: error.message,
-            property_id: req.body?.property_id || null,
-            date: req.body?.date || null
+
+        console.error(`[Pricing] Erreur critique endpoint pricing pour ${property_id || 'unknown'}:`, error);
+        return res.status(500).json({
+            status: 'error',
+            code: 'INTERNAL_ERROR',
+            message: 'Erreur interne du moteur de pricing.'
         });
     }
 });
@@ -8540,25 +8564,25 @@ app.post('/api/pricing/recommend', authenticateToken, async (req, res) => {
  * POST /api/pricing/simulate
  * Simule la demande et le revenu pour une grille de prix.
  */
-app.post('/api/pricing/simulate', authenticateToken, async (req, res) => {
+app.post('/api/pricing/simulate', authenticateToken, validatePricingRequest, async (req, res) => {
     try {
         const userId = req.user.uid;
-        const { property_id, room_type = 'default', date, price_grid } = req.body || {};
+        // req.body est déjà sanitizé par validatePricingRequest
+        const { property_id, room_type = 'default', date, price_grid } = req.body;
 
-        if (!property_id || !date || !Array.isArray(price_grid) || price_grid.length === 0) {
+        // Vérification que les champs requis sont présents (après sanitization)
+        if (!date) {
             return res.status(400).json({
                 error: 'Paramètres manquants',
-                message: 'property_id, date et price_grid non vide sont requis'
+                message: 'date est requis'
             });
         }
 
-        try {
-            validatePropertyId(property_id, 'propertyId', userId);
-        } catch (validationError) {
-            console.error(`[Validation Error] [Endpoint: /api/pricing/simulate] [userId: ${userId}] ${validationError.message}`);
+        // Vérification que price_grid est présent et valide (déjà validé par le middleware mais on vérifie quand même)
+        if (!Array.isArray(price_grid) || price_grid.length === 0) {
             return res.status(400).json({
-                error: 'Validation échouée',
-                message: validationError.message
+                error: 'Paramètres manquants',
+                message: 'price_grid non vide est requis'
             });
         }
 
@@ -8604,13 +8628,24 @@ app.post('/api/pricing/simulate', authenticateToken, async (req, res) => {
         // Mesurer le temps de computation
         const simulationStartTime = Date.now();
         
-        // Utiliser le bridge pour la simulation
+        // Utiliser le nouveau bridge persistant pour la simulation
         let simulations = await pricingBridge.simulatePrices(
             property_id,
             date,
             price_grid,
             room_type
         );
+        
+        // Fallback vers l'ancien bridge si le nouveau bridge ne supporte pas encore simulatePrices
+        if (simulations === null) {
+            console.log(`[Pricing IA] [${property_id}] Nouveau bridge ne supporte pas encore simulatePrices, utilisation de l'ancien bridge`);
+            simulations = await oldPricingBridge.simulatePrices(
+                property_id,
+                date,
+                price_grid,
+                room_type
+            );
+        }
         
         const simulationComputationTime = Date.now() - simulationStartTime;
 
@@ -10130,15 +10165,25 @@ RAPPEL CRITIQUE : La réponse finale doit être UNIQUEMENT ce JSON, sans texte a
         }
 
         // Adapter le nouveau format (calendar) en daily_prices pour le reste du backend
+        // Utiliser safety_guardrails dès l'extraction pour sécuriser les prix de l'IA
         const daily_prices = iaResult.calendar.map(day => {
             const rawPrice = day.final_suggested_price;
-            let priceNum = Number(rawPrice);
-            if (isNaN(priceNum)) {
-                priceNum = property.base_price;
+            // Validation initiale avec safety_guardrails
+            const validationResult = validatePriceSafety(rawPrice, {
+                base_price: property.base_price,
+                min_price: property.floor_price || 0,
+                max_price: property.ceiling_price || Infinity,
+                allow_override: false,
+                sanity_threshold: 0.5
+            });
+            
+            if (validationResult.wasAdjusted) {
+                console.log(`[Auto-Pricing] [SAFETY_GUARD] Prix IA ajusté pour ${day.date}: ${rawPrice} → ${validationResult.safePrice} (${validationResult.reason})`);
             }
+            
             return {
                 date: day.date,
-                price: priceNum,
+                price: validationResult.safePrice,
                 reason: day.reasoning || "Tarification IA dynamique (auto)"
             };
         });
@@ -10192,31 +10237,31 @@ RAPPEL CRITIQUE : La réponse finale doit être UNIQUEMENT ce JSON, sans texte a
             }
         });
 
-        // Préparer les overrides à sauvegarder
+        // Préparer les overrides à sauvegarder avec validation via safety_guardrails
         const overridesToSave = [];
         let pricesApplied = 0;
         for (const day of strategyResult.daily_prices) {
-            const priceNum = Number(day.price);
-            if (isNaN(priceNum)) {
-                console.warn(`[Auto-Pricing] Prix invalide pour ${propertyId} - ${day.date}: ${day.price}. Ignoré.`);
-                continue;
-            }
-
+            // Ignorer les prix verrouillés
             if (lockedPrices.has(day.date)) {
                 continue; // Ignorer les prix verrouillés
             }
 
-            let finalPrice = priceNum;
-            if (priceNum < floor) {
-                finalPrice = floor;
-            }
-            if (ceiling != null && priceNum > ceiling) {
-                finalPrice = ceiling;
+            // Utiliser le module safety_guardrails pour valider et sécuriser le prix
+            const validationResult = validatePriceSafety(day.price, {
+                base_price: property.base_price,
+                min_price: floor || 0,
+                max_price: ceiling || Infinity,
+                allow_override: false,
+                sanity_threshold: 0.5 // 50% de variation max par défaut
+            });
+
+            if (validationResult.wasAdjusted) {
+                console.log(`[Auto-Pricing] [SAFETY_GUARD] Prix ajusté pour ${propertyId} - ${day.date}: ${day.price} → ${validationResult.safePrice} (${validationResult.reason})`);
             }
 
             overridesToSave.push({
                 date: day.date,
-                price: finalPrice,
+                price: validationResult.safePrice,
                 reason: day.reason || "Stratégie IA (Auto)",
                 isLocked: false,
                 updatedBy: userId
