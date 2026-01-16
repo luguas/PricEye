@@ -8422,13 +8422,19 @@ app.post('/api/pricing/recommend', authenticateToken, validatePricingRequest, as
 
         // -----------------------------------------------------------
         // 2. VÉRIFICATION DES PERMISSIONS UTILISATEUR
+        // CORRECTION 1 : On récupère city et country pour que l'algo puisse chercher la météo/événements
         // -----------------------------------------------------------
-        const property = await db.getProperty(safePropertyId);
-        if (!property) {
+        const { data: property, error: propError } = await supabase
+            .from('properties')
+            .select('id, base_price, min_price, max_price, name, city, country, weekend_markup_percent, floor_price, ceiling_price, strategy, team_id, owner_id')
+            .eq('id', safePropertyId)
+            .single();
+
+        if (propError || !property) {
             return res.status(404).json({ 
                 status: 'error',
                 code: 'PROPERTY_NOT_FOUND',
-                message: 'Propriété non trouvée.' 
+                message: 'Propriété introuvable.' 
             });
         }
 
@@ -8467,14 +8473,15 @@ app.post('/api/pricing/recommend', authenticateToken, validatePricingRequest, as
 
         // -----------------------------------------------------------
         // 5. CALCUL DÉTERMINISTE POUR CHAQUE JOUR
+        // CORRECTION 2 : Utilisation de Promise.all pour attendre les résultats asynchrones
+        // CORRECTION 3 : Passage des bons arguments sous forme d'objet
         // -----------------------------------------------------------
-        // L'algo est rapide, on peut boucler sans problème.
         const dailyPricesAlgo = await Promise.all(allDates.map(async (dateStr) => {
             const result = await deterministicPricing.calculateDeterministicPrice({
                 property: property,
                 date: dateStr,
-                city: property.city || '',
-                country: property.country || ''
+                city: property.city,
+                country: property.country
             });
             return { 
                 date: dateStr, 
@@ -8484,33 +8491,27 @@ app.post('/api/pricing/recommend', authenticateToken, validatePricingRequest, as
         }));
 
         // -----------------------------------------------------------
-        // 6. APPEL IA (Une seule fois pour obtenir un facteur global)
+        // 6. APPEL IA (Tendance globale)
         // -----------------------------------------------------------
-        // NOTE: Appeler Python 30 fois serait trop lent. On utilise l'IA pour donner la "Tendance".
-        let aiFactor = 1.0; // Neutre par défaut
+        let aiFactor = 1.0;
         let aiConfidence = 0;
         let source = 'deterministic';
 
         try {
-            // On utilise la première date (ou une date médiane) pour obtenir une tendance globale
-            const referenceDate = allDates[Math.floor(allDates.length / 2)] || allDates[0];
-            
             const aiResult = await pricingBridge.getPricingPrediction({
                 propertyId: safePropertyId,
-                date: referenceDate,
-                roomType: safeOptions.room_type || 'default',
-                contextFeatures: { base_price: property.base_price }
+                dateRange: { start: safeStartDate, end: safeEndDate },
+                context: { base_price: property.base_price }
             });
 
-            // Calcul du facteur d'ajustement IA par rapport au prix de base
-            // Si l'IA dit 150€ et le prix de base est 100€, l'IA suggère +50% (Facteur 1.5)
-            if (aiResult && aiResult.price) {
-                aiFactor = aiResult.price / propertyContext.base_price;
-                aiConfidence = aiResult.confidence_score || aiResult.confidence || 0.5;
+            if (aiResult && (aiResult.recommended_price || aiResult.price)) {
+                const aiPrice = aiResult.recommended_price || aiResult.price;
+                aiFactor = aiPrice / property.base_price;
+                aiConfidence = aiResult.confidence || aiResult.confidence_score || 0;
                 source = 'hybrid';
             }
         } catch (err) {
-            console.warn("IA non disponible, utilisation courbe déterministe pure:", err.message);
+            console.warn("IA non disponible, utilisation courbe déterministe pure.");
         }
 
         // -----------------------------------------------------------
