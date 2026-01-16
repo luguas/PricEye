@@ -7748,27 +7748,210 @@ app.post('/api/pricing/recommend', authenticateToken, validatePricingRequest, as
         // Note: Le middleware validatePricingRequest a déjà fait une première sanitization
         // On fait une sanitization supplémentaire avec les fonctions strictes
         const safePropertyId = sanitizePropertyIdStrict(property_id);
-            sanitizationWarnings.push(`Location: "${rawLocation.substring(0, 50)}..." → "${sanitizedLocation.substring(0, 50)}..."`);
-        }
+        const safeOptions = sanitizePricingParams({ room_type, ...options });
         
-        // Sanitiser address (limiter à 200 caractères)
-        const rawAddress = property.address || '';
-        const sanitizedAddress = sanitizeForPrompt(rawAddress, 200);
-        if (rawAddress !== sanitizedAddress) {
-            sanitizationWarnings.push(`Address: "${rawAddress.substring(0, 50)}..." → "${sanitizedAddress.substring(0, 50)}..."`);
+        // Support de deux formats : date unique (compatibilité) ou dateRange
+        let safeStartDate, safeEndDate;
+        if (dateRange && dateRange.start && dateRange.end) {
+            safeStartDate = sanitizeDateStrict(dateRange.start);
+            safeEndDate = sanitizeDateStrict(dateRange.end);
+        } else if (date) {
+            // Compatibilité : si date unique fournie, on crée une plage d'un jour
+            safeStartDate = sanitizeDateStrict(date);
+            safeEndDate = safeStartDate;
+        } else {
+            return res.status(400).json({
+                status: 'error',
+                code: 'VALIDATION_ERROR',
+                message: 'date ou dateRange (avec start et end) est requis'
+            });
         }
-        
-        // Valider property_type avec whitelist
-        const rawPropertyType = property.property_type || property.propertyType || 'appartement';
-        const sanitizedPropertyType = allowedPropertyTypes.includes(rawPropertyType.toLowerCase().trim()) 
-            ? rawPropertyType.toLowerCase().trim() 
-            : 'appartement';
-        if (rawPropertyType.toLowerCase().trim() !== sanitizedPropertyType) {
-            sanitizationWarnings.push(`Property Type: "${rawPropertyType}" → "${sanitizedPropertyType}"`);
+
+        if (!safeStartDate || !safeEndDate) {
+            return res.status(400).json({
+                status: 'error',
+                code: 'VALIDATION_ERROR',
+                message: 'Dates invalides'
+            });
         }
-        
-        // Valider capacity avec validateCapacity
-        const rawCapacity = property.capacity || 2;
+
+        // -----------------------------------------------------------
+        // 2. VÉRIFICATION DES PERMISSIONS UTILISATEUR
+        // CORRECTION 1 : On récupère city et country pour que l'algo puisse chercher la météo/événements
+        // -----------------------------------------------------------
+        const { data: property, error: propError } = await supabase
+            .from('properties')
+            .select('id, base_price, min_price, max_price, name, city, country, weekend_markup_percent, floor_price, ceiling_price, strategy, team_id, owner_id')
+            .eq('id', safePropertyId)
+            .single();
+
+        if (propError || !property) {
+            return res.status(404).json({ 
+                status: 'error',
+                code: 'PROPERTY_NOT_FOUND',
+                message: 'Propriété introuvable.' 
+            });
+        }
+
+        const userProfile = await db.getUser(userId);
+        if (!userProfile) {
+            return res.status(404).json({ 
+                status: 'error',
+                code: 'USER_NOT_FOUND',
+                message: 'Profil utilisateur non trouvé.' 
+            });
+        }
+
+        const propertyTeamId = property.team_id || property.owner_id;
+        if (userProfile.team_id !== propertyTeamId) {
+            return res.status(403).json({ 
+                status: 'error',
+                code: 'UNAUTHORIZED',
+                message: 'Action non autorisée sur cette propriété (pas dans la bonne équipe).' 
+            });
+        }
+
+        // -----------------------------------------------------------
+        // 3. RÉCUPÉRATION DU CONTEXTE (Pour Safety Guardrails)
+        // -----------------------------------------------------------
+        const propertyContext = {
+            base_price: property.base_price || 100,
+            min_price: property.min_price || property.floor_price || 0,
+            max_price: property.max_price || property.ceiling_price || Infinity,
+            ...safeOptions
+        };
+
+        // -----------------------------------------------------------
+        // 4. GÉNÉRATION DE LA LISTE DES JOURS
+        // -----------------------------------------------------------
+        const allDates = getDatesBetween(safeStartDate, safeEndDate);
+
+        // -----------------------------------------------------------
+        // 5. CALCUL DÉTERMINISTE POUR CHAQUE JOUR
+        // CORRECTION 2 : Utilisation de Promise.all pour attendre les résultats asynchrones
+        // CORRECTION 3 : Passage des bons arguments sous forme d'objet
+        // -----------------------------------------------------------
+        const deterministicPricing = require('./utils/deterministic_pricing');
+        const dailyPricesAlgo = await Promise.all(allDates.map(async (dateStr) => {
+            const result = await deterministicPricing.calculateDeterministicPrice({
+                property: property,
+                date: dateStr,
+                city: property.city,
+                country: property.country
+            });
+            return { 
+                date: dateStr, 
+                price: result.price, 
+                details: result.reasoning || result.breakdown || {}
+            };
+        }));
+
+        // -----------------------------------------------------------
+        // 6. APPEL IA (Tendance globale)
+        // -----------------------------------------------------------
+        let aiFactor = 1.0;
+        let aiConfidence = 0;
+        let source = 'deterministic';
+
+        try {
+            const pricingBridge = require('./pricing_engine/bridge');
+            const aiResult = await pricingBridge.getPricingPrediction({
+                propertyId: safePropertyId,
+                dateRange: { start: safeStartDate, end: safeEndDate },
+                context: { base_price: property.base_price }
+            });
+
+            if (aiResult && (aiResult.recommended_price || aiResult.price)) {
+                const aiPrice = aiResult.recommended_price || aiResult.price;
+                aiFactor = aiPrice / property.base_price;
+                aiConfidence = aiResult.confidence || aiResult.confidence_score || 0;
+                source = 'hybrid';
+            }
+        } catch (err) {
+            console.warn("IA non disponible, utilisation courbe déterministe pure.");
+        }
+
+        // -----------------------------------------------------------
+        // 7. FUSION & CALCUL FINAL PAR JOUR
+        // -----------------------------------------------------------
+        const finalCalendar = dailyPricesAlgo.map(dayItem => {
+            // Prix Algo (qui contient déjà la logique Weekend/Saison)
+            const algoPrice = dayItem.price;
+
+            // Prix Hybride : On applique le facteur IA pondéré par la confiance
+            // Formule : Prix = PrixAlgo * (1 + (VariationIA * Confiance))
+            // C'est une façon simple de dire : "Garde la forme de la courbe Algo (Weekends chers), mais monte/descend le niveau selon l'IA"
+            
+            let finalDailyPrice = algoPrice;
+            
+            if (source === 'hybrid') {
+                // Exemple : Algo dit 100 (lundi), IA facteur 1.2 (demande forte), Confiance 0.8
+                // Ajustement = 100 * (1 + (0.2 * 0.8)) = 100 * 1.16 = 116€
+                const adjustmentRatio = (aiFactor - 1) * aiConfidence;
+                finalDailyPrice = algoPrice * (1 + adjustmentRatio);
+            }
+
+            // Guardrails (Min/Max)
+            const safety = validatePriceSafety(finalDailyPrice, propertyContext);
+
+            return {
+                date: dayItem.date,
+                price: safety.safePrice,
+                source: source,
+                is_adjusted: safety.wasAdjusted,
+                details: dayItem.details // Garde les infos "Pourquoi" (ex: "Weekend")
+            };
+        });
+
+        // -----------------------------------------------------------
+        // 8. LOGGING (Traçabilité - pour chaque jour)
+        // -----------------------------------------------------------
+        // On log chaque jour dans la base (fire and forget)
+        finalCalendar.forEach(day => {
+            // Log asynchrone (ne bloque pas la réponse)
+            db.upsertPriceOverrides(safePropertyId, [{
+                date: day.date,
+                price: day.price,
+                reason: day.details || 'Prix recommandé',
+                isLocked: false,
+                updatedBy: userId
+            }]).catch(err => {
+                console.error(`[Pricing Recommend] Erreur lors de la sauvegarde du prix pour ${day.date}:`, err);
+            });
+        });
+
+        // -----------------------------------------------------------
+        // 9. RÉPONSE FINALE
+        // -----------------------------------------------------------
+        res.status(200).json({
+            status: 'success',
+            property_id: safePropertyId,
+            date_range: {
+                start: safeStartDate,
+                end: safeEndDate
+            },
+            calendar: finalCalendar,
+            method: source,
+            summary: {
+                days_count: finalCalendar.length,
+                avg_price: Math.round(finalCalendar.reduce((sum, d) => sum + d.price, 0) / finalCalendar.length),
+                min_price: Math.min(...finalCalendar.map(d => d.price)),
+                max_price: Math.max(...finalCalendar.map(d => d.price))
+            }
+        });
+
+    } catch (error) {
+        console.error('[Pricing Recommend] Erreur:', error);
+        res.status(500).json({
+            status: 'error',
+            code: 'INTERNAL_ERROR',
+            message: error.message || 'Erreur interne du serveur'
+        });
+    }
+});
+
+/**
+ * POST /api/pricing/simulate
         let sanitizedCapacity;
         try {
             sanitizedCapacity = validateCapacity(rawCapacity, 'property.capacity', userId);
@@ -8517,239 +8700,6 @@ RAPPEL CRITIQUE : La réponse finale doit être UNIQUEMENT ce JSON, sans texte a
         } else {
              res.status(500).send({ error: `Erreur du serveur lors de la génération de la stratégie: ${error.message || 'Erreur inconnue'}` });
         }
-    }
-});
-
-/**
- * POST /api/pricing/recommend
- * Retourne un prix recommandé par le moteur de pricing IA pour une propriété / date donnée.
- * 
- * Cette version intègre les trois couches de sécurité :
- * 1. Sanitizer (validation et nettoyage des entrées)
- * 2. Bridge (communication avec le processus Python persistant)
- * 3. Guardrails (validation finale du prix avant retour)
- */
-app.post('/api/pricing/recommend', authenticateToken, validatePricingRequest, async (req, res) => {
-    const userId = req.user.uid;
-    const { property_id, room_type = 'default', date, dateRange, options } = req.body;
-    
-    try {
-        // -----------------------------------------------------------
-        // 1. VALIDATION ET SANITIZATION (Pare-feu entrée)
-        // -----------------------------------------------------------
-        // Note: Le middleware validatePricingRequest a déjà fait une première sanitization
-        // On fait une sanitization supplémentaire avec les fonctions strictes
-        const safePropertyId = sanitizePropertyIdStrict(property_id);
-        const safeOptions = sanitizePricingParams({ room_type, ...options });
-
-        // Support de deux formats : date unique (compatibilité) ou dateRange
-        let safeStartDate, safeEndDate;
-        if (dateRange && dateRange.start && dateRange.end) {
-            safeStartDate = sanitizeDateStrict(dateRange.start);
-            safeEndDate = sanitizeDateStrict(dateRange.end);
-        } else if (date) {
-            // Compatibilité : si date unique fournie, on crée une plage d'un jour
-            safeStartDate = sanitizeDateStrict(date);
-            safeEndDate = safeStartDate;
-        } else {
-            return res.status(400).json({
-                status: 'error',
-                code: 'VALIDATION_ERROR',
-                message: 'date ou dateRange (avec start et end) est requis'
-            });
-        }
-
-        if (!safeStartDate || !safeEndDate) {
-            return res.status(400).json({
-                status: 'error',
-                code: 'VALIDATION_ERROR',
-                message: 'Dates invalides'
-            });
-        }
-
-        // -----------------------------------------------------------
-        // 2. VÉRIFICATION DES PERMISSIONS UTILISATEUR
-        // CORRECTION 1 : On récupère city et country pour que l'algo puisse chercher la météo/événements
-        // -----------------------------------------------------------
-        const { data: property, error: propError } = await supabase
-            .from('properties')
-            .select('id, base_price, min_price, max_price, name, city, country, weekend_markup_percent, floor_price, ceiling_price, strategy, team_id, owner_id')
-            .eq('id', safePropertyId)
-            .single();
-
-        if (propError || !property) {
-            return res.status(404).json({ 
-                status: 'error',
-                code: 'PROPERTY_NOT_FOUND',
-                message: 'Propriété introuvable.' 
-            });
-        }
-
-        const userProfile = await db.getUser(userId);
-        if (!userProfile) {
-            return res.status(404).json({ 
-                status: 'error',
-                code: 'USER_NOT_FOUND',
-                message: 'Profil utilisateur non trouvé.' 
-            });
-        }
-
-        const propertyTeamId = property.team_id || property.owner_id;
-        if (userProfile.team_id !== propertyTeamId) {
-            return res.status(403).json({ 
-                status: 'error',
-                code: 'UNAUTHORIZED',
-                message: 'Action non autorisée sur cette propriété (pas dans la bonne équipe).' 
-            });
-        }
-
-        // -----------------------------------------------------------
-        // 3. RÉCUPÉRATION DU CONTEXTE (Pour Safety Guardrails)
-        // -----------------------------------------------------------
-        const propertyContext = {
-            base_price: property.base_price || 100,
-            min_price: property.min_price || property.floor_price || 0,
-            max_price: property.max_price || property.ceiling_price || Infinity,
-            ...safeOptions
-        };
-
-        // -----------------------------------------------------------
-        // 4. GÉNÉRATION DE LA LISTE DES JOURS
-        // -----------------------------------------------------------
-        const allDates = getDatesBetween(safeStartDate, safeEndDate);
-
-        // -----------------------------------------------------------
-        // 5. CALCUL DÉTERMINISTE POUR CHAQUE JOUR
-        // CORRECTION 2 : Utilisation de Promise.all pour attendre les résultats asynchrones
-        // CORRECTION 3 : Passage des bons arguments sous forme d'objet
-        // -----------------------------------------------------------
-        const dailyPricesAlgo = await Promise.all(allDates.map(async (dateStr) => {
-            const result = await deterministicPricing.calculateDeterministicPrice({
-                property: property,
-                date: dateStr,
-                city: property.city,
-                country: property.country
-            });
-            return { 
-                date: dateStr, 
-                price: result.price, 
-                details: result.reasoning || result.breakdown || {}
-            };
-        }));
-
-        // -----------------------------------------------------------
-        // 6. APPEL IA (Tendance globale)
-        // -----------------------------------------------------------
-        let aiFactor = 1.0;
-        let aiConfidence = 0;
-        let source = 'deterministic';
-
-        try {
-            const aiResult = await pricingBridge.getPricingPrediction({
-                propertyId: safePropertyId,
-                dateRange: { start: safeStartDate, end: safeEndDate },
-                context: { base_price: property.base_price }
-            });
-
-            if (aiResult && (aiResult.recommended_price || aiResult.price)) {
-                const aiPrice = aiResult.recommended_price || aiResult.price;
-                aiFactor = aiPrice / property.base_price;
-                aiConfidence = aiResult.confidence || aiResult.confidence_score || 0;
-                source = 'hybrid';
-            }
-        } catch (err) {
-            console.warn("IA non disponible, utilisation courbe déterministe pure.");
-        }
-
-        // -----------------------------------------------------------
-        // 7. FUSION & CALCUL FINAL PAR JOUR
-        // -----------------------------------------------------------
-        const finalCalendar = dailyPricesAlgo.map(dayItem => {
-            // Prix Algo (qui contient déjà la logique Weekend/Saison)
-            const algoPrice = dayItem.price;
-
-            // Prix Hybride : On applique le facteur IA pondéré par la confiance
-            // Formule : Prix = PrixAlgo * (1 + (VariationIA * Confiance))
-            // C'est une façon simple de dire : "Garde la forme de la courbe Algo (Weekends chers), mais monte/descend le niveau selon l'IA"
-            
-            let finalDailyPrice = algoPrice;
-            
-            if (source === 'hybrid') {
-                // Exemple : Algo dit 100 (lundi), IA facteur 1.2 (demande forte), Confiance 0.8
-                // Ajustement = 100 * (1 + (0.2 * 0.8)) = 100 * 1.16 = 116€
-                const adjustmentRatio = (aiFactor - 1) * aiConfidence;
-                finalDailyPrice = algoPrice * (1 + adjustmentRatio);
-            }
-
-            // Guardrails (Min/Max)
-            const safety = validatePriceSafety(finalDailyPrice, propertyContext);
-
-            return {
-                date: dayItem.date,
-                price: safety.safePrice,
-                source: source,
-                is_adjusted: safety.wasAdjusted,
-                details: dayItem.details // Garde les infos "Pourquoi" (ex: "Weekend")
-            };
-        });
-
-        // -----------------------------------------------------------
-        // 8. LOGGING (Traçabilité - pour chaque jour)
-        // -----------------------------------------------------------
-        // On log chaque jour dans la base (fire and forget)
-        finalCalendar.forEach(dayItem => {
-            supabase.from('pricing_recommendations').insert({
-                property_id: safePropertyId,
-                user_id: userId,
-                room_type: safeOptions.room_type || 'default',
-                stay_date: dayItem.date,
-                recommended_price: dayItem.price,
-                raw_price: dayItem.price, // Pour simplifier, on met le même prix
-                source: dayItem.source,
-                is_adjusted: dayItem.is_adjusted,
-                adjustment_reason: dayItem.is_adjusted ? 'Ajusté par guardrails' : null,
-                created_at: new Date().toISOString()
-            }).then(({ error }) => {
-                if (error) {
-                    console.error(`[Pricing] Erreur logging pricing pour ${safePropertyId} - ${dayItem.date}:`, error);
-                }
-            });
-        });
-
-        // -----------------------------------------------------------
-        // 9. RÉPONSE API
-        // -----------------------------------------------------------
-        return res.status(200).json({
-            status: 'success',
-            data: {
-                // On renvoie le tableau complet
-                calendar: finalCalendar,
-                // On garde un résumé global pour la compatibilité
-                summary: {
-                    average_price: Math.round(finalCalendar.reduce((acc, d) => acc + d.price, 0) / finalCalendar.length),
-                    currency: 'EUR',
-                    source: source
-                }
-            }
-        });
-
-    } catch (error) {
-        // Gestion des erreurs de validation (400) vs erreurs serveur (500)
-        if (error instanceof InputValidationError) {
-            return res.status(400).json({
-                status: 'error',
-                code: 'VALIDATION_ERROR',
-                message: error.message,
-                field: error.field
-            });
-        }
-
-        console.error(`[Pricing] Erreur critique endpoint pricing pour ${property_id || 'unknown'}:`, error);
-        return res.status(500).json({
-            status: 'error',
-            code: 'INTERNAL_ERROR',
-            message: 'Erreur interne du moteur de pricing.'
-        });
     }
 });
 
