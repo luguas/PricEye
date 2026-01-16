@@ -795,9 +795,9 @@ function PropertyModal({ token, onClose, onSave, property, initialStep = 1 }) {
           }
         }}
       >
+        {/* Conteneur principal: max-h-[90vh] est la limite, flex flex-col gère la hauteur interne */}
         <div 
-          className="border border-global-stroke-box rounded-[14px] shadow-xl w-full max-w-5xl max-h-[90vh] flex flex-col backdrop-blur-md overflow-hidden"
-          style={{ backgroundColor: 'rgba(15, 23, 43, 0.75)' }}
+          className="border border-global-stroke-box rounded-[14px] shadow-xl w-full max-w-5xl max-h-[90vh] flex flex-col backdrop-blur-md overflow-hidden bg-gray-900/90"
           onClick={(e) => e.stopPropagation()}
         >
             {/* Header (Fixe) */}
@@ -819,12 +819,12 @@ function PropertyModal({ token, onClose, onSave, property, initialStep = 1 }) {
               {renderStepIndicator()}
             </div>
 
-            {/* Corps (Scrollable) */}
-            {/* flex-1 permet de prendre l'espace restant, min-h-0 est crucial pour le flex nesting */}
+            {/* Corps du formulaire */}
+            {/* flex-1 min-h-0 : Oblige le formulaire à rester dans les limites du parent sans déborder */}
             <form onSubmit={handleSubmit} className="flex flex-col flex-1 min-h-0 relative">
               
-              {/* On passe w-full h-full pour que le conteneur relative prenne tout l'espace */}
-              <CustomScrollbar className="w-full h-full">
+              {/* CustomScrollbar prend tout l'espace restant (flex-1) */}
+              <CustomScrollbar className="flex-1 min-h-0 w-full">
                 <div className="p-6">
                   {renderStepContent()}
                   
@@ -837,7 +837,7 @@ function PropertyModal({ token, onClose, onSave, property, initialStep = 1 }) {
               </CustomScrollbar>
 
               {/* Footer (Fixe) */}
-              <div className="p-6 border-t border-global-stroke-box bg-global-bg-box/50 shrink-0 z-10 relative">
+              <div className="p-6 border-t border-global-stroke-box bg-global-bg-box/50 shrink-0 z-10">
                 <div className="flex justify-between gap-4">
                   <button 
                     type="button" 

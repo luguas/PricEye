@@ -32,11 +32,10 @@ function CustomScrollbar({ children, className = '' }) {
     if (!container) return;
 
     updateScrollbar();
-    // Plusieurs vérifications pour capturer le rendu initial et les animations
+    // On garde les timers pour être sûr que le rendu est fini
     const timers = [
       setTimeout(updateScrollbar, 50),
-      setTimeout(updateScrollbar, 150), 
-      setTimeout(updateScrollbar, 500)
+      setTimeout(updateScrollbar, 200)
     ];
 
     container.addEventListener('scroll', updateScrollbar, { passive: true });
@@ -56,8 +55,7 @@ function CustomScrollbar({ children, className = '' }) {
     };
   }, [children, updateScrollbar]);
 
-  // Seuil de tolérance très bas (0.5px) pour garantir l'affichage
-  const isScrollable = dimensions.scrollHeight > dimensions.clientHeight + 0.5;
+  const isScrollable = dimensions.scrollHeight > dimensions.clientHeight + 1;
 
   const getThumbStyle = () => {
     if (!isScrollable) return { display: 'none' };
@@ -81,29 +79,28 @@ function CustomScrollbar({ children, className = '' }) {
   };
 
   return (
-    // Le conteneur parent est RELATIVE pour permettre le positionnement ABSOLU des enfants
-    <div className={`relative overflow-hidden ${className}`}>
+    // CORRECTION : On revient à Flexbox standard. "relative" sert juste d'ancrage pour la barre.
+    <div className={`relative flex flex-col overflow-hidden ${className}`}>
       
-      {/* 1. Zone de scroll native (cachée visuellement mais active) */}
-      {/* absolute inset-0 force ce div à prendre exactement la taille du parent */}
+      {/* 1. Zone de scroll native : flex-1 pour qu'elle prenne toute la place dispo, mais reste DANS le flux */}
       <div 
         ref={scrollContainerRef}
-        className="absolute inset-0 overflow-y-auto overflow-x-hidden hide-scrollbar"
+        className="flex-1 overflow-y-auto overflow-x-hidden hide-scrollbar w-full"
         style={{ scrollBehavior: 'smooth' }}
       >
         {children}
       </div>
 
-      {/* 2. Barre de défilement personnalisée (superposée à droite) */}
+      {/* 2. Barre de défilement (superposée à droite) */}
       {isScrollable && (
         <div 
           ref={scrollbarTrackRef}
-          className="absolute right-1 top-1 bottom-1 w-1.5 z-20 transition-opacity duration-200"
+          className="absolute right-1 top-1 bottom-1 w-1.5 z-20"
         >
-          {/* Fond de la barre (Track) - Rendu plus visible */}
+          {/* Fond de la barre */}
           <div className="absolute inset-0 bg-gray-700/30 rounded-full"></div>
           
-          {/* Curseur (Thumb) */}
+          {/* Curseur */}
           <div 
             className="bg-gray-400/80 hover:bg-white/80 w-full rounded-full absolute left-0 transition-colors duration-200 cursor-pointer"
             style={getThumbStyle()}
