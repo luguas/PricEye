@@ -13,8 +13,16 @@ from typing import List, Dict, Any, Optional
 from datetime import datetime, timedelta, date
 
 from .config import get_pricing_config_for_property, PricingConfig
-from .interfaces.data_access import get_internal_pricing_data, get_property_pricing_constraints
+from .interfaces.data_access import (
+    get_internal_pricing_data, 
+    get_property_pricing_constraints,
+    get_property_location,
+)
 from .models.demand_model import predict_demand
+from .models.market_model import (
+    predict_market_demand_score,
+    MarketDemandPredictor,
+)
 
 
 def simulate_revenue_for_price_grid(
@@ -343,6 +351,72 @@ def choose_optimal_price(
     }
 
 
+def _is_cold_start_property(property_id: str, min_history_days: int = 30) -> bool:
+    """
+    Détermine si une propriété est en Cold Start (pas d'historique suffisant).
+    
+    Paramètres :
+    - property_id: ID de la propriété
+    - min_history_days: Nombre minimum de jours d'historique requis (défaut: 30)
+    
+    Retourne True si la propriété est en Cold Start, False sinon.
+    """
+    try:
+        today = date.today()
+        history_start_date = (today - timedelta(days=365)).isoformat()
+        history_end_date = today.isoformat()
+        historical_records = get_internal_pricing_data(
+            property_id=property_id,
+            start_date=history_start_date,
+            end_date=history_end_date,
+        )
+        
+        if not historical_records:
+            return True
+        
+        # Compter les jours avec des bookings significatifs (> 0)
+        days_with_bookings = sum(1 for record in historical_records if record.bookings > 0)
+        
+        # Si moins de min_history_days avec des bookings, c'est un Cold Start
+        return days_with_bookings < min_history_days
+    except Exception:
+        # En cas d'erreur, considérer comme Cold Start par sécurité
+        return True
+
+
+def _adjust_base_price_for_market_demand(
+    base_price: float,
+    market_demand_score: float,
+) -> float:
+    """
+    Ajuste le prix de base selon le score de demande marché.
+    
+    Paramètres :
+    - base_price: Prix de base de la propriété
+    - market_demand_score: Score de demande marché (0-100, market_occupancy_estimate)
+    
+    Logique :
+    - Score > 70 (Demande Haute) : +20% (base_price * 1.2)
+    - Score > 50 (Demande Moyenne-Haute) : +10% (base_price * 1.1)
+    - Score < 30 (Demande Faible) : -10% (base_price * 0.9)
+    - Sinon : Prix de base inchangé
+    
+    Retourne le prix ajusté.
+    """
+    if market_demand_score > 70:
+        # Demande très haute
+        return base_price * 1.2
+    elif market_demand_score > 50:
+        # Demande moyenne-haute
+        return base_price * 1.1
+    elif market_demand_score < 30:
+        # Demande faible
+        return base_price * 0.9
+    else:
+        # Demande moyenne, pas d'ajustement
+        return base_price
+
+
 def get_recommended_price(
     property_id: str,
     room_type: str,
@@ -358,6 +432,9 @@ def get_recommended_price(
 
     Elle récupère automatiquement les contraintes de prix de la propriété
     (floor_price, ceiling_price, base_price) depuis Supabase.
+    
+    Si la propriété est en Cold Start, utilise le MarketDemandModel pour
+    ajuster le prix de base selon la demande marché.
     """
     if context_features is None:
         context_features = {}
@@ -367,6 +444,47 @@ def get_recommended_price(
     floor_price = constraints.get("floor_price")
     ceiling_price = constraints.get("ceiling_price")
     base_price = constraints.get("base_price")
+    
+    # Vérifier si la propriété est en Cold Start
+    is_cold_start = _is_cold_start_property(property_id)
+    
+    # Si Cold Start, utiliser le MarketDemandModel pour ajuster le prix de base
+    market_demand_adjustment = None
+    if is_cold_start and base_price is not None:
+        try:
+            # Récupérer la localisation de la propriété
+            location = get_property_location(property_id)
+            city = location.get("city")
+            country = location.get("country")
+            
+            if city and country:
+                # Prédire le score de demande marché pour cette date
+                market_demand_score = predict_market_demand_score(
+                    city=city,
+                    country=country,
+                    date=date,
+                    market_features=context_features.get("market_features"),
+                )
+                
+                # Ajuster le prix de base selon le score
+                adjusted_base_price = _adjust_base_price_for_market_demand(
+                    base_price=base_price,
+                    market_demand_score=market_demand_score,
+                )
+                
+                # Mettre à jour base_price avec le prix ajusté
+                base_price = adjusted_base_price
+                market_demand_adjustment = {
+                    "score": market_demand_score,
+                    "original_base_price": constraints.get("base_price"),
+                    "adjusted_base_price": adjusted_base_price,
+                    "adjustment_factor": adjusted_base_price / constraints.get("base_price") if constraints.get("base_price") else 1.0,
+                }
+        except Exception as e:
+            # En cas d'erreur avec le MarketDemandModel, continuer avec le prix de base original
+            # (ne pas faire échouer la recommandation)
+            print(f"Warning: Erreur lors de l'utilisation du MarketDemandModel pour {property_id}: {e}")
+            pass
 
     # Si la capacité restante n'est pas fournie, on essaie de l'estimer
     # de manière simple à partir des données internes.
@@ -405,7 +523,7 @@ def get_recommended_price(
     # Calculer history_days (nombre de jours d'historique disponible)
     history_days = None
     try:
-        today = date.today()
+        today = datetime.now().date()
         history_start_date = (today - timedelta(days=365)).isoformat()
         history_end_date = today.isoformat()
         historical_records = get_internal_pricing_data(
@@ -444,6 +562,8 @@ def get_recommended_price(
             "expected_revenue": optimal_result.get("expected_revenue"),
             "predicted_demand": optimal_result.get("predicted_demand"),
             "details": optimal_result.get("details", {}),
+            "is_cold_start": is_cold_start,
+            "market_demand_adjustment": market_demand_adjustment,
         }
     }
 

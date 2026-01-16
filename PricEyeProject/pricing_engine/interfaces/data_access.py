@@ -231,6 +231,48 @@ def get_property_pricing_constraints(property_id: str) -> Dict[str, Optional[flo
         }
 
 
+def get_property_location(property_id: str) -> Dict[str, Optional[str]]:
+    """
+    Récupère la localisation (ville et pays) d'une propriété depuis Supabase.
+
+    Retourne un dictionnaire avec :
+    - city: ville de la propriété
+    - country: pays de la propriété
+
+    Si une valeur n'est pas définie, elle sera None.
+    """
+    client = get_supabase_client()
+
+    try:
+        response = (
+            client.table("properties")
+            .select("city, country")
+            .eq("id", property_id)
+            .maybe_single()
+            .execute()
+        )
+
+        # Vérifier si response.data existe
+        if not hasattr(response, 'data') or not response.data:
+            return {
+                "city": None,
+                "country": None,
+            }
+
+        data = response.data
+
+        return {
+            "city": data.get("city"),
+            "country": data.get("country"),
+        }
+    except Exception:
+        # En cas d'erreur, retourner None pour toutes les valeurs
+        return {
+            "city": None,
+            "country": None,
+        }
+
+
 def get_internal_pricing_data(
     property_id: str,
     start_date: str,
