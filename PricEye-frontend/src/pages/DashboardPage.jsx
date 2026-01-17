@@ -616,34 +616,6 @@ function DashboardPage({ token, userProfile }) {
                 </span>
             </div>
 
-            <div className="flex flex-col gap-2">
-              <div className="flex items-center justify-between text-sm">
-                <span className="text-global-inactive">{t('dashboard.property.monthlyRevenue')}</span>
-                {revenueTrendLabel && (
-                  <span className={`flex items-center gap-1 text-xs font-medium ${revenueTrendClass}`}>
-                    <TrendIcon className="w-3 h-3" />
-                    {revenueTrendLabel}
-                  </span>
-                )}
-              </div>
-              <div className="flex items-baseline gap-2 mb-1">
-                <span className="text-global-blanc font-bold text-xl">
-                  {formatCurrency(monthlyRevenue)}
-                </span>
-                {targetRevenue > 0 && (
-                  <span className="text-global-inactive text-xs">
-                    / {formatCurrency(targetRevenue)}
-                  </span>
-                )}
-              </div>
-              <div className="w-full h-1.5 rounded-full bg-global-bg-muted overflow-hidden">
-                <div
-                  className="h-full bg-gradient-to-r from-[#155dfc] to-[#12a1d5] rounded-full"
-                  style={{ width: `${progress}%` }}
-                />
-              </div>
-            </div>
-
             <div className="flex items-center gap-2 mt-auto pt-2">
               <button
                 onClick={() => {

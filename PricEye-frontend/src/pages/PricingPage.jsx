@@ -656,35 +656,6 @@ function PricingPage({ token, userProfile }) {
                         selectionMode === 'booking' ? renderBookingForm() : renderPriceForm()
                     )}
                 </div>
-                
-                {/* BOUTON GÉNÉRER IA (REMETTRE SELON DEMANDE DU TURN PRÉCÉDENT SI BESOIN) */}
-                <div className="mt-2">
-                    <Bouton 
-                        variant="principal" 
-                        className="w-full justify-center !py-3"
-                        onClick={handleGenerateStrategy}
-                        disabled={iaLoading || !selectedId}
-                    >
-                        {iaLoading ? 'Optimisation en cours...' : 'Générer les prix IA'}
-                    </Bouton>
-                </div>
-             </div>
-
-             {/* PANEL ACTUALITÉS */}
-             <div className="bg-global-bg-box rounded-[14px] border border-global-stroke-box p-6 flex flex-col gap-3 h-[389px] overflow-hidden">
-                <div className="text-white font-h2-font-family text-lg">Actualité du marché</div>
-                <div className="flex flex-col gap-3 w-full h-full overflow-y-auto pr-2">
-                    <div className="bg-global-bg-small-box rounded-[14px] p-3 flex flex-col gap-1">
-                        <div className="text-white font-bold text-sm">Nouvelle loi “anti-Airbnb”</div>
-                        <div className="text-gray-400 text-xs">Conséquences fiscales attendues pour 2025.</div>
-                        <div className="flex justify-between items-center mt-1"><span className="text-red-400 text-xs font-bold">Impact: -15%</span><span className="text-gray-600 text-[10px]">Il y a 2h</span></div>
-                    </div>
-                    <div className="bg-global-bg-small-box rounded-[14px] p-3 flex flex-col gap-1">
-                        <div className="text-white font-bold text-sm">Concert GIMS Nancy 2026</div>
-                        <div className="text-gray-400 text-xs">Forte demande hôtelière prévue.</div>
-                        <div className="flex justify-between items-center mt-1"><span className="text-green-400 text-xs font-bold">Impact: +25%</span><span className="text-gray-600 text-[10px]">Il y a 4j</span></div>
-                    </div>
-                </div>
              </div>
           </div>
         </div>
