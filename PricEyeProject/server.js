@@ -4524,14 +4524,12 @@ app.post('/api/groups', authenticateToken, async (req, res) => {
 // --- Route pour récupérer les groupes (Bypass RLS) ---
 app.get('/api/groups', authenticateToken, async (req, res) => {
   try {
-    // On récupère tout le contenu de la table 'groups'
-    const { data: groups, error } = await supabase
-      .from('groups')
-      .select('*');
-
-    if (error) throw error;
+    const userId = req.user.uid;
     
-    console.log(`[API] ${groups.length} groupes trouvés pour l'utilisateur.`);
+    // Récupérer uniquement les groupes de l'utilisateur connecté
+    const groups = await db.getGroupsByOwner(userId);
+    
+    console.log(`[API] ${groups.length} groupes trouvés pour l'utilisateur ${userId}.`);
     res.json(groups);
   } catch (error) {
     console.error('Erreur API Groups:', error);

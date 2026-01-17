@@ -67,21 +67,50 @@ function PricingPage({ token, userProfile }) {
       // B. Récupérer les Groupes (Via API Backend pour contourner RLS)
       let groupsData = [];
       try {
-          // On tente via le backend (droits élevés)
+          // On tente via le backend (droits élevés) - filtre automatiquement par utilisateur
           const apiGroups = await getGroups(token);
           if (apiGroups) {
               groupsData = Array.isArray(apiGroups) ? apiGroups : [];
           } else {
               // Si apiGroups est null (404), on tente le fallback Supabase direct (droits limités)
+              // IMPORTANT: Les RLS de Supabase devraient filtrer automatiquement par utilisateur
               console.warn("API Groups non disponible, fallback Supabase...");
-              const { data } = await supabase.from('groups').select('*');
-              groupsData = Array.isArray(data) ? data : [];
+              const userId = jwtDecode(token)?.sub;
+              if (userId) {
+                  // Filtrer explicitement par owner_id pour sécurité
+                  const { data, error } = await supabase
+                      .from('groups')
+                      .select('*')
+                      .eq('owner_id', userId);
+                  if (error) throw error;
+                  groupsData = Array.isArray(data) ? data : [];
+              } else {
+                  console.error("Impossible de récupérer l'ID utilisateur pour filtrer les groupes");
+                  groupsData = [];
+              }
           }
       } catch (e) {
           console.error("Erreur récupération groupes:", e);
-          // Dernier recours
-          const { data } = await supabase.from('groups').select('*');
-          groupsData = Array.isArray(data) ? data : [];
+          // Dernier recours avec filtre par utilisateur
+          try {
+              const userId = jwtDecode(token)?.sub;
+              if (userId) {
+                  const { data, error } = await supabase
+                      .from('groups')
+                      .select('*')
+                      .eq('owner_id', userId);
+                  if (!error && data) {
+                      groupsData = Array.isArray(data) ? data : [];
+                  } else {
+                      groupsData = [];
+                  }
+              } else {
+                  groupsData = [];
+              }
+          } catch (fallbackError) {
+              console.error("Erreur fallback groupes:", fallbackError);
+              groupsData = [];
+          }
       }
       console.log('Groupes récupérés (bruts):', groupsData); // Debug
       setAllGroups(groupsData);
