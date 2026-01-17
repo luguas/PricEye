@@ -1146,8 +1146,73 @@ app.put('/api/users/profile', authenticateToken, async (req, res) => {
 });
 
 /**
+ * Fonction helper pour supprimer un utilisateur (réutilisable)
+ */
+async function deleteUserAccount(userId) {
+    // Récupérer le profil utilisateur avant suppression pour vérifier qu'il existe
+    const userProfile = await db.getUser(userId);
+    if (!userProfile) {
+        throw new Error('Utilisateur non trouvé.');
+    }
+
+    // Annuler l'abonnement Stripe si présent
+    const subscriptionId = userProfile.stripe_subscription_id || userProfile.subscription_id;
+    if (subscriptionId) {
+        try {
+            const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
+            const subscription = await stripe.subscriptions.retrieve(subscriptionId);
+            
+            // Annuler l'abonnement immédiatement
+            if (subscription.status !== 'canceled' && subscription.status !== 'incomplete_expired') {
+                await stripe.subscriptions.cancel(subscriptionId);
+                console.log(`[Delete User] Abonnement Stripe ${subscriptionId} annulé pour l'utilisateur ${userId}`);
+            }
+        } catch (stripeError) {
+            console.error(`[Delete User] Erreur lors de l'annulation de l'abonnement Stripe pour ${userId}:`, stripeError);
+            // Continuer même si l'annulation Stripe échoue
+        }
+    }
+
+    // Supprimer toutes les données associées dans la base de données
+    await db.deleteUser(userId);
+
+    // Supprimer l'utilisateur dans Supabase Auth
+    const { error: authDeleteError } = await supabase.auth.admin.deleteUser(userId);
+    
+    if (authDeleteError) {
+        console.error(`[Delete User] Erreur lors de la suppression de l'utilisateur dans Auth:`, authDeleteError);
+        // Si la suppression dans Auth échoue, on retourne une erreur
+        // Mais les données sont déjà supprimées de la base de données
+        throw new Error(`Erreur lors de la suppression de l'utilisateur dans Supabase Auth: ${authDeleteError.message}`);
+    }
+
+    console.log(`[Delete User] Utilisateur ${userId} supprimé avec succès`);
+}
+
+/**
+ * DELETE /api/users/account - Supprime le compte de l'utilisateur actuellement authentifié
+ * ATTENTION: Cette route supprime définitivement l'utilisateur et toutes ses données
+ */
+app.delete('/api/users/account', authenticateToken, async (req, res) => {
+    try {
+        const currentUserId = req.user.uid;
+        
+        await deleteUserAccount(currentUserId);
+        
+        res.status(200).send({ message: 'Utilisateur supprimé avec succès.' });
+    } catch (error) {
+        console.error('Erreur lors de la suppression de l\'utilisateur:', error);
+        res.status(500).send({ 
+            error: 'Erreur lors de la suppression de l\'utilisateur.',
+            message: error.message || 'Database error deleting user'
+        });
+    }
+});
+
+/**
  * DELETE /api/users/:userId - Supprime un utilisateur et toutes ses données
  * ATTENTION: Cette route supprime définitivement l'utilisateur et toutes ses données
+ * NOTE: Pour la suppression de son propre compte, utiliser /api/users/account
  */
 app.delete('/api/users/:userId', authenticateToken, async (req, res) => {
     try {
@@ -1166,47 +1231,14 @@ app.delete('/api/users/:userId', authenticateToken, async (req, res) => {
         //     return res.status(403).send({ error: 'Accès refusé. Admin seulement.' });
         // }
 
-        // Récupérer le profil utilisateur avant suppression pour vérifier qu'il existe
-        const userProfile = await db.getUser(targetUserId);
-        if (!userProfile) {
-            return res.status(404).send({ error: 'Utilisateur non trouvé.' });
-        }
-
-        // Annuler l'abonnement Stripe si présent
-        const subscriptionId = userProfile.stripe_subscription_id || userProfile.subscription_id;
-        if (subscriptionId) {
-            try {
-                const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
-                const subscription = await stripe.subscriptions.retrieve(subscriptionId);
-                
-                // Annuler l'abonnement immédiatement
-                if (subscription.status !== 'canceled' && subscription.status !== 'incomplete_expired') {
-                    await stripe.subscriptions.cancel(subscriptionId);
-                    console.log(`[Delete User] Abonnement Stripe ${subscriptionId} annulé pour l'utilisateur ${targetUserId}`);
-                }
-            } catch (stripeError) {
-                console.error(`[Delete User] Erreur lors de l'annulation de l'abonnement Stripe pour ${targetUserId}:`, stripeError);
-                // Continuer même si l'annulation Stripe échoue
-            }
-        }
-
-        // Supprimer toutes les données associées dans la base de données
-        await db.deleteUser(targetUserId);
-
-        // Supprimer l'utilisateur dans Supabase Auth
-        const { error: authDeleteError } = await supabase.auth.admin.deleteUser(targetUserId);
+        await deleteUserAccount(targetUserId);
         
-        if (authDeleteError) {
-            console.error(`[Delete User] Erreur lors de la suppression de l'utilisateur dans Auth:`, authDeleteError);
-            // Si la suppression dans Auth échoue, on retourne une erreur
-            // Mais les données sont déjà supprimées de la base de données
-            throw new Error(`Erreur lors de la suppression de l'utilisateur dans Supabase Auth: ${authDeleteError.message}`);
-        }
-
-        console.log(`[Delete User] Utilisateur ${targetUserId} supprimé avec succès`);
         res.status(200).send({ message: 'Utilisateur supprimé avec succès.' });
     } catch (error) {
         console.error('Erreur lors de la suppression de l\'utilisateur:', error);
+        if (error.message === 'Utilisateur non trouvé.') {
+            return res.status(404).send({ error: error.message });
+        }
         res.status(500).send({ 
             error: 'Erreur lors de la suppression de l\'utilisateur.',
             message: error.message || 'Database error deleting user'
