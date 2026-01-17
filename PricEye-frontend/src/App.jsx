@@ -153,7 +153,9 @@ function AppRouter() {
 
       if (!token) {
         // Si non connecté, rediriger vers le site externe au lieu de la page de login
-        if (currentView !== 'checkout-success' && currentView !== 'checkout-cancel') {
+        // Mais ne pas rediriger si on est en train de se déconnecter (pour éviter les conflits)
+        const isLoggingOut = localStorage.getItem('_isLoggingOut');
+        if (!isLoggingOut && currentView !== 'checkout-success' && currentView !== 'checkout-cancel') {
           window.location.href = 'https://priceye-ai.com/';
         }
       } else if (token && (currentView === 'login' || currentView === 'register')) {

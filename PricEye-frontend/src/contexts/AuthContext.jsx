@@ -44,6 +44,9 @@ export const AuthProvider = ({ children }) => {
       console.error('Erreur déconnexion Supabase:', error);
     }
     
+    // Marquer qu'on est en train de se déconnecter pour éviter les conflits
+    localStorage.setItem('_isLoggingOut', 'true');
+    
     setToken(null);
     setUserProfile(null);
     localStorage.removeItem('authToken');
@@ -57,10 +60,8 @@ export const AuthProvider = ({ children }) => {
     });
 
     // Redirection forcée vers le site externe après déconnexion
-    // Attendre un peu pour que le nettoyage soit effectué avant le rechargement
-    setTimeout(() => {
-      window.location.href = 'https://priceye-ai.com/';
-    }, 100);
+    // Utiliser une redirection immédiate sans setTimeout pour éviter les conflits
+    window.location.href = 'https://priceye-ai.com/';
   }, []);
 
   const login = useCallback((newToken) => {
