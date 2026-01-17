@@ -819,7 +819,7 @@ function ReportPage({ token, userProfile }) {
       } finally {
           setIsKpiLoading(false);
       }
-  }, [token, dateRange, userProfile]); 
+  }, [token, dateRange, userProfile, propertyType, channel, status, location, occupancyThreshold]); 
 
   useEffect(() => {
     fetchKpisAndCharts();
