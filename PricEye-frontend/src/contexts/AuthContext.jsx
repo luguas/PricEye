@@ -56,13 +56,11 @@ export const AuthProvider = ({ children }) => {
       }
     });
 
-    // Redirection forcée si nécessaire
-    if (window.location.pathname !== '/' && window.location.pathname !== '/login') {
-      // Attendre un peu pour que le nettoyage soit effectué avant le rechargement
-      setTimeout(() => {
-        window.location.href = 'https://priceye-ai.com/';
-      }, 100);
-    }
+    // Redirection forcée vers le site externe après déconnexion
+    // Attendre un peu pour que le nettoyage soit effectué avant le rechargement
+    setTimeout(() => {
+      window.location.href = 'https://priceye-ai.com/';
+    }, 100);
   }, []);
 
   const login = useCallback((newToken) => {

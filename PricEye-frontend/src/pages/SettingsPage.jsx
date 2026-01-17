@@ -345,6 +345,17 @@ function SettingsPage({ token, userProfile: initialProfile, onThemeChange, onLog
 
   // Suppression du compte utilisateur
   const handleDeleteAccount = () => {
+      // Vérifier que currentUserId est défini
+      if (!currentUserId) {
+          setDeleteAccountError(t('settings.errors.deleteAccountError', { message: 'Impossible d\'identifier l\'utilisateur. Veuillez vous reconnecter.' }));
+          return;
+      }
+
+      if (!token) {
+          setDeleteAccountError(t('settings.errors.deleteAccountError', { message: 'Session expirée. Veuillez vous reconnecter.' }));
+          return;
+      }
+
       setConfirmModal({
           isOpen: true,
           message: t('settings.deleteAccountConfirm'),
@@ -353,7 +364,8 @@ function SettingsPage({ token, userProfile: initialProfile, onThemeChange, onLog
               setIsDeletingAccount(true);
               try {
                   await deleteUserAccount(currentUserId, token);
-                  // Si la suppression réussit, déconnecter l'utilisateur
+                  // Si la suppression réussit, fermer la modale et déconnecter l'utilisateur
+                  setConfirmModal({ isOpen: false, message: '', onConfirm: null });
                   if (onLogout) {
                       onLogout();
                   }
@@ -361,6 +373,8 @@ function SettingsPage({ token, userProfile: initialProfile, onThemeChange, onLog
                   console.error('Erreur lors de la suppression du compte:', err);
                   setDeleteAccountError(t('settings.errors.deleteAccountError', { message: err.message || 'Erreur inconnue' }));
                   setIsDeletingAccount(false);
+                  // Laisser la modale ouverte pour que l'utilisateur voie l'erreur
+                  throw err; // Relancer l'erreur pour que ConfirmModal ne ferme pas la modale
               }
           }
       });

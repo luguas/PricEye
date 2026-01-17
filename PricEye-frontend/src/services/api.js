@@ -238,13 +238,15 @@ export function updateUserProfile(profileData, token) {
 }
 
 /**
- * Supprime le compte utilisateur
- * @param {string} userId - ID de l'utilisateur à supprimer
+ * Supprime le compte utilisateur de l'utilisateur actuellement authentifié
+ * @param {string} userId - ID de l'utilisateur (pour compatibilité, mais non utilisé côté serveur)
  * @param {string} token - Jeton d'authentification
  * @returns {Promise<{message: string}>}
  */
 export function deleteUserAccount(userId, token) {
-  return apiRequest(`/api/users/${userId}`, {
+  // Utiliser l'endpoint /api/users/account qui est plus sécurisé
+  // L'utilisateur est identifié par le token d'authentification
+  return apiRequest('/api/users/account', {
     method: 'DELETE',
     token,
   });

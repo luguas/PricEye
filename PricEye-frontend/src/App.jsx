@@ -43,7 +43,8 @@ function AppRouter() {
     if (urlParams.get('session_id') || urlParams.get('canceled')) {
       return urlParams.get('session_id') ? 'checkout-success' : 'checkout-cancel';
     }
-    return localStorage.getItem('authToken') ? 'dashboard' : 'login';
+    // Par défaut, retourner dashboard (la redirection sera gérée par useEffect)
+    return 'dashboard';
   }); 
   const [isNavCollapsed, setIsNavCollapsed] = useState(false);
   const [notifications, setNotifications] = useState([]);
@@ -151,9 +152,9 @@ function AppRouter() {
       }
 
       if (!token) {
-        // Si non connecté, on force login ou register
-        if (currentView !== 'register' && currentView !== 'login' && currentView !== 'checkout-success' && currentView !== 'checkout-cancel') {
-          setCurrentView('login');
+        // Si non connecté, rediriger vers le site externe au lieu de la page de login
+        if (currentView !== 'checkout-success' && currentView !== 'checkout-cancel') {
+          window.location.href = 'https://priceye-ai.com/';
         }
       } else if (token && (currentView === 'login' || currentView === 'register')) {
         // Si connecté et sur page auth, on va au dashboard
@@ -220,15 +221,15 @@ function AppRouter() {
   };
 
   // Gestion de la vue login/register si non authentifié
+  // Rediriger vers le site externe au lieu d'afficher la page de login
   if (!token && !isLoadingProfile) {
-    if (currentView === 'register') {
-      return <RegisterPage onNavigate={navigateTo} />;
-    }
     if (currentView === 'checkout-success' || currentView === 'checkout-cancel') {
       // Si on vient de Stripe mais pas de token, permettre l'affichage de la page
       return renderMainContent();
     }
-    return <LoginPage onLoginSuccess={handleLoginSuccess} onNavigate={navigateTo} />;
+    // Rediriger vers le site externe au lieu d'afficher la page de login
+    // Ne pas afficher LoginPage ou RegisterPage - redirection immédiate
+    return null; // Retourner null pendant la redirection
   }
 
   return (

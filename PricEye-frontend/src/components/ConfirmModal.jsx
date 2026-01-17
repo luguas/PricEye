@@ -27,9 +27,19 @@ const ConfirmModal = ({ isOpen, onClose, onConfirm, title = 'Confirmation', mess
           </button>
           <button
             type="button"
-            onClick={() => {
-              onConfirm();
-              onClose();
+            onClick={async () => {
+              try {
+                const result = onConfirm();
+                // Si onConfirm retourne une promesse, attendre qu'elle se résolve
+                if (result && typeof result.then === 'function') {
+                  await result;
+                }
+                // Fermer la modale seulement si l'opération réussit
+                onClose();
+              } catch (error) {
+                // En cas d'erreur, ne pas fermer la modale pour que l'utilisateur voie l'erreur
+                console.error('Erreur dans onConfirm:', error);
+              }
             }}
             className="inline-flex items-center justify-center gap-2 px-4 py-2 relative rounded-[10px] bg-[linear-gradient(90deg,rgba(21,93,252,1)_0%,rgba(18,161,213,1)_100%)] cursor-pointer border-0 transition-opacity hover:opacity-90 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[rgba(21,93,252,1)]"
           >
