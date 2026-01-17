@@ -2660,6 +2660,89 @@ app.put('/api/users/auto-pricing/:userId', authenticateToken, async (req, res) =
     }
 });
 
+/**
+ * Endpoint pour récupérer le statut du pricing automatique d'une propriété
+ * GET /api/properties/:id/auto-pricing
+ */
+app.get('/api/properties/:id/auto-pricing', authenticateToken, async (req, res) => {
+    try {
+        const propertyId = req.params.id;
+        const userId = req.user.uid;
+
+        // Vérifier que la propriété existe et appartient à l'utilisateur
+        const property = await db.getProperty(propertyId);
+        if (!property) {
+            return res.status(404).send({ error: 'Propriété non trouvée.' });
+        }
+
+        if (property.owner_id !== userId) {
+            return res.status(403).send({ error: 'Vous n\'êtes pas autorisé à accéder à cette propriété.' });
+        }
+
+        // Récupérer le statut du pricing automatique (par défaut false si non défini)
+        const autoPricingEnabled = property.auto_pricing_enabled || false;
+
+        res.status(200).send({
+            enabled: autoPricingEnabled
+        });
+
+    } catch (error) {
+        console.error('Erreur lors de la récupération du statut de pricing automatique:', error);
+        res.status(500).send({ 
+            error: 'Erreur interne du serveur lors de la récupération du statut de pricing automatique.' 
+        });
+    }
+});
+
+/**
+ * Endpoint pour activer/désactiver le pricing automatique d'une propriété
+ * PUT /api/properties/:id/auto-pricing
+ * Body: { enabled: boolean }
+ */
+app.put('/api/properties/:id/auto-pricing', authenticateToken, async (req, res) => {
+    try {
+        const propertyId = req.params.id;
+        const userId = req.user.uid;
+        const { enabled } = req.body;
+
+        // Validation
+        if (typeof enabled !== 'boolean') {
+            return res.status(400).send({ 
+                error: 'Le champ "enabled" doit être un booléen (true ou false).' 
+            });
+        }
+
+        // Vérifier que la propriété existe et appartient à l'utilisateur
+        const property = await db.getProperty(propertyId);
+        if (!property) {
+            return res.status(404).send({ error: 'Propriété non trouvée.' });
+        }
+
+        if (property.owner_id !== userId) {
+            return res.status(403).send({ error: 'Vous n\'êtes pas autorisé à modifier cette propriété.' });
+        }
+
+        // Mettre à jour le statut
+        await db.updateProperty(propertyId, {
+            auto_pricing_enabled: enabled,
+            auto_pricing_updated_at: new Date().toISOString()
+        });
+
+        res.status(200).send({ 
+            message: enabled 
+                ? 'Pricing automatique activé pour cette propriété.' 
+                : 'Pricing automatique désactivé pour cette propriété.',
+            enabled: enabled
+        });
+
+    } catch (error) {
+        console.error('Erreur lors de la mise à jour du statut de pricing automatique:', error);
+        res.status(500).send({ 
+            error: 'Erreur interne du serveur lors de la mise à jour du statut de pricing automatique.' 
+        });
+    }
+});
+
 // --- ROUTES D'INTÉGRATION PMS (SÉCURISÉES) ---
 
 app.get('/api/integrations', authenticateToken, async (req, res) => {
@@ -4309,6 +4392,111 @@ app.get('/api/properties/:id/news', authenticateToken, checkAIQuota, async (req,
 
 
 // --- ROUTES DE GESTION DES GROUPES (SÉCURISÉES) ---
+
+/**
+ * Endpoint pour récupérer le statut du pricing automatique d'un groupe
+ * GET /api/groups/:id/auto-pricing
+ * IMPORTANT: Cette route doit être définie AVANT /api/groups/:id pour éviter les conflits
+ */
+app.get('/api/groups/:id/auto-pricing', authenticateToken, async (req, res) => {
+    try {
+        const groupId = req.params.id;
+        const userId = req.user.uid;
+
+        // Récupérer le groupe
+        const groups = await db.getGroupsByOwner(userId);
+        const group = groups.find(g => String(g.id) === String(groupId));
+        
+        if (!group) {
+            return res.status(404).send({ error: 'Groupe non trouvé.' });
+        }
+
+        // Pour un groupe, on utilise la propriété principale
+        const mainPropertyId = group.main_property_id || group.mainPropertyId;
+        if (!mainPropertyId) {
+            return res.status(200).send({ enabled: false });
+        }
+
+        // Récupérer le statut de la propriété principale
+        const property = await db.getProperty(mainPropertyId);
+        if (!property) {
+            return res.status(200).send({ enabled: false });
+        }
+
+        const autoPricingEnabled = property.auto_pricing_enabled || false;
+
+        res.status(200).send({
+            enabled: autoPricingEnabled
+        });
+
+    } catch (error) {
+        console.error('Erreur lors de la récupération du statut de pricing automatique du groupe:', error);
+        res.status(500).send({ 
+            error: 'Erreur interne du serveur lors de la récupération du statut de pricing automatique.' 
+        });
+    }
+});
+
+/**
+ * Endpoint pour activer/désactiver le pricing automatique d'un groupe
+ * PUT /api/groups/:id/auto-pricing
+ * Body: { enabled: boolean }
+ * IMPORTANT: Cette route doit être définie AVANT /api/groups/:id pour éviter les conflits
+ */
+app.put('/api/groups/:id/auto-pricing', authenticateToken, async (req, res) => {
+    try {
+        const groupId = req.params.id;
+        const userId = req.user.uid;
+        const { enabled } = req.body;
+
+        // Validation
+        if (typeof enabled !== 'boolean') {
+            return res.status(400).send({ 
+                error: 'Le champ "enabled" doit être un booléen (true ou false).' 
+            });
+        }
+
+        // Récupérer le groupe
+        const groups = await db.getGroupsByOwner(userId);
+        const group = groups.find(g => String(g.id) === String(groupId));
+        
+        if (!group) {
+            return res.status(404).send({ error: 'Groupe non trouvé.' });
+        }
+
+        // Pour un groupe, on utilise la propriété principale
+        const mainPropertyId = group.main_property_id || group.mainPropertyId;
+        if (!mainPropertyId) {
+            return res.status(400).send({ error: 'Ce groupe n\'a pas de propriété principale.' });
+        }
+
+        // Vérifier que la propriété principale existe
+        const property = await db.getProperty(mainPropertyId);
+        if (!property) {
+            return res.status(404).send({ error: 'Propriété principale non trouvée.' });
+        }
+
+        // Mettre à jour le statut de la propriété principale
+        await db.updateProperty(mainPropertyId, {
+            auto_pricing_enabled: enabled,
+            auto_pricing_updated_at: new Date().toISOString()
+        });
+
+        res.status(200).send({ 
+            message: enabled 
+                ? 'Pricing automatique activé pour ce groupe.' 
+                : 'Pricing automatique désactivé pour ce groupe.',
+            enabled: enabled
+        });
+
+    } catch (error) {
+        console.error('Erreur lors de la mise à jour du statut de pricing automatique du groupe:', error);
+        res.status(500).send({ 
+            error: 'Erreur interne du serveur lors de la mise à jour du statut de pricing automatique.' 
+        });
+    }
+});
+
 app.post('/api/groups', authenticateToken, async (req, res) => {
     try {
         const { name } = req.body;
