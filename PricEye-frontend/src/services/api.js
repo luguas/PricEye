@@ -772,6 +772,60 @@ export function enableAutoPricing(userId, enabled, timezone, token) {
     });
 }
 
+/**
+ * Récupère le statut du pricing automatique d'une propriété
+ * @param {string} propertyId - ID de la propriété
+ * @param {string} token - Token d'authentification
+ * @returns {Promise<{enabled: boolean}>}
+ */
+export function getPropertyAutoPricingStatus(propertyId, token) {
+    return apiRequest(`/api/properties/${propertyId}/auto-pricing`, {
+        token,
+    });
+}
+
+/**
+ * Active ou désactive le pricing automatique d'une propriété
+ * @param {string} propertyId - ID de la propriété
+ * @param {boolean} enabled - État d'activation
+ * @param {string} token - Token d'authentification
+ * @returns {Promise<{message: string, enabled: boolean}>}
+ */
+export function enablePropertyAutoPricing(propertyId, enabled, token) {
+    return apiRequest(`/api/properties/${propertyId}/auto-pricing`, {
+        method: 'PUT',
+        token,
+        body: JSON.stringify({ enabled }),
+    });
+}
+
+/**
+ * Récupère le statut du pricing automatique d'un groupe
+ * @param {string} groupId - ID du groupe
+ * @param {string} token - Token d'authentification
+ * @returns {Promise<{enabled: boolean}>}
+ */
+export function getGroupAutoPricingStatus(groupId, token) {
+    return apiRequest(`/api/groups/${groupId}/auto-pricing`, {
+        token,
+    });
+}
+
+/**
+ * Active ou désactive le pricing automatique d'un groupe
+ * @param {string} groupId - ID du groupe
+ * @param {boolean} enabled - État d'activation
+ * @param {string} token - Token d'authentification
+ * @returns {Promise<{message: string, enabled: boolean}>}
+ */
+export function enableGroupAutoPricing(groupId, enabled, token) {
+    return apiRequest(`/api/groups/${groupId}/auto-pricing`, {
+        method: 'PUT',
+        token,
+        body: JSON.stringify({ enabled }),
+    });
+}
+
 // GET /api/properties/:id/price-overrides - Récupérer les price overrides
 export function getPriceOverrides(propertyId, token, startDate, endDate) {
     // Valider que propertyId est un UUID valide

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { getProperties, getGroups, addBooking, getBookingsForMonth, getAutoPricingStatus, enableAutoPricing, getPriceOverrides, updatePriceOverrides, applyPricingStrategy } from '../services/api.js';
+import { getProperties, getGroups, addBooking, getBookingsForMonth, getAutoPricingStatus, enableAutoPricing, getPriceOverrides, updatePriceOverrides, applyPricingStrategy, getPropertyAutoPricingStatus, enablePropertyAutoPricing, getGroupAutoPricingStatus, enableGroupAutoPricing } from '../services/api.js';
 import { jwtDecode } from 'jwt-decode'; 
 import Bouton from '../components/Bouton.jsx';
 import AlertModal from '../components/AlertModal.jsx';
@@ -70,34 +70,40 @@ function PricingPage({ token, userProfile }) {
           // On tente via le backend (droits élevés)
           const apiGroups = await getGroups(token);
           if (apiGroups) {
-              groupsData = apiGroups;
+              groupsData = Array.isArray(apiGroups) ? apiGroups : [];
           } else {
               // Si apiGroups est null (404), on tente le fallback Supabase direct (droits limités)
               console.warn("API Groups non disponible, fallback Supabase...");
               const { data } = await supabase.from('groups').select('*');
-              groupsData = data || [];
+              groupsData = Array.isArray(data) ? data : [];
           }
       } catch (e) {
           console.error("Erreur récupération groupes:", e);
           // Dernier recours
           const { data } = await supabase.from('groups').select('*');
-          groupsData = data || [];
+          groupsData = Array.isArray(data) ? data : [];
       }
+      console.log('Groupes récupérés (bruts):', groupsData); // Debug
       setAllGroups(groupsData);
 
       // C. Formatage des données pour le selecteur
-      const formattedGroups = groupsData.map(g => {
+      const formattedGroups = groupsData
+        .filter(g => g && g.id) // Filtrer les groupes invalides
+        .map(g => {
           // Supporte les deux formats de noms de colonnes (API vs Supabase direct)
           const mainId = g.main_property_id || g.mainPropertyId;
+          const groupName = g.name || 'Sans nom'; // Valeur par défaut si name est manquant
           return {
             uniqueId: `group-${g.id}`, 
             realId: g.id,              
             type: 'group',
-            name: `👥 Groupe: ${g.name}`, 
+            name: `👥 Groupe: ${groupName}`, 
             mainPropertyId: mainId,
             ...g
           };
-      });
+        });
+      
+      console.log('Groupes formatés:', formattedGroups); // Debug
 
       // On cache les propriétés qui sont déjà "Chefs de groupe" pour éviter les doublons visuels
       // Note : On ne filtre PLUS les groupes sans propriété principale, ils s'affichent quand même.
@@ -117,6 +123,9 @@ function PricingPage({ token, userProfile }) {
         }));
 
       const finalList = [...formattedGroups, ...formattedProps];
+      console.log('Liste finale (groupes + propriétés):', finalList); // Debug
+      console.log('Nombre de groupes:', formattedGroups.length); // Debug
+      console.log('Nombre de propriétés:', formattedProps.length); // Debug
       setProperties(finalList);
 
       // D. Sélection par défaut
@@ -136,22 +145,36 @@ function PricingPage({ token, userProfile }) {
 
   useEffect(() => { fetchInitialData(); }, [fetchInitialData]);
 
-  // --- AUTO PRICING STATUS ---
+  // --- AUTO PRICING STATUS (par propriété/groupe) ---
   useEffect(() => {
     const loadAutoPricingStatus = async () => {
-      if (!token) { setIsLoadingAutoPricing(false); return; }
+      if (!token || !selectedId) { setIsLoadingAutoPricing(false); return; }
+      setIsLoadingAutoPricing(true);
       try {
+        if (selectedView === 'group') {
+          const status = await getGroupAutoPricingStatus(selectedId, token);
+          setIsAutoGenerationEnabled(status.enabled || false);
+        } else {
+          const status = await getPropertyAutoPricingStatus(selectedId, token);
+          setIsAutoGenerationEnabled(status.enabled || false);
+        }
+        // Récupérer aussi le timezone depuis le profil utilisateur (pour compatibilité)
         let userId = jwtDecode(token)?.sub;
-        if (!userId) { setIsLoadingAutoPricing(false); return; }
-        const status = await getAutoPricingStatus(userId, token);
-        setIsAutoGenerationEnabled(status.enabled || false);
-        setAutoPricingTimezone(status.timezone || userProfile?.timezone || 'Europe/Paris');
-        setAutoPricingLastRun(status.lastRun || null);
-      } catch (err) { setIsAutoGenerationEnabled(false); } 
+        if (userId) {
+          const userStatus = await getAutoPricingStatus(userId, token).catch(() => null);
+          if (userStatus) {
+            setAutoPricingTimezone(userStatus.timezone || userProfile?.timezone || 'Europe/Paris');
+            setAutoPricingLastRun(userStatus.lastRun || null);
+          }
+        }
+      } catch (err) { 
+        console.error('Erreur chargement statut pricing automatique:', err);
+        setIsAutoGenerationEnabled(false); 
+      } 
       finally { setIsLoadingAutoPricing(false); }
     };
     loadAutoPricingStatus();
-  }, [token, userProfile]);
+  }, [token, userProfile, selectedId, selectedView]);
 
   useEffect(() => {
     const checkQuota = async () => {
@@ -279,6 +302,11 @@ function PricingPage({ token, userProfile }) {
   };
 
   const handleToggleAutoGeneration = async (newEnabled) => {
+    if (!selectedId) {
+      setAutoPricingError('Veuillez sélectionner une propriété ou un groupe.');
+      return;
+    }
+
     setAutoPricingSuccess(''); setAutoPricingError('');
     if (newEnabled) {
       const { isQuotaReached } = await checkQuotaStatus(token);
@@ -291,9 +319,21 @@ function PricingPage({ token, userProfile }) {
     setIsAutoGenerationEnabled(newEnabled); 
     
     try {
+        // Sauvegarder le statut pour la propriété/groupe sélectionnée
+        if (selectedView === 'group') {
+          await enableGroupAutoPricing(selectedId, newEnabled, token);
+        } else {
+          await enablePropertyAutoPricing(selectedId, newEnabled, token);
+        }
+
+        // Mettre à jour aussi le timezone au niveau utilisateur (pour compatibilité)
         const userId = jwtDecode(token)?.sub;
-        if (!userId) throw new Error("User ID introuvable");
-        await enableAutoPricing(userId, newEnabled, autoPricingTimezone, token);
+        if (userId) {
+          await enableAutoPricing(userId, newEnabled, autoPricingTimezone, token).catch(() => {
+            // Ignorer les erreurs au niveau utilisateur si le pricing est géré par propriété/groupe
+          });
+        }
+
         if (newEnabled) {
             handleGenerateStrategy();
             setAutoPricingSuccess(t('pricing.autoPricing.success'));
