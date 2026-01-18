@@ -7,7 +7,6 @@ const OpenAI = require('openai');
 const { exec } = require('child_process');
 const { promisify } = require('util');
 const path = require('path');
-const multer = require('multer');
 
 const execAsync = promisify(exec); 
 
@@ -47,91 +46,6 @@ console.log('✅ Connecté à Supabase avec succès.');
 
 const app = express();
 const port = process.env.PORT || 5000;
-
-// Configuration multer pour les uploads de fichiers (images)
-const upload = multer({ 
-    storage: multer.memoryStorage(), // Stocker en mémoire pour upload direct vers Supabase
-    limits: {
-        fileSize: 5 * 1024 * 1024, // Limite de 5MB par fichier
-        files: 10 // Maximum 10 fichiers
-    },
-    fileFilter: (req, file, cb) => {
-        // Vérifier que c'est une image
-        if (file.mimetype.startsWith('image/')) {
-            cb(null, true);
-        } else {
-            cb(new Error('Seules les images sont autorisées.'), false);
-        }
-    }
-});
-
-/**
- * Upload des images vers Supabase Storage
- * @param {Array<Express.Multer.File>} files - Les fichiers images à uploader
- * @param {string} propertyId - L'ID de la propriété (ou 'temp' si pas encore créée)
- * @param {string} userId - L'ID de l'utilisateur
- * @returns {Promise<string[]>} - Les URLs publiques des images uploadées
- */
-async function uploadImagesToSupabase(files, propertyId, userId) {
-    if (!files || files.length === 0) {
-        return [];
-    }
-
-    const BUCKET_NAME = 'property-images'; // Nom du bucket Supabase Storage
-    const uploadedUrls = [];
-
-    try {
-        // Vérifier/créer le bucket (si nécessaire)
-        const { data: buckets, error: listError } = await supabase.storage.listBuckets();
-        if (!listError) {
-            const bucketExists = buckets?.some(bucket => bucket.name === BUCKET_NAME);
-            if (!bucketExists) {
-                // Créer le bucket s'il n'existe pas (public pour les images)
-                const { error: createError } = await supabase.storage.createBucket(BUCKET_NAME, {
-                    public: true,
-                    allowedMimeTypes: ['image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'image/gif']
-                });
-                if (createError && !createError.message.includes('already exists')) {
-                    console.warn(`[Storage] Impossible de créer le bucket ${BUCKET_NAME}:`, createError.message);
-                }
-            }
-        }
-
-        // Uploader chaque image
-        for (let i = 0; i < files.length; i++) {
-            const file = files[i];
-            const fileExt = path.extname(file.originalname);
-            const fileName = `${propertyId || 'temp'}/${userId}/${Date.now()}-${i}${fileExt}`;
-            const filePath = `properties/${fileName}`;
-
-            const { data, error } = await supabase.storage
-                .from(BUCKET_NAME)
-                .upload(filePath, file.buffer, {
-                    contentType: file.mimetype,
-                    upsert: false
-                });
-
-            if (error) {
-                console.error(`[Storage] Erreur upload image ${i}:`, error);
-                continue; // Continuer avec les autres images même si une échoue
-            }
-
-            // Obtenir l'URL publique de l'image
-            const { data: urlData } = supabase.storage
-                .from(BUCKET_NAME)
-                .getPublicUrl(filePath);
-
-            if (urlData?.publicUrl) {
-                uploadedUrls.push(urlData.publicUrl);
-            }
-        }
-    } catch (error) {
-        console.error('[Storage] Erreur lors de l\'upload des images:', error);
-        throw new Error('Erreur lors de l\'upload des images vers le stockage.');
-    }
-
-    return uploadedUrls;
-}
 
 // Vérification des variables d'environnement Stripe au démarrage
 if (!process.env.STRIPE_SECRET_KEY) {
@@ -3291,30 +3205,10 @@ app.get('/api/properties', authenticateToken, async (req, res) => {
     }
 });
 
-app.post('/api/properties', authenticateToken, upload.array('images', 10), async (req, res) => {
+app.post('/api/properties', authenticateToken, async (req, res) => {
     try {
+        const newPropertyData = req.body;
         const userId = req.user.uid;
-        let newPropertyData = req.body;
-        
-        // Si des fichiers sont uploadés, parser les données JSON du champ 'data'
-        if (req.files && req.files.length > 0) {
-            try {
-                if (req.body.data) {
-                    newPropertyData = JSON.parse(req.body.data);
-                }
-                // Si des images existantes sont fournies (URLs), les parser aussi
-                if (req.body.existingImages) {
-                    const existingImages = JSON.parse(req.body.existingImages);
-                    newPropertyData.existingImages = existingImages;
-                }
-            } catch (parseError) {
-                console.error('[Properties] Erreur parsing FormData:', parseError);
-                return res.status(400).json({ 
-                    error: 'Format invalide', 
-                    message: 'Erreur lors du parsing des données FormData.' 
-                });
-            }
-        }
         
         // 1. Valider strictement tous les inputs avant traitement
         if (!newPropertyData || typeof newPropertyData !== 'object') {
@@ -3412,28 +3306,6 @@ app.post('/api/properties', authenticateToken, upload.array('images', 10), async
         
         const createdProperty = await db.createProperty(propertyWithOwner);
         
-        // Uploader les images vers Supabase Storage si des fichiers sont fournis
-        let imageUrls = [];
-        if (req.files && req.files.length > 0) {
-            try {
-                const uploadedUrls = await uploadImagesToSupabase(req.files, createdProperty.id, userId);
-                imageUrls = [...uploadedUrls];
-            } catch (uploadError) {
-                console.error('[Properties] Erreur upload images:', uploadError);
-                // Ne pas échouer la création de la propriété si l'upload d'images échoue
-            }
-        }
-        
-        // Ajouter les images existantes (URLs) si fournies
-        if (newPropertyData.existingImages && Array.isArray(newPropertyData.existingImages)) {
-            imageUrls = [...imageUrls, ...newPropertyData.existingImages];
-        }
-        
-        // Mettre à jour la propriété avec les URLs des images si des images ont été uploadées
-        if (imageUrls.length > 0) {
-            await db.updateProperty(createdProperty.id, { images: imageUrls, image_urls: imageUrls });
-        }
-        
         // Log de la création
         await logPropertyChange(createdProperty.id, req.user.uid, req.user.email, 'create', propertyWithOwner);
         
@@ -3456,11 +3328,11 @@ app.post('/api/properties', authenticateToken, upload.array('images', 10), async
     }
 });
 
-app.put('/api/properties/:id', authenticateToken, upload.array('images', 10), async (req, res) => {
+app.put('/api/properties/:id', authenticateToken, async (req, res) => {
     try {
         const propertyId = req.params.id;
         const userId = req.user.uid;
-        let updatedData = req.body;
+        const updatedData = req.body;
 
         const property = await db.getProperty(propertyId);
         if (!property) {
@@ -3480,60 +3352,9 @@ app.put('/api/properties/:id', authenticateToken, upload.array('images', 10), as
              return res.status(403).send({ error: 'Action non autorisée (rôle insuffisant).' });
         }
         
-        // Si des fichiers sont uploadés, parser les données JSON du champ 'data'
-        if (req.files && req.files.length > 0) {
-            try {
-                if (req.body.data) {
-                    updatedData = JSON.parse(req.body.data);
-                }
-                // Si des images existantes sont fournies (URLs), les parser aussi
-                if (req.body.existingImages) {
-                    const existingImages = JSON.parse(req.body.existingImages);
-                    updatedData.existingImages = existingImages;
-                }
-            } catch (parseError) {
-                console.error('[Properties] Erreur parsing FormData:', parseError);
-                return res.status(400).json({ 
-                    error: 'Format invalide', 
-                    message: 'Erreur lors du parsing des données FormData.' 
-                });
-            }
-        }
-        
-        // Uploader les nouvelles images vers Supabase Storage si des fichiers sont fournis
-        let newImageUrls = [];
-        if (req.files && req.files.length > 0) {
-            try {
-                const uploadedUrls = await uploadImagesToSupabase(req.files, propertyId, userId);
-                newImageUrls = [...uploadedUrls];
-            } catch (uploadError) {
-                console.error('[Properties] Erreur upload images:', uploadError);
-                // Ne pas échouer la mise à jour si l'upload d'images échoue
-            }
-        }
-        
-        // Combiner les nouvelles images uploadées avec les images existantes
-        let finalImageUrls = [];
-        if (newImageUrls.length > 0) {
-            finalImageUrls = [...newImageUrls];
-        }
-        if (updatedData.existingImages && Array.isArray(updatedData.existingImages)) {
-            finalImageUrls = [...finalImageUrls, ...updatedData.existingImages];
-        }
-        
-        // Si des images ont été uploadées ou mises à jour, les ajouter aux données à mettre à jour
-        if (finalImageUrls.length > 0) {
-            updatedData.images = finalImageUrls;
-            updatedData.image_urls = finalImageUrls;
-        }
-        
         // Adapter les noms de champs pour PostgreSQL
         const dataToUpdate = {};
         Object.keys(updatedData).forEach(key => {
-            // Ignorer les champs spéciaux qui ne vont pas dans la base
-            if (key === 'existingImages') {
-                return;
-            }
             // Convertir camelCase en snake_case si nécessaire
             const snakeKey = key.replace(/([A-Z])/g, '_$1').toLowerCase();
             dataToUpdate[snakeKey] = updatedData[key];
