@@ -5157,7 +5157,7 @@ app.get('/api/reports/kpis', authenticateToken, async (req, res) => {
     const endpoint = '/api/reports/kpis';
     try {
         const userId = req.user.uid;
-        const { startDate, endDate } = req.query; // ex: '2025-01-01', '2025-01-31'
+        const { startDate, endDate, propertyType, channel, status, location } = req.query; // ex: '2025-01-01', '2025-01-31'
 
         // 1. Valider strictement les dates (format, plage, validité)
         if (!startDate || !endDate) {
@@ -5196,14 +5196,38 @@ app.get('/api/reports/kpis', authenticateToken, async (req, res) => {
         const { teamId } = await getOrInitializeTeamId(userId);
 
         // 2. Récupérer les données des propriétés (pour le prix de base)
-        const properties = await db.getPropertiesByTeam(teamId);
+        let properties = await db.getPropertiesByTeam(teamId);
         if (!properties || properties.length === 0) {
             return res.status(200).json({ totalRevenue: 0, totalNightsBooked: 0, adr: 0, occupancy: 0, totalNightsAvailable: 0, iaGain: 0, iaScore: 0, revPar: 0 });
         }
         
+        // 2.5 Appliquer les filtres sur les propriétés
+        if (propertyType) {
+            properties = properties.filter(p => p.property_type === propertyType);
+        }
+        if (channel) {
+            properties = properties.filter(p => p.channel === channel);
+        }
+        if (status) {
+            properties = properties.filter(p => p.status === status);
+        }
+        if (location) {
+            const locLower = location.toLowerCase();
+            properties = properties.filter(p => 
+                (p.location && p.location.toLowerCase().includes(locLower)) || 
+                (p.address && p.address.toLowerCase().includes(locLower))
+            );
+        }
+        
+        if (properties.length === 0) {
+            return res.status(200).json({ totalRevenue: 0, totalNightsBooked: 0, adr: 0, occupancy: 0, totalNightsAvailable: 0, iaGain: 0, iaScore: 0, revPar: 0 });
+        }
+        
         const propertyBasePrices = new Map();
+        const filteredPropertyIds = new Set();
         properties.forEach(prop => {
             propertyBasePrices.set(prop.id, prop.base_price || 0); // Utiliser 0 si non défini
+            filteredPropertyIds.add(prop.id);
         });
         
         const totalPropertiesInTeam = properties.length;
@@ -5213,7 +5237,10 @@ app.get('/api/reports/kpis', authenticateToken, async (req, res) => {
         const totalNightsAvailable = totalPropertiesInTeam * daysInPeriod;
 
         // 4. Interroger toutes les réservations de l'équipe qui chevauchent la période
-        const bookings = await db.getBookingsByTeamAndDateRange(teamId, validatedStartDate, validatedEndDate);
+        let bookings = await db.getBookingsByTeamAndDateRange(teamId, validatedStartDate, validatedEndDate);
+        
+        // 4.5 Filtrer les bookings pour ne garder que ceux des propriétés filtrées
+        bookings = bookings.filter(booking => filteredPropertyIds.has(booking.property_id));
 
         if (!bookings || bookings.length === 0) {
              return res.status(200).json({ totalRevenue: 0, totalNightsBooked: 0, adr: 0, occupancy: 0, totalNightsAvailable: totalNightsAvailable, iaGain: 0, iaScore: 0, revPar: 0 });
@@ -5285,7 +5312,7 @@ app.get('/api/reports/revenue-over-time', authenticateToken, async (req, res) =>
     const endpoint = '/api/reports/revenue-over-time';
     try {
         const userId = req.user.uid;
-        const { startDate, endDate } = req.query;
+        const { startDate, endDate, propertyType, channel, status, location } = req.query;
 
         // 1. Valider strictement les dates (format, plage, validité)
         if (!startDate || !endDate) {
@@ -5323,7 +5350,27 @@ app.get('/api/reports/revenue-over-time', authenticateToken, async (req, res) =>
         // 2. Trouver le teamId et le nombre total de propriétés
         const { teamId } = await getOrInitializeTeamId(userId);
 
-        const properties = await db.getPropertiesByTeam(teamId);
+        let properties = await db.getPropertiesByTeam(teamId);
+        
+        // 2.5 Appliquer les filtres sur les propriétés
+        if (propertyType) {
+            properties = properties.filter(p => p.property_type === propertyType);
+        }
+        if (channel) {
+            properties = properties.filter(p => p.channel === channel);
+        }
+        if (status) {
+            properties = properties.filter(p => p.status === status);
+        }
+        if (location) {
+            const locLower = location.toLowerCase();
+            properties = properties.filter(p => 
+                (p.location && p.location.toLowerCase().includes(locLower)) || 
+                (p.address && p.address.toLowerCase().includes(locLower))
+            );
+        }
+        
+        const filteredPropertyIds = new Set(properties.map(p => p.id));
         const totalPropertiesInTeam = properties.length;
 
         // 3. Initialiser une carte de dates
@@ -5337,7 +5384,10 @@ app.get('/api/reports/revenue-over-time', authenticateToken, async (req, res) =>
         }
 
         // 4. Récupérer les réservations qui chevauchent la période
-        const bookings = await db.getBookingsByTeamAndDateRange(teamId, validatedStartDate, validatedEndDate);
+        let bookings = await db.getBookingsByTeamAndDateRange(teamId, validatedStartDate, validatedEndDate);
+        
+        // 4.5 Filtrer les bookings pour ne garder que ceux des propriétés filtrées
+        bookings = bookings.filter(booking => filteredPropertyIds.has(booking.property_id));
 
         // 4. Itérer sur chaque réservation et chaque jour de la réservation
         bookings.forEach(booking => {
@@ -5469,7 +5519,7 @@ app.get('/api/reports/positioning', authenticateToken, checkAIQuota, async (req,
     let aiCallSucceeded = false;
     try {
         const userId = req.user.uid;
-        const { startDate, endDate } = req.query;
+        const { startDate, endDate, propertyType, channel, status, location } = req.query;
 
         // 1. Valider strictement les dates (format, plage, validité)
         if (!startDate || !endDate) {
@@ -5520,7 +5570,26 @@ app.get('/api/reports/positioning', authenticateToken, checkAIQuota, async (req,
         // 1. Récupérer le teamId et les propriétés
         const { teamId, userProfile } = await getOrInitializeTeamId(userId);
 
-        const propertiesList = await db.getPropertiesByTeam(teamId);
+        let propertiesList = await db.getPropertiesByTeam(teamId);
+        
+        // 1.5 Appliquer les filtres sur les propriétés
+        if (propertyType) {
+            propertiesList = propertiesList.filter(p => p.property_type === propertyType);
+        }
+        if (channel) {
+            propertiesList = propertiesList.filter(p => p.channel === channel);
+        }
+        if (status) {
+            propertiesList = propertiesList.filter(p => p.status === status);
+        }
+        if (location) {
+            const locLower = location.toLowerCase();
+            propertiesList = propertiesList.filter(p => 
+                (p.location && p.location.toLowerCase().includes(locLower)) || 
+                (p.address && p.address.toLowerCase().includes(locLower))
+            );
+        }
+        
         if (propertiesList.length === 0) {
             return res.status(200).json({
                 adrVsMarket: { labels: [], yourAdrData: [], marketAdrData: [] },
@@ -5795,7 +5864,7 @@ CRITICAL REMINDER: Respond ONLY with this JSON, no comments, no text around, no 
 app.get('/api/reports/performance-over-time', authenticateToken, async (req, res) => {
     try {
         const userId = req.user.uid;
-        const { startDate, endDate } = req.query;
+        const { startDate, endDate, propertyType, channel, status, location } = req.query;
 
         if (!startDate || !endDate) {
             return res.status(400).send({ error: 'Les dates de début et de fin sont requises.' });
@@ -5804,7 +5873,27 @@ app.get('/api/reports/performance-over-time', authenticateToken, async (req, res
         // 1. Find teamId and total properties
         const { teamId } = await getOrInitializeTeamId(userId);
 
-        const propertiesList = await db.getPropertiesByTeam(teamId);
+        let propertiesList = await db.getPropertiesByTeam(teamId);
+        
+        // 1.5 Appliquer les filtres sur les propriétés
+        if (propertyType) {
+            propertiesList = propertiesList.filter(p => p.property_type === propertyType);
+        }
+        if (channel) {
+            propertiesList = propertiesList.filter(p => p.channel === channel);
+        }
+        if (status) {
+            propertiesList = propertiesList.filter(p => p.status === status);
+        }
+        if (location) {
+            const locLower = location.toLowerCase();
+            propertiesList = propertiesList.filter(p => 
+                (p.location && p.location.toLowerCase().includes(locLower)) || 
+                (p.address && p.address.toLowerCase().includes(locLower))
+            );
+        }
+        
+        const filteredPropertyIds = new Set(propertiesList.map(p => p.id));
         const totalPropertiesInTeam = propertiesList.length;
 
         if (totalPropertiesInTeam === 0) {
@@ -5826,7 +5915,10 @@ app.get('/api/reports/performance-over-time', authenticateToken, async (req, res
         }
 
         // 4. Get bookings
-        const bookings = await db.getBookingsByTeamAndDateRange(teamId, startDate, endDate);
+        let bookings = await db.getBookingsByTeamAndDateRange(teamId, startDate, endDate);
+        
+        // 4.5 Filtrer les bookings pour ne garder que ceux des propriétés filtrées
+        bookings = bookings.filter(booking => filteredPropertyIds.has(booking.property_id));
 
         // 5. Populate dailyData map
         bookings.forEach(booking => {
@@ -6500,7 +6592,7 @@ app.get('/api/reports/forecast-radar', authenticateToken, async (req, res) => {
 app.get('/api/reports/revenue-vs-target', authenticateToken, async (req, res) => {
     try {
         const userId = req.user.uid;
-        const { startDate, endDate } = req.query;
+        const { startDate, endDate, propertyType, channel, status, location } = req.query;
 
         if (!startDate || !endDate) {
             return res.status(400).send({ error: 'Les dates de début et de fin sont requises.' });
@@ -6509,7 +6601,28 @@ app.get('/api/reports/revenue-vs-target', authenticateToken, async (req, res) =>
         // 1. Récupérer le teamId
         const { teamId, userProfile } = await getOrInitializeTeamId(userId);
 
-        const properties = await db.getPropertiesByTeam(teamId);
+        let properties = await db.getPropertiesByTeam(teamId);
+        
+        // 1.5 Appliquer les filtres sur les propriétés
+        if (propertyType) {
+            properties = properties.filter(p => p.property_type === propertyType);
+        }
+        if (channel) {
+            properties = properties.filter(p => p.channel === channel);
+        }
+        if (status) {
+            properties = properties.filter(p => p.status === status);
+        }
+        if (location) {
+            const locLower = location.toLowerCase();
+            properties = properties.filter(p => 
+                (p.location && p.location.toLowerCase().includes(locLower)) || 
+                (p.address && p.address.toLowerCase().includes(locLower))
+            );
+        }
+        
+        const filteredPropertyIds = new Set(properties.map(p => p.id));
+        
         if (properties.length === 0) {
             return res.status(200).json({
                 labels: [],
@@ -6537,7 +6650,10 @@ app.get('/api/reports/revenue-vs-target', authenticateToken, async (req, res) =>
         }
 
         // 4. Récupérer les réservations et calculer les revenus par mois
-        const bookings = await db.getBookingsByTeamAndDateRange(teamId, startDate, endDate);
+        let bookings = await db.getBookingsByTeamAndDateRange(teamId, startDate, endDate);
+        
+        // 4.5 Filtrer les bookings pour ne garder que ceux des propriétés filtrées
+        bookings = bookings.filter(booking => filteredPropertyIds.has(booking.property_id));
 
         bookings.forEach(booking => {
             const pricePerNight = booking.price_per_night || 
@@ -6607,7 +6723,7 @@ app.get('/api/reports/revenue-vs-target', authenticateToken, async (req, res) =>
 app.get('/api/reports/gross-margin', authenticateToken, async (req, res) => {
     try {
         const userId = req.user.uid;
-        const { startDate, endDate } = req.query;
+        const { startDate, endDate, propertyType, channel, status, location } = req.query;
 
         if (!startDate || !endDate) {
             return res.status(400).send({ error: 'Les dates de début et de fin sont requises.' });
@@ -6616,7 +6732,28 @@ app.get('/api/reports/gross-margin', authenticateToken, async (req, res) => {
         // 1. Récupérer le teamId
         const { teamId, userProfile } = await getOrInitializeTeamId(userId);
 
-        const properties = await db.getPropertiesByTeam(teamId);
+        let properties = await db.getPropertiesByTeam(teamId);
+        
+        // 1.5 Appliquer les filtres sur les propriétés
+        if (propertyType) {
+            properties = properties.filter(p => p.property_type === propertyType);
+        }
+        if (channel) {
+            properties = properties.filter(p => p.channel === channel);
+        }
+        if (status) {
+            properties = properties.filter(p => p.status === status);
+        }
+        if (location) {
+            const locLower = location.toLowerCase();
+            properties = properties.filter(p => 
+                (p.location && p.location.toLowerCase().includes(locLower)) || 
+                (p.address && p.address.toLowerCase().includes(locLower))
+            );
+        }
+        
+        const filteredPropertyIds = new Set(properties.map(p => p.id));
+        
         if (properties.length === 0) {
             return res.status(200).json({
                 labels: [],
@@ -6644,7 +6781,10 @@ app.get('/api/reports/gross-margin', authenticateToken, async (req, res) => {
         }
 
         // 3. Récupérer les réservations et calculer les revenus par mois
-        const bookings = await db.getBookingsByTeamAndDateRange(teamId, startDate, endDate);
+        let bookings = await db.getBookingsByTeamAndDateRange(teamId, startDate, endDate);
+        
+        // 3.5 Filtrer les bookings pour ne garder que ceux des propriétés filtrées
+        bookings = bookings.filter(booking => filteredPropertyIds.has(booking.property_id));
 
         bookings.forEach(booking => {
             const pricePerNight = booking.price_per_night || 
@@ -6768,7 +6908,7 @@ app.get('/api/reports/gross-margin', authenticateToken, async (req, res) => {
 app.get('/api/reports/adr-by-channel', authenticateToken, async (req, res) => {
     try {
         const userId = req.user.uid;
-        const { startDate, endDate } = req.query;
+        const { startDate, endDate, propertyType, channel, status, location } = req.query;
 
         if (!startDate || !endDate) {
             return res.status(400).send({ error: 'Les dates de début et de fin sont requises.' });
@@ -6777,7 +6917,28 @@ app.get('/api/reports/adr-by-channel', authenticateToken, async (req, res) => {
         // 1. Récupérer le teamId
         const { teamId, userProfile } = await getOrInitializeTeamId(userId);
 
-        const properties = await db.getPropertiesByTeam(teamId);
+        let properties = await db.getPropertiesByTeam(teamId);
+        
+        // 1.5 Appliquer les filtres sur les propriétés
+        if (propertyType) {
+            properties = properties.filter(p => p.property_type === propertyType);
+        }
+        if (channel) {
+            properties = properties.filter(p => p.channel === channel);
+        }
+        if (status) {
+            properties = properties.filter(p => p.status === status);
+        }
+        if (location) {
+            const locLower = location.toLowerCase();
+            properties = properties.filter(p => 
+                (p.location && p.location.toLowerCase().includes(locLower)) || 
+                (p.address && p.address.toLowerCase().includes(locLower))
+            );
+        }
+        
+        const filteredPropertyIds = new Set(properties.map(p => p.id));
+        
         if (properties.length === 0) {
             return res.status(200).json({
                 labels: [],
@@ -6796,10 +6957,14 @@ app.get('/api/reports/adr-by-channel', authenticateToken, async (req, res) => {
         const prevEndDate = prevEnd.toISOString().split('T')[0];
 
         // 3. Récupérer les réservations pour la période actuelle et précédente
-        const [currentBookings, prevBookings] = await Promise.all([
+        let [currentBookings, prevBookings] = await Promise.all([
             db.getBookingsByTeamAndDateRange(teamId, startDate, endDate),
             db.getBookingsByTeamAndDateRange(teamId, prevStartDate, prevEndDate)
         ]);
+        
+        // 3.5 Filtrer les bookings pour ne garder que ceux des propriétés filtrées
+        currentBookings = currentBookings.filter(booking => filteredPropertyIds.has(booking.property_id));
+        prevBookings = prevBookings.filter(booking => filteredPropertyIds.has(booking.property_id));
 
         // 4. Grouper les réservations par canal pour la période actuelle
         const channelStats = new Map(); // channel -> { revenue: 0, nights: 0 }
