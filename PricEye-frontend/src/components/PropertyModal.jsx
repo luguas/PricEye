@@ -153,9 +153,13 @@ function PropertyModal({ token, onClose, onSave, property, initialStep = 1 }) {
         tax_info: property.tax_info || '',
         capacity: property.capacity || '',
         daily_revenue: property.daily_revenue || '',
-        // Gestion des images
+        // Gestion des images - vérifier plusieurs champs possibles
         images: [],
-        previewImages: property.images || [],
+        previewImages: (Array.isArray(property.images) && property.images.length > 0) ? property.images :
+          (Array.isArray(property.image_urls) && property.image_urls.length > 0) ? property.image_urls :
+          property.coverImage ? [property.coverImage] :
+          property.imageUrl ? [property.imageUrl] :
+          property.photoUrl ? [property.photoUrl] : [],
       });
     } else {
        setFormData({
@@ -283,6 +287,9 @@ function PropertyModal({ token, onClose, onSave, property, initialStep = 1 }) {
         // Champs de compatibilité
         capacity: parseInt(formData.capacity, 10) || 0,
         daily_revenue: parseFloat(formData.base_price) || 100,
+        // Inclure les images (nouvelles images uploadées ou URLs existantes)
+        images: formData.images && formData.images.length > 0 ? formData.images : null,
+        previewImages: formData.previewImages && formData.previewImages.length > 0 ? formData.previewImages : null,
       };
 
       if (isEditing) {

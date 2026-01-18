@@ -23,10 +23,17 @@ async function apiRequest(endpoint, options = {}) {
   // Récupération du token (supporte l'injection manuelle ou via variable globale si implémentée précédemment)
   const token = options.token || (typeof globalAuthToken !== 'undefined' ? globalAuthToken : null);
   
+  // Si le body est FormData, ne pas définir Content-Type (le navigateur le fera automatiquement)
+  const isFormData = options.body instanceof FormData;
+  
   const headers = {
-    'Content-Type': options.headers?.['Content-Type'] ?? 'application/json',
-    ...options.headers,
+    ...(options.headers || {}),
   };
+
+  // Ne définir Content-Type que si ce n'est pas FormData et qu'il n'a pas été défini manuellement
+  if (!isFormData && !headers['Content-Type']) {
+    headers['Content-Type'] = 'application/json';
+  }
 
   if (token) {
     headers['Authorization'] = `Bearer ${token}`;
@@ -376,19 +383,93 @@ export function getProperties(token) {
 }
 
 export function addProperty(propertyData, token) {
-  return apiRequest('/api/properties', {
-    method: 'POST',
-    token,
-    body: JSON.stringify(propertyData),
-  });
+  // Si des images sont présentes, utiliser FormData, sinon JSON
+  const hasImages = propertyData.images && propertyData.images.length > 0;
+  
+  if (hasImages) {
+    const formData = new FormData();
+    
+    // Ajouter toutes les propriétés comme JSON dans un champ 'data'
+    const { images, previewImages, ...dataWithoutImages } = propertyData;
+    formData.append('data', JSON.stringify(dataWithoutImages));
+    
+    // Ajouter les images uploadées
+    images.forEach((image, index) => {
+      if (image instanceof File) {
+        formData.append(`images`, image);
+      }
+    });
+    
+    // Si des previewImages existent et sont des URLs (pas des blob URLs locales), les inclure
+    if (previewImages && previewImages.length > 0) {
+      const existingImageUrls = previewImages.filter(url => 
+        typeof url === 'string' && !url.startsWith('blob:') && url.startsWith('http')
+      );
+      if (existingImageUrls.length > 0) {
+        formData.append('existingImages', JSON.stringify(existingImageUrls));
+      }
+    }
+    
+    return apiRequest('/api/properties', {
+      method: 'POST',
+      token,
+      body: formData,
+      headers: {}, // Ne pas définir Content-Type, le navigateur le fera automatiquement pour FormData
+    });
+  } else {
+    // Pas d'images, utiliser JSON normal
+    const { images, previewImages, ...dataWithoutImages } = propertyData;
+    return apiRequest('/api/properties', {
+      method: 'POST',
+      token,
+      body: JSON.stringify(dataWithoutImages),
+    });
+  }
 }
 
 export function updateProperty(id, propertyData, token) {
-  return apiRequest(`/api/properties/${id}`, {
-    method: 'PUT',
-    token,
-    body: JSON.stringify(propertyData),
-  });
+  // Si des images sont présentes, utiliser FormData, sinon JSON
+  const hasImages = propertyData.images && propertyData.images.length > 0;
+  
+  if (hasImages) {
+    const formData = new FormData();
+    
+    // Ajouter toutes les propriétés comme JSON dans un champ 'data'
+    const { images, previewImages, ...dataWithoutImages } = propertyData;
+    formData.append('data', JSON.stringify(dataWithoutImages));
+    
+    // Ajouter les images uploadées
+    images.forEach((image, index) => {
+      if (image instanceof File) {
+        formData.append(`images`, image);
+      }
+    });
+    
+    // Si des previewImages existent et sont des URLs (pas des blob URLs locales), les inclure
+    if (previewImages && previewImages.length > 0) {
+      const existingImageUrls = previewImages.filter(url => 
+        typeof url === 'string' && !url.startsWith('blob:') && url.startsWith('http')
+      );
+      if (existingImageUrls.length > 0) {
+        formData.append('existingImages', JSON.stringify(existingImageUrls));
+      }
+    }
+    
+    return apiRequest(`/api/properties/${id}`, {
+      method: 'PUT',
+      token,
+      body: formData,
+      headers: {}, // Ne pas définir Content-Type, le navigateur le fera automatiquement pour FormData
+    });
+  } else {
+    // Pas d'images, utiliser JSON normal
+    const { images, previewImages, ...dataWithoutImages } = propertyData;
+    return apiRequest(`/api/properties/${id}`, {
+      method: 'PUT',
+      token,
+      body: JSON.stringify(dataWithoutImages),
+    });
+  }
 }
 
 export function deleteProperty(id, token) {
