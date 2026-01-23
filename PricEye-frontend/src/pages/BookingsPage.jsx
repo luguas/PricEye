@@ -108,7 +108,7 @@ function BookingsPage({ token, userProfile }) {
   const [error, setError] = useState('');
 
   // États des filtres
-  const [dateRange, setDateRange] = useState('next_30d'); // Défaut sur les 30 prochains jours
+  const [dateRange, setDateRange] = useState('all_time'); // Défaut sur tout le temps
   const [selectedPropertyIds, setSelectedPropertyIds] = useState([]);
   const [selectedChannel, setSelectedChannel] = useState('');
   const [minPrice, setMinPrice] = useState('');
@@ -161,6 +161,11 @@ function BookingsPage({ token, userProfile }) {
           let end = getZonedDate();
 
           switch (dateRange) {
+              case 'all_time':
+                  // Pour "tout le temps", on récupère sur une large plage (5 ans passés et 2 ans futurs)
+                  start = new Date(Date.UTC(today.getUTCFullYear() - 5, 0, 1));
+                  end = new Date(Date.UTC(today.getUTCFullYear() + 2, 11, 31));
+                  break;
               case 'next_30d':
                   end.setUTCDate(today.getUTCDate() + 30);
                   break;
@@ -361,6 +366,7 @@ function BookingsPage({ token, userProfile }) {
             onChange={(e) => setDateRange(e.target.value)} 
             className="w-full bg-global-bg-small-box border border-global-stroke-box rounded-[10px] px-3 py-2 text-global-blanc font-h4-font-family text-h4-font-size focus:outline-none focus:ring-2 focus:ring-global-content-highlight-2nd"
           >
+            <option value="all_time">{t('bookings.allTime')}</option>
             <option value="next_30d">{t('bookings.next30Days')}</option>
             <option value="next_90d">{t('bookings.next90Days')}</option>
             <option value="this_month">{t('bookings.thisMonth')}</option>

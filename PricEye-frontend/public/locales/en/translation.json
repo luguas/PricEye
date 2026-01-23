@@ -429,6 +429,7 @@
     "selectAll": "Select all",
     "deselectAll": "Deselect all",
     "period": "Period",
+    "allTime": "All time",
     "next30Days": "Next 30 days",
     "next90Days": "Next 90 days",
     "thisMonth": "This month",
@@ -488,10 +489,18 @@
     "lockPrice": "Lock this price (AI will not modify it)",
     "groupPriceNote": "The price will be applied to all synchronized properties in this group.",
     "selectPeriod": "Select a period on the calendar to get started.",
+    "currentPrice": "Current price",
+    "modifyPricePerNight": "Modify price per night",
+    "enterNewPrice": "Enter the new price",
+    "modifyPrice": "Modify price",
+    "clickToAddOrModifyPrice": "Click on a day to add or modify a price",
     "legend": {
       "priceSelection": "Price selection",
       "booked": "Booked",
-      "bookingSelection": "Booking selection"
+      "bookingSelection": "Booking selection",
+      "priceDefined": "Price set",
+      "reserved": "Reserved",
+      "empty": "Empty"
     },
     "strategy": {
       "title": "AI Strategy (Pricing)",

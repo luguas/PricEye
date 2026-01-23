@@ -429,6 +429,7 @@
     "selectAll": "Tout sélectionner",
     "deselectAll": "Tout désélectionner",
     "period": "Période",
+    "allTime": "Tout le temps",
     "next30Days": "30 prochains jours",
     "next90Days": "90 prochains jours",
     "thisMonth": "Ce mois-ci",
@@ -488,10 +489,18 @@
     "lockPrice": "Verrouiller ce prix (l'IA ne le modifiera pas)",
     "groupPriceNote": "Le prix sera appliqué à toutes les propriétés synchronisées de ce groupe.",
     "selectPeriod": "Sélectionnez une période sur le calendrier pour commencer.",
+    "currentPrice": "Prix actuel",
+    "modifyPricePerNight": "Modifier le prix par nuit",
+    "enterNewPrice": "Entrez le nouveau prix",
+    "modifyPrice": "Modifier le prix",
+    "clickToAddOrModifyPrice": "Cliquez sur un jour pour ajouter ou modifier un prix",
     "legend": {
       "priceSelection": "Sélection prix",
       "booked": "Réservé",
-      "bookingSelection": "Sélection résa"
+      "bookingSelection": "Sélection réservation",
+      "priceDefined": "Prix défini",
+      "reserved": "Réservé",
+      "empty": "Vide"
     },
     "strategy": {
       "title": "Stratégie IA (Prix)",

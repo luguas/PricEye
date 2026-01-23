@@ -383,7 +383,10 @@ function PricingPage({ token, userProfile }) {
     setSelectionEnd(dateStr);
     setSelectedDateForAnalysis(dateStr); 
     setBookingPrice('');
-    setManualPrice('');
+    
+    // Pré-remplir le prix manuel si un prix existe déjà pour ce jour
+    const existingPrice = priceOverrides[dateStr];
+    setManualPrice(existingPrice ? String(Math.round(existingPrice)) : '');
     setIsPriceLocked(true);
   };
   const handleMouseOver = (dateStr) => { if (isSelecting) setSelectionEnd(dateStr); };
@@ -481,14 +484,19 @@ function PricingPage({ token, userProfile }) {
         let bg = 'bg-global-bg-small-box';
         let border = 'border-global-stroke-box';
         let txt = 'text-global-blanc';
-        let cursor = isPast ? 'cursor-not-allowed' : 'cursor-pointer hover:border-global-content-highlight-2nd';
+        let cursor = isPast ? 'cursor-not-allowed' : 'cursor-pointer hover:border-global-content-highlight-2nd hover:shadow-lg hover:scale-105';
         let opacity = isPast ? 'opacity-40' : 'opacity-100';
 
         const isSel = selectionStart && dateStr >= selectionStart && dateStr <= (selectionEnd||selectionStart);
+        const isClickedDate = dateStr === selectedDateForAnalysis; // Jour actuellement cliqué
         
         if (isSel) {
              bg = selectionMode === 'booking' ? 'bg-calendrierbg-bleu' : 'bg-calendrierbg-vert';
              border = selectionMode === 'booking' ? 'border-calendrierstroke-bleu' : 'border-calendrierstroke-vert';
+             // Effet spécial pour le jour cliqué dans la sélection
+             if (isClickedDate) {
+                border = selectionMode === 'booking' ? 'border-calendrierstroke-bleu border-2 shadow-xl' : 'border-calendrierstroke-vert border-2 shadow-xl';
+             }
         } else if (bk) {
              bg = 'bg-calendrierbg-orange';
              border = 'border-calendrierstroke-orange';
@@ -500,13 +508,17 @@ function PricingPage({ token, userProfile }) {
 
         cells.push(
             <div key={dateStr} 
-                 className={`w-full h-full flex flex-col items-center justify-center ${bg} rounded-[10px] border ${border} ${cursor} transition-all relative ${opacity}`}
+                 className={`w-full h-full flex flex-col items-center justify-center ${bg} rounded-[10px] border ${border} ${cursor} transition-all duration-200 relative ${opacity}`}
                  onMouseDown={!isPast && !bk ? () => handleMouseDown(dateStr) : undefined}
                  onMouseEnter={!isPast && !bk ? () => handleMouseOver(dateStr) : undefined}
             >
                 <span className={`${txt} font-h3-font-family font-h3-font-weight text-h3-font-size`}>{d}</span>
                 {pr && !bk && <span className={`${txt} font-h4-font-family text-xs`}>{Math.round(pr)}€</span>}
                 {bk && <span className="text-[10px] text-white">Réservé</span>}
+                {/* Indicateur visuel pour le jour sélectionné */}
+                {isClickedDate && !isSel && (
+                    <div className="absolute top-1 right-1 w-2 h-2 rounded-full bg-blue-400 animate-pulse"></div>
+                )}
             </div>
         );
     }
@@ -538,28 +550,54 @@ function PricingPage({ token, userProfile }) {
     </form>
   );
 
-  const renderPriceForm = () => (
-    <form onSubmit={handleSavePriceOverride} className="flex flex-col gap-3 text-left">
-        <div>
-            <label className="text-xs text-global-inactive block mb-1">{t('pricing.selectedPeriod')}</label>
-            <div className="bg-global-bg-small-box border border-global-stroke-box rounded-[10px] p-2 text-sm text-white">
-                {selectionStart} → {selectionEnd}
+  const renderPriceForm = () => {
+    // Vérifier si on modifie un prix existant ou si on en ajoute un nouveau
+    const hasExistingPrice = selectionStart && priceOverrides[selectionStart];
+    const isModifying = hasExistingPrice && manualPrice;
+    
+    return (
+        <form onSubmit={handleSavePriceOverride} className="flex flex-col gap-3 text-left">
+            <div>
+                <label className="text-xs text-global-inactive block mb-1">{t('pricing.selectedPeriod')}</label>
+                <div className="bg-global-bg-small-box border border-global-stroke-box rounded-[10px] p-2 text-sm text-white">
+                    {selectionStart} → {selectionEnd}
+                </div>
             </div>
-        </div>
-        <div>
-            <label className="text-xs text-global-inactive block mb-1">{t('pricing.newPricePerNight')}</label>
-            <input type="number" value={manualPrice} onChange={e=>setManualPrice(e.target.value)} className="w-full bg-global-bg-small-box border border-global-stroke-box rounded-[10px] p-2 text-white outline-none focus:border-global-content-highlight-2nd" placeholder="Ex: 175"/>
-        </div>
-        <div className="flex items-center gap-2">
-            <input type="checkbox" checked={isPriceLocked} onChange={e=>setIsPriceLocked(e.target.checked)} className="accent-blue-500"/>
-            <label className="text-xs text-gray-400">{t('pricing.lockPrice')}</label>
-        </div>
-        <div className="flex gap-2 pt-2">
-            <button type="submit" className="flex-1 bg-gradient-to-r from-[#155dfc] to-[#12a1d5] text-white py-2 rounded-[10px] font-bold text-sm hover:opacity-90">{t('pricing.applyPrice')}</button>
-            <button type="button" onClick={clearSelection} className="px-3 py-2 border border-gray-600 text-gray-400 rounded-[10px] text-xs hover:text-white">{t('pricing.cancel')}</button>
-        </div>
-    </form>
-  );
+            {hasExistingPrice && (
+                <div className="bg-blue-900/20 border border-blue-500/30 rounded-[10px] p-2">
+                    <span className="text-blue-300 text-xs">
+                        💡 {t('pricing.currentPrice')} : {Math.round(priceOverrides[selectionStart])}€
+                    </span>
+                </div>
+            )}
+            <div>
+                <label className="text-xs text-global-inactive block mb-1">
+                    {isModifying ? `✏️ ${t('pricing.modifyPricePerNight')}` : t('pricing.newPricePerNight')}
+                </label>
+                <input 
+                    type="number" 
+                    value={manualPrice} 
+                    onChange={e=>setManualPrice(e.target.value)} 
+                    className="w-full bg-global-bg-small-box border border-global-stroke-box rounded-[10px] p-2 text-white outline-none focus:border-global-content-highlight-2nd" 
+                    placeholder={hasExistingPrice ? t('pricing.enterNewPrice') : "Ex: 175"}
+                />
+            </div>
+            <div className="flex items-center gap-2">
+                <input type="checkbox" checked={isPriceLocked} onChange={e=>setIsPriceLocked(e.target.checked)} className="accent-blue-500"/>
+                <label className="text-xs text-gray-400">{t('pricing.lockPrice')}</label>
+            </div>
+            <div className="flex gap-2 pt-2">
+                <button 
+                    type="submit" 
+                    className="flex-1 bg-gradient-to-r from-[#155dfc] to-[#12a1d5] text-white py-2 rounded-[10px] font-bold text-sm hover:opacity-90"
+                >
+                    {isModifying ? `✓ ${t('pricing.modifyPrice')}` : t('pricing.applyPrice')}
+                </button>
+                <button type="button" onClick={clearSelection} className="px-3 py-2 border border-gray-600 text-gray-400 rounded-[10px] text-xs hover:text-white">{t('pricing.cancel')}</button>
+            </div>
+        </form>
+    );
+  };
 
   return (
     <div className="relative min-h-screen">
@@ -617,10 +655,17 @@ function PricingPage({ token, userProfile }) {
                 </div>
             </section>
 
-            <section className="flex items-start justify-center gap-6 pt-4 border-t border-global-stroke-box w-full">
-                <div className="flex items-center gap-2"><div className="w-3 h-3 bg-calendrierbg-vert rounded border border-calendrierstroke-vert"/> <span className="text-gray-400 text-xs">Prix défini</span></div>
-                <div className="flex items-center gap-2"><div className="w-3 h-3 bg-calendrierbg-orange rounded border border-calendrierstroke-orange"/> <span className="text-gray-400 text-xs">Réservé</span></div>
-                <div className="flex items-center gap-2"><div className="w-3 h-3 bg-global-bg-small-box rounded border border-global-stroke-box"/> <span className="text-gray-400 text-xs">Vide</span></div>
+            <section className="flex flex-col gap-3 pt-4 border-t border-global-stroke-box w-full">
+                <div className="flex items-start justify-center gap-6">
+                    <div className="flex items-center gap-2"><div className="w-3 h-3 bg-calendrierbg-vert rounded border border-calendrierstroke-vert"/> <span className="text-gray-400 text-xs">{t('pricing.legend.priceDefined')}</span></div>
+                    <div className="flex items-center gap-2"><div className="w-3 h-3 bg-calendrierbg-orange rounded border border-calendrierstroke-orange"/> <span className="text-gray-400 text-xs">{t('pricing.legend.reserved')}</span></div>
+                    <div className="flex items-center gap-2"><div className="w-3 h-3 bg-global-bg-small-box rounded border border-global-stroke-box"/> <span className="text-gray-400 text-xs">{t('pricing.legend.empty')}</span></div>
+                </div>
+                {!selectionStart && (
+                    <div className="text-center text-gray-500 text-xs italic">
+                        💡 {t('pricing.clickToAddOrModifyPrice')}
+                    </div>
+                )}
             </section>
           </div>
           
@@ -645,8 +690,8 @@ function PricingPage({ token, userProfile }) {
                 </div>
 
                 <div className="flex gap-3">
-                    <Bouton state="principal" text="Ajouter Résa" onClick={()=>{setSelectionMode('booking'); setBookingPrice(''); setManualPrice('');}} className={selectionMode==='booking'?'opacity-100':'opacity-60'} />
-                    <button onClick={()=>{setSelectionMode('price'); setBookingPrice(''); setManualPrice('');}} className={`flex-1 border border-blue-500 rounded-[10px] text-white text-sm py-2 hover:bg-blue-500/10 ${selectionMode==='price'?'bg-blue-500/20':''}`}>Définir Prix</button>
+                    <Bouton state="principal" text={t('pricing.strategy.addBooking')} onClick={()=>{setSelectionMode('booking'); setBookingPrice(''); setManualPrice('');}} className={`${selectionMode==='booking'?'opacity-100':'opacity-60'} !text-xs whitespace-normal leading-tight !px-2`} />
+                    <button onClick={()=>{setSelectionMode('price'); setBookingPrice(''); setManualPrice('');}} className={`flex-1 border border-blue-500 rounded-[10px] text-white text-xs py-2 px-2 hover:bg-blue-500/10 whitespace-normal leading-tight ${selectionMode==='price'?'bg-blue-500/20':''}`}>{t('pricing.strategy.setPrice')}</button>
                 </div>
 
                 <div className="border-t border-global-stroke-box pt-4 mt-2">

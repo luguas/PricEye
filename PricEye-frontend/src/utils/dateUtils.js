@@ -58,7 +58,7 @@ export const getDatesFromRange = (range, timeZone = 'UTC') => {
       startDate.setUTCFullYear(endDate.getUTCFullYear() - 1);
       break;
     case 'all':
-      startDate.setUTCFullYear(endDate.getUTCFullYear() - 5); // Simuler "Tout" comme 5 ans
+      startDate.setUTCFullYear(endDate.getUTCFullYear() - 2); // Limité à 2 ans maximum (contrainte API)
       break;
     default:
       startDate.setUTCMonth(endDate.getUTCMonth() - 1);

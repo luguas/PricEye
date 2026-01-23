@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { 
   getProperties, 
   getReportKpis, 
@@ -12,7 +12,8 @@ import {
   getForecastRadar,
   getRevenueVsTarget,
   getAdrByChannel,
-  getGrossMargin
+  getGrossMargin,
+  getTeamBookings
 } from '../services/api.js';
 import { exportToExcel } from '../utils/exportUtils.js';
 import Chart from 'chart.js/auto'; 
@@ -134,6 +135,7 @@ function ReportPage({ token, userProfile }) {
   
   const [allProperties, setAllProperties] = useState([]);
   const [filteredProperties, setFilteredProperties] = useState([]);
+  const [allBookings, setAllBookings] = useState([]); // NOUVEAU: Pour extraire les canaux
   const [isLoading, setIsLoading] = useState(true);
   const [isKpiLoading, setIsKpiLoading] = useState(true);
   const [error, setError] = useState('');
@@ -621,6 +623,13 @@ function ReportPage({ token, userProfile }) {
   // NOTE: Les données de prévisions et financières sont maintenant chargées via les nouveaux endpoints dans fetchKpisAndCharts
   // Ce useEffect a été supprimé car les données sont maintenant réelles et chargées depuis l'API
 
+  // Créer une liste de canaux uniques depuis les bookings (comme dans BookingsPage)
+  const uniqueChannels = useMemo(() => {
+    if (!allBookings || allBookings.length === 0) return [];
+    const channels = new Set(allBookings.map(b => b.channel).filter(Boolean));
+    return Array.from(channels).sort();
+  }, [allBookings]);
+
   // Fetch KPIs (Données Réelles)
   const fetchKpisAndCharts = useCallback(async () => {
       if (!userProfile) return; 
@@ -632,7 +641,15 @@ function ReportPage({ token, userProfile }) {
           const { startDate: currentStartDate, endDate: currentEndDate } = getDatesFromRange(dateRange, userProfile.timezone);
           const { startDate: prevStartDate, endDate: prevEndDate } = getPreviousDates(currentStartDate, currentEndDate);
 
-          // 2. Appeler l'API pour les deux périodes en parallèle
+          // 2. Préparer les filtres à passer aux appels API
+          const filters = {};
+          if (propertyType) filters.propertyType = propertyType;
+          if (channel) filters.channel = channel;
+          if (status) filters.status = status;
+          if (location) filters.location = location;
+
+          // 3. Appeler l'API pour les deux périodes en parallèle
+          // NOUVEAU: Récupérer aussi les bookings pour extraire les canaux uniques
           const [
               currentData, 
               prevData, 
@@ -648,24 +665,31 @@ function ReportPage({ token, userProfile }) {
               forecastRadarData,
               revenueVsTargetData,
               adrByChannelData,
-              grossMarginData
+              grossMarginData,
+              bookingsData // NOUVEAU: Pour extraire les canaux uniques
           ] = await Promise.all([
-              getReportKpis(token, currentStartDate, currentEndDate),
-              getReportKpis(token, prevStartDate, prevEndDate),
+              getReportKpis(token, currentStartDate, currentEndDate, filters),
+              getReportKpis(token, prevStartDate, prevEndDate, filters),
               getMarketKpis(token, currentStartDate, currentEndDate),
               getMarketKpis(token, prevStartDate, prevEndDate),
-              getRevenueOverTime(token, currentStartDate, currentEndDate),
-              getPerformanceOverTime(token, currentStartDate, currentEndDate),
+              getRevenueOverTime(token, currentStartDate, currentEndDate, filters),
+              getPerformanceOverTime(token, currentStartDate, currentEndDate, filters),
               getMarketDemandSnapshot(token, userProfile.timezone || 'Europe/Paris'),
-              getPositioningReport(token, currentStartDate, currentEndDate),
+              getPositioningReport(token, currentStartDate, currentEndDate, filters),
               // NOUVEAUX APPELS
-              getForecastRevenue(token, currentStartDate, currentEndDate),
-              getForecastScenarios(token, currentStartDate, currentEndDate),
-              getForecastRadar(token, currentStartDate, currentEndDate),
-              getRevenueVsTarget(token, currentStartDate, currentEndDate),
-              getAdrByChannel(token, currentStartDate, currentEndDate),
-              getGrossMargin(token, currentStartDate, currentEndDate)
+              getForecastRevenue(token, currentStartDate, currentEndDate, 4, filters),
+              getForecastScenarios(token, currentStartDate, currentEndDate, 4, filters),
+              getForecastRadar(token, currentStartDate, currentEndDate, null, filters),
+              getRevenueVsTarget(token, currentStartDate, currentEndDate, filters),
+              getAdrByChannel(token, currentStartDate, currentEndDate, filters),
+              getGrossMargin(token, currentStartDate, currentEndDate, filters),
+              getTeamBookings(token, currentStartDate, currentEndDate, filters) // NOUVEAU: Pour extraire les canaux
           ]);
+
+          // NOUVEAU: Mettre à jour les bookings pour extraire les canaux
+          if (bookingsData && Array.isArray(bookingsData)) {
+            setAllBookings(bookingsData);
+          }
           
           setKpis(currentData);
           setPrevKpis(prevData);
@@ -819,7 +843,7 @@ function ReportPage({ token, userProfile }) {
       } finally {
           setIsKpiLoading(false);
       }
-  }, [token, dateRange, userProfile, propertyType, channel, status, location, occupancyThreshold]); 
+  }, [token, dateRange, userProfile, propertyType, channel, status, location, occupancyThreshold, allProperties]); 
 
   useEffect(() => {
     fetchKpisAndCharts();
@@ -2424,7 +2448,7 @@ function ReportPage({ token, userProfile }) {
                         dateRange === '1y' ? '1 year' :
                         dateRange === 'all' ? 'All' : '1 month'}
                   value={dateRange}
-                  onChange={(e) => setDateRange(e.target.value)}
+                  onChange={(value) => setDateRange(value)}
                   options={[
                     { value: '7d', label: 'Last 7 days' },
                     { value: '1m', label: '1 month' },
@@ -2439,7 +2463,7 @@ function ReportPage({ token, userProfile }) {
                   text="Property Type"
                   text2={propertyType ? allProperties.find(p => p.property_type === propertyType)?.property_type || 'All types' : 'All types'}
                   value={propertyType}
-                  onChange={(e) => setPropertyType(e.target.value)}
+                  onChange={(value) => setPropertyType(value)}
                   options={[...new Set(allProperties.map(p => p.property_type))].filter(Boolean)}
                   className="!shrink-0"
                 />
@@ -2447,18 +2471,17 @@ function ReportPage({ token, userProfile }) {
                   text="Channel"
                   text2={channel ? channel : 'All channels'}
                   value={channel || ''}
-                  onChange={(e) => {
-                    const newValue = e.target.value;
-                    setChannel(newValue === '' ? '' : newValue);
+                  onChange={(value) => {
+                    setChannel(value === '' ? '' : value);
                   }}
-                  options={[...new Set(allProperties.map(p => p.channel).filter(Boolean))]}
+                  options={uniqueChannels}
                   className="!shrink-0"
                 />
                 <Filtre
                   text="Status"
                   text2={status ? status : 'All statuses'}
                   value={status}
-                  onChange={(e) => setStatus(e.target.value)}
+                  onChange={(value) => setStatus(value)}
                   options={[...new Set(allProperties.map(p => p.status))].filter(Boolean)}
                   className="!shrink-0"
                 />

@@ -23,17 +23,10 @@ async function apiRequest(endpoint, options = {}) {
   // Récupération du token (supporte l'injection manuelle ou via variable globale si implémentée précédemment)
   const token = options.token || (typeof globalAuthToken !== 'undefined' ? globalAuthToken : null);
   
-  // Si le body est FormData, ne pas définir Content-Type (le navigateur le fera automatiquement)
-  const isFormData = options.body instanceof FormData;
-  
   const headers = {
-    ...(options.headers || {}),
+    'Content-Type': options.headers?.['Content-Type'] ?? 'application/json',
+    ...options.headers,
   };
-
-  // Ne définir Content-Type que si ce n'est pas FormData et qu'il n'a pas été défini manuellement
-  if (!isFormData && !headers['Content-Type']) {
-    headers['Content-Type'] = 'application/json';
-  }
 
   if (token) {
     headers['Authorization'] = `Bearer ${token}`;
@@ -383,93 +376,19 @@ export function getProperties(token) {
 }
 
 export function addProperty(propertyData, token) {
-  // Si des images sont présentes, utiliser FormData, sinon JSON
-  const hasImages = propertyData.images && propertyData.images.length > 0;
-  
-  if (hasImages) {
-    const formData = new FormData();
-    
-    // Ajouter toutes les propriétés comme JSON dans un champ 'data'
-    const { images, previewImages, ...dataWithoutImages } = propertyData;
-    formData.append('data', JSON.stringify(dataWithoutImages));
-    
-    // Ajouter les images uploadées
-    images.forEach((image, index) => {
-      if (image instanceof File) {
-        formData.append(`images`, image);
-      }
-    });
-    
-    // Si des previewImages existent et sont des URLs (pas des blob URLs locales), les inclure
-    if (previewImages && previewImages.length > 0) {
-      const existingImageUrls = previewImages.filter(url => 
-        typeof url === 'string' && !url.startsWith('blob:') && url.startsWith('http')
-      );
-      if (existingImageUrls.length > 0) {
-        formData.append('existingImages', JSON.stringify(existingImageUrls));
-      }
-    }
-    
-    return apiRequest('/api/properties', {
-      method: 'POST',
-      token,
-      body: formData,
-      headers: {}, // Ne pas définir Content-Type, le navigateur le fera automatiquement pour FormData
-    });
-  } else {
-    // Pas d'images, utiliser JSON normal
-    const { images, previewImages, ...dataWithoutImages } = propertyData;
-    return apiRequest('/api/properties', {
-      method: 'POST',
-      token,
-      body: JSON.stringify(dataWithoutImages),
-    });
-  }
+  return apiRequest('/api/properties', {
+    method: 'POST',
+    token,
+    body: JSON.stringify(propertyData),
+  });
 }
 
 export function updateProperty(id, propertyData, token) {
-  // Si des images sont présentes, utiliser FormData, sinon JSON
-  const hasImages = propertyData.images && propertyData.images.length > 0;
-  
-  if (hasImages) {
-    const formData = new FormData();
-    
-    // Ajouter toutes les propriétés comme JSON dans un champ 'data'
-    const { images, previewImages, ...dataWithoutImages } = propertyData;
-    formData.append('data', JSON.stringify(dataWithoutImages));
-    
-    // Ajouter les images uploadées
-    images.forEach((image, index) => {
-      if (image instanceof File) {
-        formData.append(`images`, image);
-      }
-    });
-    
-    // Si des previewImages existent et sont des URLs (pas des blob URLs locales), les inclure
-    if (previewImages && previewImages.length > 0) {
-      const existingImageUrls = previewImages.filter(url => 
-        typeof url === 'string' && !url.startsWith('blob:') && url.startsWith('http')
-      );
-      if (existingImageUrls.length > 0) {
-        formData.append('existingImages', JSON.stringify(existingImageUrls));
-      }
-    }
-    
-    return apiRequest(`/api/properties/${id}`, {
-      method: 'PUT',
-      token,
-      body: formData,
-      headers: {}, // Ne pas définir Content-Type, le navigateur le fera automatiquement pour FormData
-    });
-  } else {
-    // Pas d'images, utiliser JSON normal
-    const { images, previewImages, ...dataWithoutImages } = propertyData;
-    return apiRequest(`/api/properties/${id}`, {
-      method: 'PUT',
-      token,
-      body: JSON.stringify(dataWithoutImages),
-    });
-  }
+  return apiRequest(`/api/properties/${id}`, {
+    method: 'PUT',
+    token,
+    body: JSON.stringify(propertyData),
+  });
 }
 
 export function deleteProperty(id, token) {
@@ -616,8 +535,12 @@ export function getBookingsForMonth(propertyId, year, month, token) {
   });
 }
 
-export function getTeamBookings(token, startDate, endDate) {
+export function getTeamBookings(token, startDate, endDate, filters = {}) {
     const params = new URLSearchParams({ startDate, endDate });
+    if (filters.propertyType) params.append('propertyType', filters.propertyType);
+    if (filters.channel) params.append('channel', filters.channel);
+    if (filters.status) params.append('status', filters.status);
+    if (filters.location) params.append('location', filters.location);
     return apiRequest(`/api/bookings?${params.toString()}`, {
         token,
     });
@@ -700,22 +623,34 @@ export function removeMember(memberId, token) {
 /**
  * Fonctions des Rapports et Actualités
  */
-export function getReportKpis(token, startDate, endDate) {
+export function getReportKpis(token, startDate, endDate, filters = {}) {
     const params = new URLSearchParams({ startDate, endDate });
+    if (filters.propertyType) params.append('propertyType', filters.propertyType);
+    if (filters.channel) params.append('channel', filters.channel);
+    if (filters.status) params.append('status', filters.status);
+    if (filters.location) params.append('location', filters.location);
     return apiRequest(`/api/reports/kpis?${params.toString()}`, {
         token,
     });
 }
 
-export function getRevenueOverTime(token, startDate, endDate) {
+export function getRevenueOverTime(token, startDate, endDate, filters = {}) {
     const params = new URLSearchParams({ startDate, endDate });
+    if (filters.propertyType) params.append('propertyType', filters.propertyType);
+    if (filters.channel) params.append('channel', filters.channel);
+    if (filters.status) params.append('status', filters.status);
+    if (filters.location) params.append('location', filters.location);
     return apiRequest(`/api/reports/revenue-over-time?${params.toString()}`, {
         token,
     });
 }
 
-export function getPerformanceOverTime(token, startDate, endDate) {
+export function getPerformanceOverTime(token, startDate, endDate, filters = {}) {
     const params = new URLSearchParams({ startDate, endDate });
+    if (filters.propertyType) params.append('propertyType', filters.propertyType);
+    if (filters.channel) params.append('channel', filters.channel);
+    if (filters.status) params.append('status', filters.status);
+    if (filters.location) params.append('location', filters.location);
     return apiRequest(`/api/reports/performance-over-time?${params.toString()}`, {
         token,
     });
@@ -728,8 +663,12 @@ export function getMarketDemandSnapshot(token, timezone) {
     });
 }
 
-export function getPositioningReport(token, startDate, endDate) {
+export function getPositioningReport(token, startDate, endDate, filters = {}) {
     const params = new URLSearchParams({ startDate, endDate });
+    if (filters.propertyType) params.append('propertyType', filters.propertyType);
+    if (filters.channel) params.append('channel', filters.channel);
+    if (filters.status) params.append('status', filters.status);
+    if (filters.location) params.append('location', filters.location);
     return apiRequest(`/api/reports/positioning?${params.toString()}`, {
         token,
     });
@@ -744,46 +683,70 @@ export function getMarketKpis(token, startDate, endDate, city = null, country = 
     });
 }
 
-export function getForecastRevenue(token, startDate, endDate, forecastPeriod = 4) {
+export function getForecastRevenue(token, startDate, endDate, forecastPeriod = 4, filters = {}) {
     const params = new URLSearchParams({ startDate, endDate });
     if (forecastPeriod) params.append('forecastPeriod', forecastPeriod);
+    if (filters.propertyType) params.append('propertyType', filters.propertyType);
+    if (filters.channel) params.append('channel', filters.channel);
+    if (filters.status) params.append('status', filters.status);
+    if (filters.location) params.append('location', filters.location);
     return apiRequest(`/api/reports/forecast-revenue?${params.toString()}`, {
         token,
     });
 }
 
-export function getForecastScenarios(token, startDate, endDate, forecastPeriod = 4) {
+export function getForecastScenarios(token, startDate, endDate, forecastPeriod = 4, filters = {}) {
     const params = new URLSearchParams({ startDate, endDate });
     if (forecastPeriod) params.append('forecastPeriod', forecastPeriod);
+    if (filters.propertyType) params.append('propertyType', filters.propertyType);
+    if (filters.channel) params.append('channel', filters.channel);
+    if (filters.status) params.append('status', filters.status);
+    if (filters.location) params.append('location', filters.location);
     return apiRequest(`/api/reports/forecast-scenarios?${params.toString()}`, {
         token,
     });
 }
 
-export function getForecastRadar(token, startDate, endDate, propertyId = null) {
+export function getForecastRadar(token, startDate, endDate, propertyId = null, filters = {}) {
     const params = new URLSearchParams({ startDate, endDate });
     if (propertyId) params.append('propertyId', propertyId);
+    if (filters.propertyType) params.append('propertyType', filters.propertyType);
+    if (filters.channel) params.append('channel', filters.channel);
+    if (filters.status) params.append('status', filters.status);
+    if (filters.location) params.append('location', filters.location);
     return apiRequest(`/api/reports/forecast-radar?${params.toString()}`, {
         token,
     });
 }
 
-export function getRevenueVsTarget(token, startDate, endDate) {
+export function getRevenueVsTarget(token, startDate, endDate, filters = {}) {
     const params = new URLSearchParams({ startDate, endDate });
+    if (filters.propertyType) params.append('propertyType', filters.propertyType);
+    if (filters.channel) params.append('channel', filters.channel);
+    if (filters.status) params.append('status', filters.status);
+    if (filters.location) params.append('location', filters.location);
     return apiRequest(`/api/reports/revenue-vs-target?${params.toString()}`, {
         token,
     });
 }
 
-export function getGrossMargin(token, startDate, endDate) {
+export function getGrossMargin(token, startDate, endDate, filters = {}) {
     const params = new URLSearchParams({ startDate, endDate });
+    if (filters.propertyType) params.append('propertyType', filters.propertyType);
+    if (filters.channel) params.append('channel', filters.channel);
+    if (filters.status) params.append('status', filters.status);
+    if (filters.location) params.append('location', filters.location);
     return apiRequest(`/api/reports/gross-margin?${params.toString()}`, {
         token,
     });
 }
 
-export function getAdrByChannel(token, startDate, endDate) {
+export function getAdrByChannel(token, startDate, endDate, filters = {}) {
     const params = new URLSearchParams({ startDate, endDate });
+    if (filters.propertyType) params.append('propertyType', filters.propertyType);
+    if (filters.channel) params.append('channel', filters.channel);
+    if (filters.status) params.append('status', filters.status);
+    if (filters.location) params.append('location', filters.location);
     return apiRequest(`/api/reports/adr-by-channel?${params.toString()}`, {
         token,
     });
