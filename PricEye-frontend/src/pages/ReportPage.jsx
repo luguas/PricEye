@@ -226,6 +226,56 @@ function ReportPage({ token, userProfile }) {
       return `${(amount || 0).toFixed(0)}%`;
   };
 
+  // Fonction pour calculer le ROI réel
+  const calculateROI = useMemo(() => {
+    if (!kpis || kpis.iaGain === undefined || kpis.iaGain === null) {
+      return { roi: 0, cost: 0, gains: 0 };
+    }
+
+    const gains = kpis.iaGain || 0;
+    
+    // Récupérer le prix de l'abonnement depuis le profil utilisateur
+    // Si l'utilisateur a un abonnement actif, utiliser le prix réel
+    // Sinon, utiliser une valeur par défaut basée sur le statut
+    let monthlyCost = 0;
+    const subscriptionStatus = userProfile?.subscriptionStatus || 'none';
+    
+    if (subscriptionStatus === 'active' || subscriptionStatus === 'trialing') {
+      // Si l'utilisateur a un prix d'abonnement dans son profil, l'utiliser
+      if (userProfile?.subscriptionPrice) {
+        monthlyCost = userProfile.subscriptionPrice;
+      } else if (userProfile?.monthlyPrice) {
+        monthlyCost = userProfile.monthlyPrice;
+      } else {
+        // Valeur par défaut pour un abonnement actif (peut être ajustée selon vos tarifs)
+        // Pour l'instant, on utilise 50€/mois comme estimation
+        monthlyCost = 50;
+      }
+    } else {
+      // Pas d'abonnement actif, coût = 0
+      monthlyCost = 0;
+    }
+    
+    // Calculer le nombre de mois dans la période sélectionnée
+    const { startDate, endDate } = getDatesFromRange(dateRange, userProfile?.timezone || 'UTC');
+    const start = new Date(startDate);
+    const end = new Date(endDate);
+    const monthsDiff = (end.getFullYear() - start.getFullYear()) * 12 + (end.getMonth() - start.getMonth()) + 1;
+    
+    // Coût total pour la période
+    const cost = monthlyCost * monthsDiff;
+    
+    // Calculer le ROI: (Gains / Coût) * 100
+    // Si le coût est 0 (pas d'abonnement), le ROI est infini, on affiche 0 ou un message spécial
+    const roi = cost > 0 ? (gains / cost) * 100 : (gains > 0 ? Infinity : 0);
+    
+    return {
+      roi: roi === Infinity ? 0 : Math.max(0, roi), // ROI ne peut pas être négatif, et on gère l'infini
+      cost: cost,
+      gains: gains
+    };
+  }, [kpis, dateRange, userProfile]);
+
   // Fonction utilitaire pour calculer les graduations dynamiques
   const calculateScaleConfig = (dataArray, defaultMax = null, defaultStepSize = null) => {
     if (!dataArray || dataArray.length === 0) {
@@ -3057,46 +3107,52 @@ function ReportPage({ token, userProfile }) {
                     PricEye ROI
                   </div>
                 </div>
-                <div className="flex flex-col gap-6 items-center justify-center self-stretch shrink-0 h-[250px] relative">
-                  <div className="flex flex-col gap-2 items-start justify-start shrink-0 w-[187.41px] h-[92px] relative">
-                    <div className="self-stretch shrink-0 h-[60px] relative">
-                      <div className="text-center font-['Inter-Regular',_sans-serif] text-6xl leading-[60px] font-normal absolute left-[13.89px] top-[0.5px]" style={{ background: "linear-gradient(to left, rgba(0, 0, 0, 0.00), rgba(0, 0, 0, 0.00)), linear-gradient(90deg, rgba(81, 162, 255, 1.00) 0%,rgba(0, 211, 242, 1.00) 100%)", backgroundClip: "text", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent", letterSpacing: "0.26px" }}>
-                        295%
+                {isKpiLoading ? (
+                  <div className="flex items-center justify-center h-full w-full">
+                    <p className="text-global-inactive">Chargement...</p>
+                  </div>
+                ) : (
+                  <div className="flex flex-col gap-6 items-center justify-center self-stretch shrink-0 h-[250px] relative">
+                    <div className="flex flex-col gap-2 items-start justify-start shrink-0 w-[187.41px] h-[92px] relative">
+                      <div className="self-stretch shrink-0 h-[60px] relative">
+                        <div className="text-center font-['Inter-Regular',_sans-serif] text-6xl leading-[60px] font-normal absolute left-[13.89px] top-[0.5px]" style={{ background: "linear-gradient(to left, rgba(0, 0, 0, 0.00), rgba(0, 0, 0, 0.00)), linear-gradient(90deg, rgba(81, 162, 255, 1.00) 0%,rgba(0, 211, 242, 1.00) 100%)", backgroundClip: "text", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent", letterSpacing: "0.26px" }}>
+                          {calculateROI.roi.toFixed(0)}%
+                        </div>
+                      </div>
+                      <div className="self-stretch shrink-0 h-6 relative">
+                        <div className="text-[#90a1b9] text-center font-['Inter-Regular',_sans-serif] text-base leading-6 font-normal absolute left-0 top-[-0.5px]" style={{ letterSpacing: "-0.31px" }}>
+                          Return on investment
+                        </div>
                       </div>
                     </div>
-                    <div className="self-stretch shrink-0 h-6 relative">
-                      <div className="text-[#90a1b9] text-center font-['Inter-Regular',_sans-serif] text-base leading-6 font-normal absolute left-0 top-[-0.5px]" style={{ letterSpacing: "-0.31px" }}>
-                        Return on investment
+                    <div className="flex flex-col gap-3 items-start justify-start shrink-0 w-96 h-[108px] relative">
+                      <div className="bg-[rgba(29,41,61,0.50)] rounded-[10px] pr-3 pl-3 flex flex-row items-center justify-between self-stretch shrink-0 h-12 relative">
+                        <div className="shrink-0 w-[82.87px] h-5 relative">
+                          <div className="text-[#90a1b9] text-left font-['Inter-Regular',_sans-serif] text-sm leading-5 font-normal absolute left-0 top-[0.5px]" style={{ letterSpacing: "-0.15px" }}>
+                            PricEye Cost
+                          </div>
+                        </div>
+                        <div className="shrink-0 w-[49.59px] h-6 relative">
+                          <div className="text-[#00d492] text-left font-['Inter-Regular',_sans-serif] text-base leading-6 font-normal absolute left-0 top-[-0.5px]" style={{ letterSpacing: "-0.31px" }}>
+                            {formatCurrency(calculateROI.cost)}
+                          </div>
+                        </div>
+                      </div>
+                      <div className="bg-[rgba(29,41,61,0.50)] rounded-[10px] pr-3 pl-3 flex flex-row items-center justify-between self-stretch shrink-0 h-12 relative">
+                        <div className="shrink-0 w-[92.27px] h-5 relative">
+                          <div className="text-[#90a1b9] text-left font-['Inter-Regular',_sans-serif] text-sm leading-5 font-normal absolute left-0 top-[0.5px]" style={{ letterSpacing: "-0.15px" }}>
+                            Generated gains
+                          </div>
+                        </div>
+                        <div className="shrink-0 w-[51.91px] h-6 relative">
+                          <div className="text-[#00d3f2] text-left font-['Inter-Regular',_sans-serif] text-base leading-6 font-normal absolute left-0 top-[-0.5px]" style={{ letterSpacing: "-0.31px" }}>
+                            {formatCurrency(calculateROI.gains)}
+                          </div>
+                        </div>
                       </div>
                     </div>
                   </div>
-                  <div className="flex flex-col gap-3 items-start justify-start shrink-0 w-96 h-[108px] relative">
-                    <div className="bg-[rgba(29,41,61,0.50)] rounded-[10px] pr-3 pl-3 flex flex-row items-center justify-between self-stretch shrink-0 h-12 relative">
-                      <div className="shrink-0 w-[82.87px] h-5 relative">
-                        <div className="text-[#90a1b9] text-left font-['Inter-Regular',_sans-serif] text-sm leading-5 font-normal absolute left-0 top-[0.5px]" style={{ letterSpacing: "-0.15px" }}>
-                          PricEye Cost
-                        </div>
-                      </div>
-                      <div className="shrink-0 w-[49.59px] h-6 relative">
-                        <div className="text-[#00d492] text-left font-['Inter-Regular',_sans-serif] text-base leading-6 font-normal absolute left-0 top-[-0.5px]" style={{ letterSpacing: "-0.31px" }}>
-                          1,000€
-                        </div>
-                      </div>
-                    </div>
-                    <div className="bg-[rgba(29,41,61,0.50)] rounded-[10px] pr-3 pl-3 flex flex-row items-center justify-between self-stretch shrink-0 h-12 relative">
-                      <div className="shrink-0 w-[92.27px] h-5 relative">
-                        <div className="text-[#90a1b9] text-left font-['Inter-Regular',_sans-serif] text-sm leading-5 font-normal absolute left-0 top-[0.5px]" style={{ letterSpacing: "-0.15px" }}>
-                          Generated gains
-                        </div>
-                      </div>
-                      <div className="shrink-0 w-[51.91px] h-6 relative">
-                        <div className="text-[#00d3f2] text-left font-['Inter-Regular',_sans-serif] text-base leading-6 font-normal absolute left-0 top-[-0.5px]" style={{ letterSpacing: "-0.31px" }}>
-                          2,950€
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
+                )}
               </div>
             </div>
 

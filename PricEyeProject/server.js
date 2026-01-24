@@ -987,6 +987,32 @@ app.get('/api/users/profile', authenticateToken, async (req, res) => {
             return res.status(200).json(userData);
         }
         
+        // Récupérer le prix de l'abonnement depuis Stripe si disponible
+        let subscriptionPrice = null;
+        const subscriptionId = userData.stripe_subscription_id || userData.stripeSubscriptionId;
+        if (subscriptionId) {
+            try {
+                const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
+                const subscription = await stripe.subscriptions.retrieve(subscriptionId);
+                
+                // Calculer le prix total mensuel de l'abonnement
+                if (subscription.items && subscription.items.data && subscription.items.data.length > 0) {
+                    let totalAmount = 0;
+                    subscription.items.data.forEach(item => {
+                        if (item.price && item.price.unit_amount) {
+                            // unit_amount est en centimes, on le convertit en euros
+                            const itemPrice = (item.price.unit_amount / 100) * (item.quantity || 1);
+                            totalAmount += itemPrice;
+                        }
+                    });
+                    subscriptionPrice = totalAmount;
+                }
+            } catch (stripeError) {
+                console.warn(`[Profile] Erreur lors de la récupération du prix de l'abonnement:`, stripeError.message);
+                // Continuer sans le prix si l'erreur n'est pas critique
+            }
+        }
+        
         // Adapter le format pour compatibilité avec le frontend
         const formattedData = {
             ...userData,
@@ -996,7 +1022,9 @@ app.get('/api/users/profile', authenticateToken, async (req, res) => {
             createdAt: userData.created_at,
             subscriptionStatus: userData.subscription_status || userData.subscriptionStatus || 'none',
             stripeCustomerId: userData.stripe_customer_id || userData.stripeCustomerId,
-            stripeSubscriptionId: userData.stripe_subscription_id || userData.stripeSubscriptionId
+            stripeSubscriptionId: userData.stripe_subscription_id || userData.stripeSubscriptionId,
+            subscriptionPrice: subscriptionPrice,
+            monthlyPrice: subscriptionPrice // Alias pour compatibilité
         };
         
         res.status(200).json(formattedData);
