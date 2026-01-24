@@ -10618,11 +10618,69 @@ function getCurrentTimeInTimezone(timezone) {
  */
 async function generateAndApplyPricingForProperty(propertyId, property, userId, userEmail) {
     try {
-        const today = new Date().toISOString().split('T')[0];
+        // Récupérer la propriété complète depuis la base de données pour s'assurer d'avoir tous les champs à jour
+        const fullProperty = await db.getProperty(propertyId);
+        if (!fullProperty) {
+            throw new Error(`Propriété ${propertyId} non trouvée`);
+        }
         
-        // Récupérer la langue de l'utilisateur
+        // Utiliser la propriété complète pour les vérifications
+        const propertyToUse = fullProperty || property;
+        
+        // Récupérer le profil utilisateur une seule fois
         const userProfile = await db.getUser(userId);
         const language = userProfile?.language || 'fr';
+        
+        // Vérifier si le pricing automatique est activé et si une génération a déjà eu lieu aujourd'hui
+        if (propertyToUse.auto_pricing_enabled) {
+            const timezone = userProfile?.auto_pricing?.timezone || userProfile?.timezone || 'Europe/Paris';
+            const { hour, minute } = getCurrentTimeInTimezone(timezone);
+            const isScheduledTime = hour === 0 && minute === 0;
+            
+            console.log(`[Auto-Pricing] Vérification pour ${propertyId}: auto_pricing_enabled=${propertyToUse.auto_pricing_enabled}, auto_pricing_updated_at=${propertyToUse.auto_pricing_updated_at}, heure=${hour}:${minute}, isScheduledTime=${isScheduledTime}`);
+            
+            // Si ce n'est pas l'heure prévue (00h00) et qu'une date de mise à jour existe, vérifier si une génération a eu lieu aujourd'hui
+            if (!isScheduledTime && propertyToUse.auto_pricing_updated_at) {
+                try {
+                    const updatedAt = new Date(propertyToUse.auto_pricing_updated_at);
+                    const now = new Date();
+                    
+                    // Utiliser Intl.DateTimeFormat pour obtenir les dates dans le fuseau horaire de l'utilisateur
+                    const dateFormatter = new Intl.DateTimeFormat('en-CA', { 
+                        timeZone: timezone, 
+                        year: 'numeric', 
+                        month: '2-digit', 
+                        day: '2-digit' 
+                    });
+                    
+                    const updatedAtDateStr = dateFormatter.format(updatedAt);
+                    const nowDateStr = dateFormatter.format(now);
+                    
+                    console.log(`[Auto-Pricing] Comparaison dates pour ${propertyId}: updatedAt=${updatedAtDateStr}, now=${nowDateStr}`);
+                    
+                    // Comparer les dates (format: YYYY-MM-DD)
+                    if (updatedAtDateStr === nowDateStr) {
+                        // Si une génération a eu lieu aujourd'hui et qu'on n'est pas à 00h00, ne pas régénérer
+                        console.log(`[Auto-Pricing] ⏭️ Propriété ${propertyId} ignorée: génération déjà effectuée aujourd'hui (${updatedAt.toISOString()}) - Fuseau: ${timezone} - Date locale: ${updatedAtDateStr}`);
+                        return {
+                            success: false,
+                            propertyId: propertyId,
+                            message: `Pricing déjà généré aujourd'hui. Prochaine génération automatique à 00h00 (${timezone}).`,
+                            skipped: true
+                        };
+                    }
+                } catch (dateError) {
+                    console.error(`[Auto-Pricing] Erreur lors de la comparaison de dates pour ${propertyId}:`, dateError);
+                    // En cas d'erreur, continuer la génération (fail-safe)
+                }
+            } else if (!isScheduledTime && !propertyToUse.auto_pricing_updated_at) {
+                console.log(`[Auto-Pricing] ⚠️ Propriété ${propertyId}: auto_pricing_enabled=true mais auto_pricing_updated_at est null/undefined. Génération autorisée.`);
+            }
+        }
+        
+        // Utiliser la propriété complète pour le reste de la fonction
+        const property = propertyToUse;
+        const today = new Date().toISOString().split('T')[0];
 
         // Construire le nouveau prompt pour l'IA (identique à l'endpoint de pricing-strategy)
         const prompt = `
