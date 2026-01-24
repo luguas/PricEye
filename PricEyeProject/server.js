@@ -5309,32 +5309,69 @@ app.get('/api/reports/kpis', authenticateToken, async (req, res) => {
             }
         });
 
+        // --- NOUVEAU : Intégration des Coûts PricEye ---
+        
+        // 1. Récupérer la structure des groupes pour calculer le coût exact
+        const { data: groups } = await supabase
+            .from('groups')
+            .select('*')
+            .eq('team_id', teamId);
+
+        // 2. Calculer le nombre d'unités facturables (Parent vs Enfant)
+        const { quantityPrincipal } = calculateBillingQuantities(properties, groups || []);
+        
+        // 3. Calculer le coût mensuel théorique
+        const { totalAmount: monthlyCostCents } = calculateTieredPricing(quantityPrincipal);
+        const monthlyCost = monthlyCostCents / 100; // Conversion en euros
+        
+        // 4. Ramener ce coût à la période sélectionnée (Prorata)
+        // ex: Si on regarde 15 jours, le coût est moitié du mois
+        const priceyeCost = monthlyCost * (daysInPeriod / 30);
+
+
+        // --- Calcul des KPIs Finaux ---
+
         const adr = totalNightsBooked > 0 ? totalRevenue / totalNightsBooked : 0;
         const occupancy = totalNightsAvailable > 0 ? (totalNightsBooked / totalNightsAvailable) * 100 : 0;
-        const iaGain = totalRevenue - totalBaseRevenue;
-        const iaScore = totalNightsBooked > 0 ? (premiumNights / totalNightsBooked) * 100 : 0;
         const revPar = totalNightsAvailable > 0 ? totalRevenue / totalNightsAvailable : 0;
 
-        // Calcul du ROI (pourcentage de gain par rapport au scénario de base)
-        const roi = totalBaseRevenue > 0 ? ((totalRevenue - totalBaseRevenue) / totalBaseRevenue) * 100 : 0;
+        // Gain Brut (Revenu Réel - Revenu Base)
+        const grossIaGain = totalRevenue - totalBaseRevenue;
+        
+        // Gain Net (Gain Brut - Coût Outil)
+        const netIaGain = grossIaGain - priceyeCost;
+
+        // ROI (Retour sur Investissement)
+        // Formule : (Gain Net / Coût) * 100
+        // Si le coût est 0 (période d'essai), le ROI est infini (on met 0 ou 999 par sécurité)
+        let roi = 0;
+        if (priceyeCost > 0) {
+            roi = (netIaGain / priceyeCost) * 100;
+        }
+
+        // Score IA (Qualité de la stratégie : % de nuits vendues au-dessus du prix de base)
+        const iaScore = totalNightsBooked > 0 ? (premiumNights / totalNightsBooked) * 100 : 0;
 
         res.status(200).json({
-            totalRevenue,
+            totalRevenue: Math.round(totalRevenue),
             totalNightsBooked,
-            adr,
-            occupancy: occupancy, 
+            adr: Math.round(adr),
+            occupancy: Math.round(occupancy * 10) / 10,
             totalNightsAvailable,
-            iaGain,
-            iaScore,
-            revPar,
-            roi: Math.round(roi)
+            
+            // Nouveaux indicateurs financiers
+            iaGain: Math.round(netIaGain), // Gain NET affiché
+            grossIaGain: Math.round(grossIaGain), // Gain Brut (dispo si besoin)
+            priceyeCost: Math.round(priceyeCost), // Coût pour la période
+            
+            iaScore: Math.round(iaScore),
+            roi: Math.round(roi), // Pourcentage ROI réel
+            revPar: Math.round(revPar)
         });
 
     } catch (error) {
-        // 5. Logger toutes les erreurs avec userId et endpoint
-        const userId = req.user?.uid || 'unknown';
-        console.error(`[Validation Error] [Endpoint: ${endpoint}] [userId: ${userId}] Erreur lors du calcul des KPIs:`, error);
-        res.status(500).json({ error: 'Erreur serveur lors du calcul des KPIs.' });
+        console.error(`[API Error] [Endpoint: ${endpoint}]`, error);
+        res.status(500).json({ error: 'Erreur interne du serveur', details: error.message });
     }
 });
 
