@@ -19,7 +19,7 @@
   "sidebar": {
     "dashboard": "Tableau de Bord",
     "bookings": "Réservations",
-    "reports": "Reports",
+    "reports": "Rapports",
     "pricing": "Calendrier Pricing",
     "competitors": "Concurrents (Bientôt)",
     "settings": "Paramètres",
@@ -599,6 +599,114 @@
     "analysisNotAvailable": "Analyse non disponible.",
     "vsMarket": "vs Marché",
     "na": "N/A"
+  },
+  "reports": {
+    "title": "Rapports d'Activité",
+    "stats": {
+      "totalRevenue": "Revenu Total (Réel)",
+      "occupancyRate": "Taux d'Occupation (Réel)",
+      "adr": "ADR (Réel)",
+      "aiGains": "Gains IA"
+    },
+    "filters": {
+      "title": "Filtres",
+      "period": "Période",
+      "propertyType": "Type de Propriété",
+      "channel": "Canal",
+      "status": "Statut",
+      "location": "Pays / Ville / Adresse",
+      "locationPlaceholder": "Ex: Paris",
+      "export": "Exporter",
+      "loading": "Chargement des filtres...",
+      "allTypes": "Tous les types",
+      "allChannels": "Tous les canaux",
+      "allStatuses": "Tous les statuts"
+    },
+    "tabs": {
+      "overview": "Vue d'ensemble",
+      "market": "Marché",
+      "positioning": "Positionnement",
+      "forecast": "Prévisions",
+      "financial": "Performance Financière"
+    },
+    "periods": {
+      "7d": "7 derniers jours",
+      "1m": "1 mois",
+      "6m": "6 mois",
+      "ytd": "Année en cours",
+      "1y": "1 an",
+      "all": "Tout"
+    },
+    "charts": {
+      "weeklyPerformance": "Performance Hebdomadaire",
+      "revparAdrOccupancy": "RevPAR, ADR & Occupation",
+      "aiGainScore": "Gain IA & Score IA",
+      "marketTrend": "Tendance Marché - Offre vs Demande",
+      "demandAnalysis24h": "Analyse Demande 24h",
+      "adrVsMarket": "ADR vs Marché",
+      "competitorPriceDistribution": "Distribution Prix Concurrents",
+      "futureRevenue": "Revenus Futurs & Occupation Prévue",
+      "syntheticForecasts": "Prévisions Synthétiques par Propriété",
+      "revenueVsTarget": "Revenu Total vs Objectif",
+      "adrByChannel": "ADR par Canal",
+      "priceyeRoi": "PricEye ROI",
+      "grossMargin": "Marge Brute (%)",
+      "forecastedAdrRevparOccupancy": "ADR, RevPAR & Occupation Prévus",
+      "forecastScenarios": "Scénarios de Prévision"
+    },
+    "legends": {
+      "occupancy": "Occupation (%)",
+      "bookings": "Réservations",
+      "adr": "ADR (€)",
+      "revpar": "RevPAR (€)",
+      "aiGain": "Gain IA (€)",
+      "aiScore": "Score IA (/100)",
+      "demand": "Demande",
+      "supply": "Offre",
+      "marketAdr": "ADR Marché",
+      "yourAdr": "Votre ADR",
+      "target": "Objectif",
+      "realRevenue": "Revenu réel",
+      "returnOnInvestment": "Retour sur investissement",
+      "priceyeCost": "Coût PricEye",
+      "generatedGains": "Gains générés",
+      "forecastedRevenue": "Revenu Prévu (€)",
+      "numberOfCompetitors": "Nombre de concurrents",
+      "forecasts": "Prévisions"
+    },
+    "marketKpis": {
+      "avgPrice": "Prix moyen marché",
+      "demandLevel": "Niveau de demande",
+      "weatherScore": "Score météo",
+      "eventImpact": "Impact événements"
+    },
+    "demandLevels": {
+      "veryHigh": "Très élevé",
+      "high": "Élevé",
+      "medium": "Moyen",
+      "low": "Faible",
+      "unknown": "N/A"
+    },
+    "scenarios": {
+      "baseline": "Scénario de base",
+      "optimistic": "Scénario optimiste (+10%)",
+      "pessimistic": "Scénario pessimiste (-10%)"
+    },
+    "demandAnalysis": {
+      "activeSearches": "Recherches actives",
+      "listingViews": "Vues de listings",
+      "conversionRate": "Taux de conversion"
+    },
+    "messages": {
+      "loading": "Chargement...",
+      "noDataToExport": "Aucune donnée à exporter.",
+      "noProperties": "Aucune propriété à afficher.",
+      "error": "Erreur",
+      "information": "Information",
+      "errorLoadingProperties": "Erreur lors du chargement des propriétés",
+      "errorLoadingKpis": "Erreur lors du chargement des KPIs",
+      "unknownError": "Erreur inconnue"
+    }
   },
   "billing": {
     "title": "Gestion de l'abonnement",

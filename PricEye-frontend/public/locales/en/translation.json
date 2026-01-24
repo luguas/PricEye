@@ -600,6 +600,114 @@
     "vsMarket": "vs Market",
     "na": "N/A"
   },
+  "reports": {
+    "title": "Activity Reports",
+    "stats": {
+      "totalRevenue": "Total Revenue (Real)",
+      "occupancyRate": "Occupancy Rate (Real)",
+      "adr": "ADR (Real)",
+      "aiGains": "AI Gains"
+    },
+    "filters": {
+      "title": "Filters",
+      "period": "Period",
+      "propertyType": "Property Type",
+      "channel": "Channel",
+      "status": "Status",
+      "location": "Country / City / Address",
+      "locationPlaceholder": "Ex: Paris",
+      "export": "Export",
+      "loading": "Loading filters...",
+      "allTypes": "All types",
+      "allChannels": "All channels",
+      "allStatuses": "All statuses"
+    },
+    "tabs": {
+      "overview": "Overview",
+      "market": "Market",
+      "positioning": "Positioning",
+      "forecast": "Forecast",
+      "financial": "Financial Performance"
+    },
+    "periods": {
+      "7d": "Last 7 days",
+      "1m": "1 month",
+      "6m": "6 months",
+      "ytd": "Year to date",
+      "1y": "1 year",
+      "all": "All"
+    },
+    "charts": {
+      "weeklyPerformance": "Weekly Performance",
+      "revparAdrOccupancy": "RevPAR, ADR & Occupancy",
+      "aiGainScore": "AI Gain & AI Score",
+      "marketTrend": "Market Trend - Supply vs Demand",
+      "demandAnalysis24h": "24h Demand Analysis",
+      "adrVsMarket": "ADR vs Market",
+      "competitorPriceDistribution": "Competitor Price Distribution",
+      "futureRevenue": "Future Revenue & Forecasted Occupancy",
+      "syntheticForecasts": "Synthetic Forecasts by Property",
+      "revenueVsTarget": "Total Revenue vs Target",
+      "adrByChannel": "ADR by Channel",
+      "priceyeRoi": "PricEye ROI",
+      "grossMargin": "Gross Margin (%)",
+      "forecastedAdrRevparOccupancy": "Forecasted ADR, RevPAR & Occupancy",
+      "forecastScenarios": "Forecast Scenarios"
+    },
+    "legends": {
+      "occupancy": "Occupancy (%)",
+      "bookings": "Bookings",
+      "adr": "ADR (€)",
+      "revpar": "RevPAR (€)",
+      "aiGain": "AI Gain (€)",
+      "aiScore": "AI Score (/100)",
+      "demand": "Demand",
+      "supply": "Supply",
+      "marketAdr": "Market ADR",
+      "yourAdr": "Your ADR",
+      "target": "Target",
+      "realRevenue": "Real revenue",
+      "returnOnInvestment": "Return on investment",
+      "priceyeCost": "PricEye Cost",
+      "generatedGains": "Generated gains",
+      "forecastedRevenue": "Forecasted Revenue (€)",
+      "numberOfCompetitors": "Number of competitors",
+      "forecasts": "Forecasts"
+    },
+    "marketKpis": {
+      "avgPrice": "Average market price",
+      "demandLevel": "Demand level",
+      "weatherScore": "Weather score",
+      "eventImpact": "Event impact"
+    },
+    "demandLevels": {
+      "veryHigh": "Very high",
+      "high": "High",
+      "medium": "Medium",
+      "low": "Low",
+      "unknown": "N/A"
+    },
+    "demandAnalysis": {
+      "activeSearches": "Active searches",
+      "listingViews": "Listing views",
+      "conversionRate": "Conversion rate"
+    },
+    "scenarios": {
+      "baseline": "Baseline scenario",
+      "optimistic": "Optimistic scenario (+10%)",
+      "pessimistic": "Pessimistic scenario (-10%)"
+    },
+    "messages": {
+      "loading": "Loading...",
+      "noDataToExport": "No data to export.",
+      "noProperties": "No properties to display.",
+      "error": "Error",
+      "information": "Information",
+      "errorLoadingProperties": "Error loading properties",
+      "errorLoadingKpis": "Error loading KPIs",
+      "unknownError": "Unknown error"
+    }
+  },
   "billing": {
     "title": "Subscription Management",
     "noSubscription": "You don't have an active subscription yet.",
