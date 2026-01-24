@@ -5198,7 +5198,7 @@ app.get('/api/reports/kpis', authenticateToken, async (req, res) => {
         // 2. Récupérer les données des propriétés (pour le prix de base)
         let properties = await db.getPropertiesByTeam(teamId);
         if (!properties || properties.length === 0) {
-            return res.status(200).json({ totalRevenue: 0, totalNightsBooked: 0, adr: 0, occupancy: 0, totalNightsAvailable: 0, iaGain: 0, iaScore: 0, revPar: 0 });
+            return res.status(200).json({ totalRevenue: 0, totalNightsBooked: 0, adr: 0, occupancy: 0, totalNightsAvailable: 0, iaGain: 0, iaScore: 0, revPar: 0, roi: 0 });
         }
         
         // 2.5 Appliquer les filtres sur les propriétés
@@ -5220,7 +5220,7 @@ app.get('/api/reports/kpis', authenticateToken, async (req, res) => {
         }
         
         if (properties.length === 0) {
-            return res.status(200).json({ totalRevenue: 0, totalNightsBooked: 0, adr: 0, occupancy: 0, totalNightsAvailable: 0, iaGain: 0, iaScore: 0, revPar: 0 });
+            return res.status(200).json({ totalRevenue: 0, totalNightsBooked: 0, adr: 0, occupancy: 0, totalNightsAvailable: 0, iaGain: 0, iaScore: 0, revPar: 0, roi: 0 });
         }
         
         const propertyBasePrices = new Map();
@@ -5243,7 +5243,7 @@ app.get('/api/reports/kpis', authenticateToken, async (req, res) => {
         bookings = bookings.filter(booking => filteredPropertyIds.has(booking.property_id));
 
         if (!bookings || bookings.length === 0) {
-             return res.status(200).json({ totalRevenue: 0, totalNightsBooked: 0, adr: 0, occupancy: 0, totalNightsAvailable: totalNightsAvailable, iaGain: 0, iaScore: 0, revPar: 0 });
+             return res.status(200).json({ totalRevenue: 0, totalNightsBooked: 0, adr: 0, occupancy: 0, totalNightsAvailable: totalNightsAvailable, iaGain: 0, iaScore: 0, revPar: 0, roi: 0 });
         }
 
         let totalRevenue = 0;
@@ -5287,6 +5287,8 @@ app.get('/api/reports/kpis', authenticateToken, async (req, res) => {
         const iaScore = totalNightsBooked > 0 ? (premiumNights / totalNightsBooked) * 100 : 0;
         const revPar = totalNightsAvailable > 0 ? totalRevenue / totalNightsAvailable : 0;
 
+        // Calcul du ROI (pourcentage de gain par rapport au scénario de base)
+        const roi = totalBaseRevenue > 0 ? ((totalRevenue - totalBaseRevenue) / totalBaseRevenue) * 100 : 0;
 
         res.status(200).json({
             totalRevenue,
@@ -5296,7 +5298,8 @@ app.get('/api/reports/kpis', authenticateToken, async (req, res) => {
             totalNightsAvailable,
             iaGain,
             iaScore,
-            revPar
+            revPar,
+            roi: Math.round(roi)
         });
 
     } catch (error) {
