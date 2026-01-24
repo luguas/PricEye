@@ -245,11 +245,29 @@ function PricingPage({ token, userProfile }) {
       const overridesData = await getPriceOverrides(targetId, token, startOfMonth, endOfMonth).catch(()=>({}));
       const newOverrides = {};
       if (Array.isArray(overridesData)) {
-        overridesData.forEach(o => { if (o.date) newOverrides[o.date] = o.price; });
+        overridesData.forEach(o => { 
+          if (o.date) {
+            newOverrides[o.date] = {
+              price: o.price,
+              isLocked: o.isLocked || o.is_locked || false
+            };
+          }
+        });
       } else {
         Object.keys(overridesData || {}).forEach(d => {
              const val = overridesData[d];
-             newOverrides[d] = typeof val === 'object' ? val.price : val;
+             if (typeof val === 'object') {
+               newOverrides[d] = {
+                 price: val.price,
+                 isLocked: val.isLocked !== undefined ? val.isLocked : (val.is_locked || false)
+               };
+             } else {
+               // Format ancien (juste le prix) - compatibilité
+               newOverrides[d] = {
+                 price: val,
+                 isLocked: false
+               };
+             }
         });
       }
       setPriceOverrides(newOverrides);
@@ -385,9 +403,12 @@ function PricingPage({ token, userProfile }) {
     setBookingPrice('');
     
     // Pré-remplir le prix manuel si un prix existe déjà pour ce jour
-    const existingPrice = priceOverrides[dateStr];
+    const existingOverride = priceOverrides[dateStr];
+    const existingPrice = existingOverride ? (typeof existingOverride === 'object' ? existingOverride.price : existingOverride) : null;
     setManualPrice(existingPrice ? String(Math.round(existingPrice)) : '');
-    setIsPriceLocked(true);
+    // Initialiser le statut de verrouillage avec la valeur existante, ou true par défaut
+    const existingIsLocked = existingOverride && typeof existingOverride === 'object' ? existingOverride.isLocked : true;
+    setIsPriceLocked(existingIsLocked);
   };
   const handleMouseOver = (dateStr) => { if (isSelecting) setSelectionEnd(dateStr); };
   const handleMouseUp = () => { setIsSelecting(false); };
@@ -478,7 +499,8 @@ function PricingPage({ token, userProfile }) {
     for (let d=1; d<=daysInMonth; d++) {
         const dateStr = `${year}-${String(month+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
         const bk = bookings[dateStr];
-        const pr = priceOverrides[dateStr];
+        const overrideData = priceOverrides[dateStr];
+        const pr = overrideData ? (typeof overrideData === 'object' ? overrideData.price : overrideData) : null;
         const isPast = dateStr < todayStr;
         
         let bg = 'bg-global-bg-small-box';
@@ -513,7 +535,14 @@ function PricingPage({ token, userProfile }) {
                  onMouseEnter={!isPast && !bk ? () => handleMouseOver(dateStr) : undefined}
             >
                 <span className={`${txt} font-h3-font-family font-h3-font-weight text-h3-font-size`}>{d}</span>
-                {pr && !bk && <span className={`${txt} font-h4-font-family text-xs`}>{Math.round(pr)}€</span>}
+                {pr && !bk && (
+                  <span className={`${txt} font-h4-font-family text-xs flex items-center gap-1`}>
+                    {Math.round(pr)}€
+                    {overrideData && typeof overrideData === 'object' && overrideData.isLocked && (
+                      <span className="text-yellow-400" title={t('pricing.lockPrice')}>🔒</span>
+                    )}
+                  </span>
+                )}
                 {bk && <span className="text-[10px] text-white">Réservé</span>}
                 {/* Indicateur visuel pour le jour sélectionné */}
                 {isClickedDate && !isSel && (
@@ -552,7 +581,9 @@ function PricingPage({ token, userProfile }) {
 
   const renderPriceForm = () => {
     // Vérifier si on modifie un prix existant ou si on en ajoute un nouveau
-    const hasExistingPrice = selectionStart && priceOverrides[selectionStart];
+    const existingOverride = selectionStart ? priceOverrides[selectionStart] : null;
+    const hasExistingPrice = existingOverride !== null && existingOverride !== undefined;
+    const existingPriceValue = hasExistingPrice ? (typeof existingOverride === 'object' ? existingOverride.price : existingOverride) : null;
     const isModifying = hasExistingPrice && manualPrice;
     
     return (
@@ -563,10 +594,13 @@ function PricingPage({ token, userProfile }) {
                     {selectionStart} → {selectionEnd}
                 </div>
             </div>
-            {hasExistingPrice && (
+            {hasExistingPrice && existingPriceValue && (
                 <div className="bg-blue-900/20 border border-blue-500/30 rounded-[10px] p-2">
                     <span className="text-blue-300 text-xs">
-                        💡 {t('pricing.currentPrice')} : {Math.round(priceOverrides[selectionStart])}€
+                        💡 {t('pricing.currentPrice')} : {Math.round(existingPriceValue)}€
+                        {existingOverride && typeof existingOverride === 'object' && existingOverride.isLocked && (
+                            <span className="ml-2 text-yellow-300">🔒 {t('pricing.lockPrice')}</span>
+                        )}
                     </span>
                 </div>
             )}

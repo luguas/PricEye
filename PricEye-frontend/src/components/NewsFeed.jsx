@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { getMarketNews } from '../services/api.js';
 import CustomScrollbar from './CustomScrollbar.jsx';
 import { useLanguage } from '../contexts/LanguageContext.jsx';
@@ -8,6 +8,7 @@ function NewsFeed({ token, userProfile }) {
   const { t, language: contextLanguage } = useLanguage();
   // Utiliser la langue du profil utilisateur en priorité, sinon celle du contexte
   const language = userProfile?.language || contextLanguage || 'fr';
+  const prevLanguageRef = useRef(undefined);
   const [news, setNews] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState('');
@@ -38,11 +39,14 @@ function NewsFeed({ token, userProfile }) {
     } finally {
       setIsLoading(false);
     }
-  }, [token, language, t]);
+  }, [token, language, t, userProfile]);
 
   useEffect(() => {
-    fetchNews();
-  }, [fetchNews]);
+    const prev = prevLanguageRef.current;
+    const isLanguageChange = prev !== undefined && prev !== language;
+    prevLanguageRef.current = language;
+    fetchNews(isLanguageChange);
+  }, [language, fetchNews]);
 
   const getImpactColor = (category) => {
     switch ((category || '').toLowerCase()) {
@@ -131,18 +135,9 @@ function NewsFeed({ token, userProfile }) {
 
   return (
     <div className="bg-global-bg-box border border-global-stroke-box rounded-[14px] p-6 shadow-[0_15px_60px_rgba(0,0,0,0.35)] flex flex-col h-full max-h-[800px]">
-      <div className="flex items-center justify-between gap-4 shrink-0 mb-4">
-        <div>
-          <p className="text-sm uppercase tracking-[0.3em] text-global-inactive">{t('newsFeed.insights')}</p>
-          <h2 className="text-2xl font-h2-font-family text-global-blanc">{t('newsFeed.title')}</h2>
-        </div>
-        <button
-          type="button"
-          onClick={() => fetchNews(true)}
-          className="text-sm px-4 py-2 rounded-full border border-global-stroke-box text-global-inactive hover:text-global-blanc hover:border-global-content-highlight-2nd transition shrink-0"
-        >
-          {t('dashboard.refresh')}
-        </button>
+      <div className="shrink-0 mb-4">
+        <p className="text-sm uppercase tracking-[0.3em] text-global-inactive">{t('newsFeed.insights')}</p>
+        <h2 className="text-2xl font-h2-font-family text-global-blanc">{t('newsFeed.title')}</h2>
       </div>
       <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
         <CustomScrollbar className="flex-1 min-h-0">

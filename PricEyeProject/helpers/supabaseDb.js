@@ -178,7 +178,16 @@ async function getGroup(groupId) {
     max_stay_duration: rules.max_stay_duration || rules.max_stay || null,
     long_stay_discount: rules.long_stay_discount || rules.weekly_discount_percent || null,
     markup: rules.markup || rules.weekend_markup_percent || null,
-    properties: (data.group_properties || []).map(gp => gp.properties).filter(Boolean)
+    properties: (data.group_properties || []).map(gp => gp.property_id).filter(Boolean),
+    // Normaliser les noms de champs pour compatibilité frontend
+    mainPropertyId: data.main_property_id || null,
+    syncPrices: data.sync_prices || false,
+    // Normaliser les règles pour compatibilité frontend
+    min_stay: rules.min_stay_duration || rules.min_stay || null,
+    max_stay: rules.max_stay_duration || rules.max_stay || null,
+    weekly_discount_percent: rules.weekly_discount_percent || rules.long_stay_discount || null,
+    monthly_discount_percent: rules.monthly_discount_percent || null,
+    weekend_markup_percent: rules.weekend_markup_percent || rules.markup || null
   };
 }
 
@@ -223,7 +232,16 @@ async function getGroupsByOwner(ownerId) {
       max_stay_duration: rules.max_stay_duration || rules.max_stay || null,
       long_stay_discount: rules.long_stay_discount || rules.weekly_discount_percent || null,
       markup: rules.markup || rules.weekend_markup_percent || null,
-      properties: (group.group_properties || []).map(gp => gp.properties).filter(Boolean)
+      properties: (group.group_properties || []).map(gp => gp.property_id).filter(Boolean),
+      // Normaliser les noms de champs pour compatibilité frontend
+      mainPropertyId: group.main_property_id || null,
+      syncPrices: group.sync_prices || false,
+      // Normaliser les règles pour compatibilité frontend
+      min_stay: rules.min_stay_duration || rules.min_stay || null,
+      max_stay: rules.max_stay_duration || rules.max_stay || null,
+      weekly_discount_percent: rules.weekly_discount_percent || rules.long_stay_discount || null,
+      monthly_discount_percent: rules.monthly_discount_percent || null,
+      weekend_markup_percent: rules.weekend_markup_percent || rules.markup || null
     };
   });
 }
