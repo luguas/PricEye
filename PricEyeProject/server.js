@@ -8127,6 +8127,13 @@ app.post('/api/properties/:id/pricing-strategy', authenticateToken, async (req, 
             await db.upsertPriceOverrides(id, overridesToSave);
         }
 
+        // Si le pricing automatique est activé pour cette propriété, mettre à jour auto_pricing_updated_at
+        if (property.auto_pricing_enabled) {
+            await db.updateProperty(id, {
+                auto_pricing_updated_at: new Date().toISOString()
+            });
+        }
+
         // =================================================================
         // ÉTAPE D : PROPAGATION AUX GROUPES (SYNC)
         // =================================================================
@@ -10883,6 +10890,13 @@ RAPPEL CRITIQUE : La réponse finale doit être UNIQUEMENT ce JSON, sans texte a
             await db.upsertPriceOverrides(propertyId, overridesToSave);
         }
 
+        // Si le pricing automatique est activé pour cette propriété, mettre à jour auto_pricing_updated_at
+        if (property.auto_pricing_enabled) {
+            await db.updateProperty(propertyId, {
+                auto_pricing_updated_at: new Date().toISOString()
+            });
+        }
+
         // Log de l'action
         await logPropertyChange(propertyId, userId, userEmail, 'update:ia-pricing-auto', {
             summary: strategyResult.strategy_summary,
@@ -11036,10 +11050,47 @@ async function processAutoPricingForUser(userId, userData) {
         const results = [];
 
         // Traiter les groupes avec synchronisation activée
-        const groupsWithSync = groups.filter(g => g.sync_prices && g.main_property_id);
+        // Filtrer les groupes dont la propriété principale a auto_pricing_enabled activé
+        const groupsWithSync = groups.filter(g => {
+            if (!g.sync_prices || !g.main_property_id) return false;
+            const mainProperty = properties.find(p => p.id === g.main_property_id);
+            return mainProperty && mainProperty.auto_pricing_enabled === true;
+        });
+        
         if (groupsWithSync.length > 0) {
-            const groupResults = await generatePricingForGroups(userId, userData.email, groupsWithSync, properties);
-            results.push(...groupResults);
+            // Vérifier pour chaque groupe si la propriété principale doit être traitée
+            const { hour, minute } = getCurrentTimeInTimezone(userData.auto_pricing?.timezone || userData.timezone || 'Europe/Paris');
+            const isScheduledTime = hour === 0 && minute === 0;
+            
+            const eligibleGroups = [];
+            for (const group of groupsWithSync) {
+                const mainProperty = properties.find(p => p.id === group.main_property_id);
+                if (!mainProperty) continue;
+                
+                // Si ce n'est pas l'heure prévue (00h00), vérifier si une génération a eu lieu aujourd'hui
+                if (!isScheduledTime && mainProperty.auto_pricing_updated_at) {
+                    const updatedAt = new Date(mainProperty.auto_pricing_updated_at);
+                    const now = new Date();
+                    
+                    // Vérifier si la mise à jour a eu lieu aujourd'hui (même jour)
+                    const isToday = updatedAt.getFullYear() === now.getFullYear() &&
+                                   updatedAt.getMonth() === now.getMonth() &&
+                                   updatedAt.getDate() === now.getDate();
+                    
+                    if (isToday) {
+                        // Si une génération a eu lieu aujourd'hui et qu'on n'est pas à 00h00, ne pas régénérer
+                        console.log(`[Auto-Pricing] Groupe ${group.id} ignoré: génération déjà effectuée aujourd'hui pour la propriété principale (${updatedAt.toISOString()})`);
+                        continue;
+                    }
+                }
+                
+                eligibleGroups.push(group);
+            }
+            
+            if (eligibleGroups.length > 0) {
+                const groupResults = await generatePricingForGroups(userId, userData.email, eligibleGroups, properties);
+                results.push(...groupResults);
+            }
         }
 
         // Traiter les propriétés individuelles (non dans un groupe avec sync)
@@ -11050,7 +11101,32 @@ async function processAutoPricingForUser(userId, userData) {
         });
 
         const individualProperties = properties.filter(p => !propertiesInSyncedGroups.has(p.id));
-        for (const property of individualProperties) {
+        
+        // Filtrer les propriétés avec pricing automatique activé
+        const propertiesWithAutoPricing = individualProperties.filter(p => p.auto_pricing_enabled === true);
+        
+        // Vérifier pour chaque propriété si elle doit être traitée
+        const { hour, minute } = getCurrentTimeInTimezone(userData.auto_pricing?.timezone || userData.timezone || 'Europe/Paris');
+        const isScheduledTime = hour === 0 && minute === 0;
+        
+        for (const property of propertiesWithAutoPricing) {
+            // Si ce n'est pas l'heure prévue (00h00), vérifier si une génération a eu lieu aujourd'hui
+            if (!isScheduledTime && property.auto_pricing_updated_at) {
+                const updatedAt = new Date(property.auto_pricing_updated_at);
+                const now = new Date();
+                
+                // Vérifier si la mise à jour a eu lieu aujourd'hui (même jour)
+                const isToday = updatedAt.getFullYear() === now.getFullYear() &&
+                               updatedAt.getMonth() === now.getMonth() &&
+                               updatedAt.getDate() === now.getDate();
+                
+                if (isToday) {
+                    // Si une génération a eu lieu aujourd'hui et qu'on n'est pas à 00h00, ne pas régénérer
+                    console.log(`[Auto-Pricing] Propriété ${property.id} ignorée: génération déjà effectuée aujourd'hui (${updatedAt.toISOString()})`);
+                    continue;
+                }
+            }
+            
             const result = await generateAndApplyPricingForProperty(
                 property.id,
                 property,

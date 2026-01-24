@@ -538,7 +538,7 @@
       "invalidSelection": "Veuillez sélectionner une propriété ou un groupe valide.",
       "connectionNotReady": "Connexion non prête. Veuillez patienter.",
       "strategyError": "Erreur de génération de stratégie: {{message}}",
-      "strategySuccess": "Stratégie IA appliquée avec succès à {{count}} propriété(s) ! {{summary}}",
+      "strategySuccess": "Stratégie IA appliquée avec succès à {{count}} jour(s) !",
       "bookingNoMainProperty": "Veuillez définir une propriété principale pour ce groupe avant d'ajouter une réservation.",
       "bookingRequired": "Sélection de dates, prix, et propriété/groupe valide requis.",
       "invalidPrice": "Veuillez entrer un prix valide (0 ou plus).",

@@ -337,7 +337,7 @@ function PricingPage({ token, userProfile }) {
     setIaLoading(true);
     try {
       const result = await applyPricingStrategy(targetId, groupContext, token);
-      setAlertModal({ isOpen: true, message: t('pricing.errors.strategySuccess', { count: result.days_generated || 180 }), title: t('pricing.modal.success') });
+      setAlertModal({ isOpen: true, message: t('pricing.errors.strategySuccess', { count: result.days_generated || 180, summary: '' }), title: t('pricing.modal.success') });
       fetchCalendarData();
       window.dispatchEvent(new CustomEvent('aiCallCompleted'));
     } catch (err) {
@@ -467,7 +467,7 @@ function PricingPage({ token, userProfile }) {
               cur.setDate(cur.getDate() + 1);
           }
           await Promise.all(targets.map(pid => pid && updatePriceOverrides(pid, overrides, token)));
-          setAlertModal({ isOpen: true, message: t('pricing.errors.priceSuccess'), title: t('pricing.modal.success') });
+          setAlertModal({ isOpen: true, message: t('pricing.errors.priceSuccess', { count: targets.length }), title: t('pricing.modal.success') });
           clearSelection();
           fetchCalendarData();
       } catch(e) { setError(e.message); } finally { setIsLoading(false); }
