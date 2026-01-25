@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { getProperties, deleteProperty, getReportKpis, updatePropertyStatus, getGroupRecommendations, getGroups } from '../services/api.js'; 
 import PropertyModal from '../components/PropertyModal.jsx';
 import GroupsManager from '../components/GroupsManager.jsx';
@@ -234,7 +234,6 @@ function DashboardPage({ token, userProfile }) {
       setIsLoading(false);
       setIsKpiLoading(false);
       setIsRecLoading(false);
-      // Rafraîchir le compteur de propriétés dans la barre supérieure après chaque rafraîchissement
       if (typeof window !== 'undefined') {
         try {
           window.dispatchEvent(new CustomEvent('refreshPropertyCount'));
@@ -243,11 +242,25 @@ function DashboardPage({ token, userProfile }) {
         }
       }
     }
-  }, [token, isPropertyModalOpen, isStrategyModalOpen, isRulesModalOpen, userProfile]); 
+  }, [token, isPropertyModalOpen, isStrategyModalOpen, isRulesModalOpen, userProfile?.id, userProfile?.timezone, userProfile?.language, language]); 
+
+  const hasFetchedData = useRef(false);
 
   useEffect(() => {
-    fetchInitialData();
-  }, [fetchInitialData]); 
+    if (!token) return;
+    if (hasFetchedData.current) return;
+    hasFetchedData.current = true;
+
+    const load = async () => {
+      try {
+        await fetchInitialData();
+      } catch (err) {
+        console.error('Erreur chargement initial Dashboard:', err);
+        hasFetchedData.current = false;
+      }
+    };
+    load();
+  }, [token, fetchInitialData]); 
   
   useEffect(() => {
     const handleClickOutside = (event) => {

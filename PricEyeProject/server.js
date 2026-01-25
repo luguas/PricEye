@@ -4612,42 +4612,54 @@ app.get('/api/groups', authenticateToken, async (req, res) => {
   }
 });
 
-// --- Route pour mettre à jour les règles d'un Groupe ---
+// --- Route pour mettre à jour un groupe (PUT /api/groups/:groupId) ---
+// Reconstruit explicitement les objets JSON strategy et rules avant sauvegarde.
 app.put('/api/groups/:groupId', authenticateToken, async (req, res) => {
     try {
-        const { groupId } = req.params;
-        const updates = req.body; 
+        const groupId = req.params.groupId;
+        const userId = req.user.uid;
+        const input = req.body;
 
-        // Sécurité : ne pas laisser modifier l'ID ou le user_id
-        delete updates.id;
-        delete updates.user_id;
-
-        // CORRECTION : Normaliser les noms de colonnes (camelCase -> snake_case)
-        const normalizedUpdates = {};
-        if (updates.mainPropertyId !== undefined) {
-            normalizedUpdates.main_property_id = updates.mainPropertyId;
-            delete updates.mainPropertyId;
+        const existing = await db.getGroup(groupId);
+        if (!existing) {
+            return res.status(404).json({ error: 'Groupe non trouvé.' });
         }
-        if (updates.syncPrices !== undefined) {
-            normalizedUpdates.sync_prices = updates.syncPrices;
-            delete updates.syncPrices;
+        if (existing.owner_id !== userId) {
+            return res.status(403).json({ error: 'Action non autorisée sur ce groupe.' });
         }
-        
-        // Fusionner les mises à jour normalisées avec les autres
-        const finalUpdates = { ...updates, ...normalizedUpdates };
 
-        const { data, error } = await supabase
-            .from('groups')
-            .update(finalUpdates)
-            .eq('id', groupId)
-            .select();
+        const strategyData = {
+            strategy: input.strategy || input.strategy_type || 'dynamic',
+            base_price: input.base_price,
+            floor_price: input.floor_price,
+            ceiling_price: input.ceiling_price,
+        };
 
-        if (error) throw error;
+        const rulesData = {
+            min_stay: input.min_stay ?? input.min_stay_duration,
+            max_stay: input.max_stay ?? input.max_stay_duration,
+            weekend_markup_percent: input.weekend_markup_percent ?? input.markup,
+            long_stay_discount: input.long_stay_discount,
+            weekly_discount_percent: input.weekly_discount_percent,
+            monthly_discount_percent: input.monthly_discount_percent,
+        };
 
-        res.status(200).json({ success: true, group: data[0] });
+        const syncPrices = input.sync_prices ?? input.syncPrices ?? input.auto_pricing_enabled === true;
+        const groupUpdatePayload = {
+            name: input.name,
+            color: input.color,
+            strategy: strategyData,
+            rules: rulesData,
+            main_property_id: input.main_property_id ?? input.mainPropertyId ?? existing.main_property_id ?? existing.mainPropertyId,
+            sync_prices: !!syncPrices,
+            auto_pricing_updated_at: syncPrices ? new Date().toISOString() : null,
+            updated_at: new Date().toISOString(),
+        };
 
+        const updatedGroup = await db.updateGroup(groupId, groupUpdatePayload);
+        res.status(200).json(updatedGroup);
     } catch (error) {
-        console.error("Erreur update group:", error);
+        console.error('Erreur update group:', error);
         res.status(500).json({ error: error.message });
     }
 });
@@ -10762,6 +10774,52 @@ function getCurrentTimeInTimezone(timezone) {
 }
 
 /**
+ * Récupère les paramètres de pricing (strategy, rules) pour une propriété.
+ * Si la propriété appartient à un groupe avec sync_prices activé, utilise la config du groupe.
+ * @param {string} propertyId - ID de la propriété
+ * @returns {Promise<{ strategy: object, rules: object }>}
+ */
+async function getPricingParamsForProperty(propertyId) {
+    const property = await db.getProperty(propertyId);
+    if (!property) return { strategy: null, rules: null };
+
+    const propStrategy = typeof property.strategy === 'object' && property.strategy && !Array.isArray(property.strategy)
+        ? property.strategy
+        : { strategy: property.strategy || 'Équilibré', base_price: property.base_price, floor_price: property.floor_price, ceiling_price: property.ceiling_price };
+    const propRules = property.rules && typeof property.rules === 'object' && !Array.isArray(property.rules)
+        ? property.rules
+        : {
+            min_stay: property.min_stay_duration ?? property.min_stay,
+            max_stay: property.max_stay_duration ?? property.max_stay,
+            weekend_markup_percent: property.weekend_markup_percent ?? property.markup,
+            long_stay_discount: property.long_stay_discount ?? property.weekly_discount_percent,
+            weekly_discount_percent: property.weekly_discount_percent,
+            monthly_discount_percent: property.monthly_discount_percent,
+        };
+
+    let finalStrategy = propStrategy;
+    let finalRules = propRules;
+
+    const { data: relation, error: relError } = await supabase
+        .from('group_properties')
+        .select('group_id')
+        .eq('property_id', propertyId)
+        .maybeSingle();
+
+    if (!relError && relation?.group_id) {
+        const group = await db.getGroup(relation.group_id);
+        const syncPrices = group && (group.sync_prices === true || group.syncPrices === true);
+        if (syncPrices) {
+            console.log(`[Pricing] Utilisation de la stratégie du groupe ${group.name} pour la propriété ${propertyId}`);
+            finalStrategy = group._strategy_raw || group.strategy || finalStrategy;
+            finalRules = group._rules_raw || group.rules || finalRules;
+        }
+    }
+
+    return { strategy: finalStrategy, rules: finalRules };
+}
+
+/**
  * Génère et applique les prix IA pour une propriété
  * @param {string} propertyId - ID de la propriété
  * @param {object} property - Données de la propriété
@@ -10836,14 +10894,14 @@ async function generateAndApplyPricingForProperty(propertyId, property, userId, 
         const property = propertyToUse;
         const today = new Date().toISOString().split('T')[0];
 
-        // Utiliser la stratégie et les règles du groupe si disponibles, sinon utiliser celles de la propriété
-        const effectiveStrategy = groupContext?.strategy?.strategy || (typeof groupContext?.strategy === 'string' ? groupContext.strategy : null) || property.strategy || 'Équilibré';
-        const effectiveRules = groupContext?.rules || property.rules || {};
-        
-        // Utiliser les prix du groupe si disponibles, sinon utiliser ceux de la propriété
-        const effectiveBasePrice = groupContext?.strategy?.base_price || property.base_price || 100;
-        const effectiveFloorPrice = groupContext?.strategy?.floor_price || property.floor_price || 50;
-        const effectiveCeilingPrice = groupContext?.strategy?.ceiling_price || property.ceiling_price || effectiveBasePrice * 4;
+        const pricingParams = await getPricingParamsForProperty(propertyId);
+        const strat = pricingParams.strategy;
+        const rul = pricingParams.rules || {};
+        const effectiveStrategy = (typeof strat === 'object' && strat?.strategy) || (typeof strat === 'string' ? strat : null) || (groupContext?.strategy?.strategy ?? (typeof groupContext?.strategy === 'string' ? groupContext.strategy : null)) || property.strategy || 'Équilibré';
+        const effectiveRules = rul && typeof rul === 'object' ? rul : (groupContext?.rules || property.rules || {});
+        const effectiveBasePrice = (typeof strat === 'object' && strat?.base_price != null) ? strat.base_price : (groupContext?.strategy?.base_price ?? property.base_price ?? 100);
+        const effectiveFloorPrice = (typeof strat === 'object' && strat?.floor_price != null) ? strat.floor_price : (groupContext?.strategy?.floor_price ?? property.floor_price ?? 50);
+        const effectiveCeilingPrice = (typeof strat === 'object' && strat?.ceiling_price != null) ? strat.ceiling_price : (groupContext?.strategy?.ceiling_price ?? property.ceiling_price ?? effectiveBasePrice * 4);
 
         // Définir les variables sanitized pour le prompt (utiliser les valeurs effectives)
         const sanitizedStrategy = effectiveStrategy;
@@ -10851,16 +10909,17 @@ async function generateAndApplyPricingForProperty(propertyId, property, userId, 
         const sanitizedFloorPrice = effectiveFloorPrice;
         const sanitizedCeilingPrice = effectiveCeilingPrice;
         
-        // Sanitiser les autres champs de la propriété pour le prompt
+        // Sanitiser les autres champs de la propriété pour le prompt (règles depuis effectiveRules si groupe)
         const sanitizedAddress = (property.address || property.location || '').substring(0, 200);
         const sanitizedPropertyType = (property.property_type || 'Appartement').substring(0, 50);
         const sanitizedCapacity = property.capacity || 2;
         const sanitizedSurface = property.surface || 0;
         const sanitizedAmenities = Array.isArray(property.amenities) ? property.amenities.slice(0, 50) : [];
         const sanitizedLocation = (property.location || property.city || '').substring(0, 100);
-        const sanitizedWeeklyDiscount = property.weekly_discount || property.weeklyDiscount || 0;
-        const sanitizedMonthlyDiscount = property.monthly_discount || property.monthlyDiscount || 0;
-        const sanitizedWeekendMarkup = property.weekend_markup_percent || property.weekendMarkupPercent || 0;
+        const sanitizedWeeklyDiscount = effectiveRules.weekly_discount_percent ?? effectiveRules.long_stay_discount ?? property.weekly_discount ?? property.weeklyDiscount ?? 0;
+        const sanitizedMonthlyDiscount = effectiveRules.monthly_discount_percent ?? property.monthly_discount ?? property.monthlyDiscount ?? 0;
+        const sanitizedWeekendMarkup = effectiveRules.weekend_markup_percent ?? effectiveRules.markup ?? property.weekend_markup_percent ?? property.weekendMarkupPercent ?? 0;
+        const effectiveMinStay = effectiveRules.min_stay ?? effectiveRules.min_stay_duration ?? property.min_stay ?? 1;
 
         // Construire le nouveau prompt pour l'IA (identique à l'endpoint de pricing-strategy)
         const prompt = `
@@ -10900,7 +10959,7 @@ Ces bornes sont des "Kill Switches". Si ton calcul théorique les dépasse, tu d
 - **Floor Price (Plancher Absolu):** ${sanitizedFloorPrice} € (Ligne de survie).
 - **Base Price (Pivot):** ${sanitizedBasePrice} € (Prix de référence neutre).
 - **Ceiling Price (Plafond):** ${sanitizedCeilingPrice || sanitizedBasePrice * 4} € (Sécurité anti-aberration).
-- **Min Stay:** ${property.min_stay || 1} nuits.
+- **Min Stay:** ${effectiveMinStay} nuits.
 - **Réductions:** Semaine -${sanitizedWeeklyDiscount}%, Mois -${sanitizedMonthlyDiscount}%.
 - **Majoration Week-end:** Ven/Sam +${sanitizedWeekendMarkup}%.
 
