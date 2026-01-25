@@ -140,7 +140,6 @@ function DashboardPage({ token, userProfile }) {
   
   const [editingProperty, setEditingProperty] = useState(null);
   const [editingGroup, setEditingGroup] = useState(null);
-  const [groupsRefreshKey, setGroupsRefreshKey] = useState(0); 
   const [isPropertyModalOpen, setIsPropertyModalOpen] = useState(false);
   const [propertyModalInitialStep, setPropertyModalInitialStep] = useState(1);
   const [isStrategyModalOpen, setIsStrategyModalOpen] = useState(false);
@@ -294,24 +293,12 @@ function DashboardPage({ token, userProfile }) {
     setOpenMenuId(null); 
   };
 
-  const handleOpenStrategyModal = async (item) => {
+  const handleOpenStrategyModal = (item) => {
     setOpenMenuId(null);
-    const currentLanguage = userProfile?.language || language || 'en';
-    const prompts = getAIPrompts(currentLanguage);
-    // Si c'est un groupe, récupérer les données les plus récentes depuis le serveur
+    // Si c'est un groupe, utiliser les données déjà chargées (allGroups)
     if (!item.address && item.id) {
-      try {
-        const groups = await getGroups(token);
-        const updatedGroup = groups.find(g => g.id === item.id);
-        if (updatedGroup) {
-          setEditingGroup(updatedGroup);
-        } else {
-          setEditingGroup(item);
-        }
-      } catch (err) {
-        console.error(`${prompts.errorFetchingGroup}:`, err);
-        setEditingGroup(item);
-      }
+      const updatedGroup = allGroups.find(g => g.id === item.id);
+      setEditingGroup(updatedGroup || item);
     } else {
       setEditingProperty(item);
     }
@@ -380,8 +367,6 @@ function DashboardPage({ token, userProfile }) {
     setPropertyModalInitialStep(1);
     // Rafraîchir immédiatement les groupes et propriétés
     await refreshGroupsAndProperties();
-    // Forcer le rafraîchissement de GroupsManager
-    setGroupsRefreshKey(prev => prev + 1);
     // Rafraîchir le compteur de propriétés dans la barre supérieure
     if (typeof window !== 'undefined') {
       try {
@@ -752,11 +737,12 @@ function DashboardPage({ token, userProfile }) {
             <GroupsManager
               token={token}
               properties={properties}
+              groups={allGroups}
+              groupsLoading={isLoading}
               onGroupChange={fetchInitialData}
               onEditStrategy={handleOpenStrategyModal}
               onEditRules={handleOpenRulesModal}
               userProfile={userProfile}
-              refreshKey={groupsRefreshKey}
             />
 
             {/* Properties List */}
@@ -828,11 +814,8 @@ function DashboardPage({ token, userProfile }) {
           onSave={handleModalSave}
           item={editingGroup || editingProperty} 
           itemType={editingGroup ? 'group' : 'property'}
-          onGroupStrategyUpdated={editingGroup ? async (updatedGroup) => {
-            // Rafraîchir les données depuis le serveur
+          onGroupStrategyUpdated={editingGroup ? async () => {
             await refreshGroupsAndProperties();
-            // Forcer le rafraîchissement de GroupsManager
-            setGroupsRefreshKey(prev => prev + 1);
           } : undefined}
         />
       )}

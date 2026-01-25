@@ -87,8 +87,9 @@ function GroupEditModal({ token, onClose, onSave, group, properties, userProfile
   useEffect(() => {
     if (group) {
       setGroupName(group.name || '');
-      setSyncPrices(group.syncPrices || false);
-      setMainPropertyId(group.mainPropertyId || null);
+      // CORRECTION : Lecture robuste des champs (snake_case ou camelCase)
+      setSyncPrices(group.sync_prices || group.syncPrices || false);
+      setMainPropertyId(group.main_property_id || group.mainPropertyId || null);
       setPropertiesInGroupIds(group.properties || []);
 
       // Initialiser la stratégie
@@ -120,11 +121,11 @@ function GroupEditModal({ token, onClose, onSave, group, properties, userProfile
     setIsLoading(true);
 
     try {
-      // 1. Mettre à jour le nom et la synchronisation
+      // 1. Mettre à jour le groupe (CORRECTION : Envoi des noms de colonnes DB corrects)
       await updateGroup(group.id, { 
         name: groupName.trim(),
-        syncPrices: syncPrices,
-        mainPropertyId: mainPropertyId
+        sync_prices: syncPrices,          // Snake_case pour la DB
+        main_property_id: mainPropertyId  // Snake_case pour la DB
       }, token);
 
       // 2. Mettre à jour la stratégie

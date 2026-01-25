@@ -4,11 +4,15 @@ import CustomScrollbar from './CustomScrollbar.jsx';
 import { useLanguage } from '../contexts/LanguageContext.jsx';
 import { handleQuotaError } from '../utils/quotaErrorHandler.js';
 
+const MIN_NEWS_FETCH_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes entre deux appels (sauf changement de langue)
+
 function NewsFeed({ token, userProfile }) {
   const { t, language: contextLanguage } = useLanguage();
-  // Utiliser la langue du profil utilisateur en priorité, sinon celle du contexte
   const language = userProfile?.language || contextLanguage || 'fr';
   const prevLanguageRef = useRef(undefined);
+  const lastFetchRef = useRef(0);
+  const userProfileRef = useRef(userProfile);
+  userProfileRef.current = userProfile;
   const [news, setNews] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState('');
@@ -18,34 +22,43 @@ function NewsFeed({ token, userProfile }) {
     setIsLoading(true);
     setError('');
     try {
-      // Toujours passer la langue explicitement pour s'assurer que le backend l'utilise
       const data = await getMarketNews(token, language, forceRefresh);
       setNews(data || []);
-      // Déclencher un événement pour mettre à jour l'indicateur de quota
+      lastFetchRef.current = Date.now();
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('aiCallCompleted'));
       }
     } catch (err) {
-      // Gérer les erreurs de quota IA
-      const isQuotaError = handleQuotaError(err, setError, null, userProfile, null);
+      const isQuotaError = handleQuotaError(err, setError, null, userProfileRef.current, null);
       if (!isQuotaError) {
-        // Si ce n'est pas une erreur de quota, afficher le message d'erreur standard
         setError(t('newsFeed.loadError', { message: err.message }));
       }
-      // Déclencher un événement pour mettre à jour l'indicateur de quota
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('aiCallFailed'));
       }
     } finally {
       setIsLoading(false);
     }
-  }, [token, language, t, userProfile]);
+  }, [token, language, t]);
 
   useEffect(() => {
     const prev = prevLanguageRef.current;
-    const isLanguageChange = prev !== undefined && prev !== language;
+    const isFirstMount = prev === undefined;
+    const isLanguageChange = !isFirstMount && prev !== language;
     prevLanguageRef.current = language;
-    fetchNews(isLanguageChange);
+
+    if (isLanguageChange) {
+      fetchNews(true);
+      return;
+    }
+    if (isFirstMount) {
+      fetchNews(false);
+      return;
+    }
+    const elapsed = Date.now() - lastFetchRef.current;
+    if (elapsed >= MIN_NEWS_FETCH_INTERVAL_MS) {
+      fetchNews(false);
+    }
   }, [language, fetchNews]);
 
   const getImpactColor = (category) => {
@@ -75,14 +88,22 @@ function NewsFeed({ token, userProfile }) {
     return percentage > 0 ? `+${percentage}%` : `${percentage}%`;
   };
 
-  const formatDate = (dateString) => {
-    if (!dateString) return '';
+  const formatDate = (dateInput) => {
+    if (dateInput == null || dateInput === '') return '';
     try {
+      let date;
+      if (typeof dateInput === 'number') {
+        const ms = dateInput < 1e12 ? dateInput * 1000 : dateInput;
+        date = new Date(ms);
+      } else {
+        date = new Date(dateInput);
+      }
+      if (Number.isNaN(date.getTime())) return '';
       const locale = language === 'en' ? 'en-US' : 'fr-FR';
       return new Intl.DateTimeFormat(locale, {
         day: '2-digit',
         month: 'short',
-      }).format(new Date(dateString));
+      }).format(date);
     } catch {
       return '';
     }
@@ -105,7 +126,9 @@ function NewsFeed({ token, userProfile }) {
 
     return (
       <div className="space-y-4">
-        {news.map((item, index) => (
+        {news.map((item, index) => {
+          const dateStr = formatDate(item.published_at);
+          return (
           <div
             key={`${item.id || item.title}-${index}`}
             className="bg-global-bg-small-box border border-global-stroke-box rounded-[12px] p-4 flex flex-col gap-3"
@@ -114,9 +137,11 @@ function NewsFeed({ token, userProfile }) {
               <h4 className="text-global-blanc font-h4-font-family text-h4-font-size leading-h4-line-height font-h4-font-weight">
                 {item.title}
               </h4>
-              <span className="text-xs text-global-inactive whitespace-nowrap">
-                {formatDate(item.published_at)}
-              </span>
+              {dateStr ? (
+                <span className="text-xs text-global-inactive whitespace-nowrap">
+                  {dateStr}
+                </span>
+              ) : null}
             </div>
             <p className="text-sm text-global-inactive">{item.summary}</p>
             <div className="flex items-center justify-between text-sm">
@@ -128,7 +153,8 @@ function NewsFeed({ token, userProfile }) {
               )}
             </div>
           </div>
-        ))}
+          );
+        })}
       </div>
     );
   };

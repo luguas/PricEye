@@ -30,14 +30,21 @@ function PropertyNewsFeed({ token, propertyId }) {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState('');
 
-  // Fonction pour formater la date relative
-  const formatRelativeTime = (dateString) => {
-    if (!dateString) return t('propertyNewsFeed.unknownDate');
-    
+  // Fonction pour formater la date relative (gère timestamp secondes vs ms)
+  const formatRelativeTime = (dateInput) => {
+    if (dateInput == null || dateInput === '') return t('propertyNewsFeed.unknownDate');
     try {
-      const date = new Date(dateString);
+      let date;
+      if (typeof dateInput === 'number') {
+        const ms = dateInput < 1e12 ? dateInput * 1000 : dateInput;
+        date = new Date(ms);
+      } else {
+        date = new Date(dateInput);
+      }
+      if (Number.isNaN(date.getTime())) return t('propertyNewsFeed.unknownDate');
       const now = new Date();
-      const diffMs = now - date;
+      let diffMs = now - date;
+      if (diffMs < 0) diffMs = 0;
       const diffMins = Math.floor(diffMs / 60000);
       const diffHours = Math.floor(diffMs / 3600000);
       const diffDays = Math.floor(diffMs / 86400000);
@@ -45,7 +52,7 @@ function PropertyNewsFeed({ token, propertyId }) {
       const diffYears = Math.floor(diffMonths / 12);
 
       if (diffMins < 60) {
-        return diffMins > 1 
+        return diffMins > 1
           ? t('propertyNewsFeed.timeAgo.minutesPlural', { count: diffMins })
           : t('propertyNewsFeed.timeAgo.minutes', { count: diffMins });
       } else if (diffHours < 24) {
@@ -63,7 +70,7 @@ function PropertyNewsFeed({ token, propertyId }) {
           ? t('propertyNewsFeed.timeAgo.yearsPlural', { count: diffYears })
           : t('propertyNewsFeed.timeAgo.years', { count: diffYears });
       }
-    } catch (error) {
+    } catch {
       return t('propertyNewsFeed.unknownDate');
     }
   };
@@ -140,7 +147,7 @@ function PropertyNewsFeed({ token, propertyId }) {
       <div className="flex flex-col gap-3 items-start justify-start w-full">
         {news.map((item, index) => {
           const impactStyle = getImpactStyle(item.impact_percentage || 0, item.impact_category);
-          const relativeTime = formatRelativeTime(item.publishedAt || item.date);
+          const relativeTime = formatRelativeTime(item.publishedAt || item.published_at || item.date);
 
           return (
             <div 

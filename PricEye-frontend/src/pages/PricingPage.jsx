@@ -67,7 +67,7 @@ function PricingPage({ token, userProfile }) {
       return ids.includes(sid);
     });
     if (!g) return null;
-    const mainId = g.main_property_id ?? g.mainPropertyId;
+    const mainId = g.main_property_id; // Utiliser uniquement le format Supabase
     const syncPrices = g.sync_prices ?? g.syncPrices ?? false;
     const propertyIds = (g.properties || []).map((p) => (typeof p === 'object' ? p?.id ?? p?.property_id : p)).filter(Boolean);
     return { group: g, mainId, syncPrices, propertyIds };
@@ -138,15 +138,16 @@ function PricingPage({ token, userProfile }) {
       const formattedGroups = groupsData
         .filter(g => g && g.id) // Filtrer les groupes invalides
         .map(g => {
-          // Supporte les deux formats de noms de colonnes (API vs Supabase direct)
-          const mainId = g.main_property_id || g.mainPropertyId;
+          // Utiliser main_property_id (format Supabase)
+          const mainId = g.main_property_id;
           const groupName = g.name || 'Sans nom'; // Valeur par défaut si name est manquant
           return {
             uniqueId: `group-${g.id}`, 
             realId: g.id,              
             type: 'group',
             name: `👥 Groupe: ${groupName}`, 
-            mainPropertyId: mainId,
+            mainPropertyId: mainId, // Garder pour compatibilité interne
+            main_property_id: mainId, // Format Supabase
             ...g
           };
         });
@@ -157,8 +158,8 @@ function PricingPage({ token, userProfile }) {
       // Note : On ne filtre PLUS les groupes sans propriété principale, ils s'affichent quand même.
       const groupMainPropertyIds = new Set(
           formattedGroups
-            .filter(g => g.mainPropertyId)
-            .map(g => g.mainPropertyId)
+            .filter(g => g.main_property_id)
+            .map(g => g.main_property_id)
       );
 
       const formattedProps = validProperties
@@ -244,7 +245,7 @@ function PricingPage({ token, userProfile }) {
 
     if (selectedView === 'group') {
         const group = allGroups.find(g => String(g.id) === String(selectedId));
-        const mainId = group?.main_property_id || group?.mainPropertyId;
+        const mainId = group?.main_property_id; // Utiliser uniquement le format Supabase
         overridesTargetId = mainId;
         bookingsTargetId = mainId;
     } else {
@@ -356,7 +357,7 @@ function PricingPage({ token, userProfile }) {
 
     if (selectedView === 'group') {
         const group = allGroups.find(g => String(g.id) === String(selectedId));
-        targetId = group?.main_property_id || group?.mainPropertyId;
+        targetId = group?.main_property_id; // Utiliser uniquement le format Supabase
         groupContext = group;
         if (!targetId) {
              setAlertModal({ isOpen: true, message: t('pricing.errors.noMainProperty'), title: t('pricing.modal.attention') });
@@ -555,7 +556,7 @@ function PricingPage({ token, userProfile }) {
       let pid = selectedId;
       if (selectedView === 'group') {
           const group = allGroups.find(g => String(g.id) === String(selectedId));
-          pid = group?.main_property_id || group?.mainPropertyId;
+          pid = group?.main_property_id; // Utiliser uniquement le format Supabase
       }
       
       const start = new Date(startDate);
@@ -599,7 +600,7 @@ function PricingPage({ token, userProfile }) {
 
       if (selectedView === 'group') {
           const g = allGroups.find(x => String(x.id) === String(selectedId));
-          const mainId = g?.main_property_id ?? g?.mainPropertyId;
+          const mainId = g?.main_property_id; // Utiliser uniquement le format Supabase
           if (!mainId) {
               setAlertModal({ isOpen: true, message: t('pricing.errors.noMainProperty'), title: t('pricing.modal.attention') });
               return;

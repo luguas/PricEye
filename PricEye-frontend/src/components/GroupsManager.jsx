@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { getGroups, createGroup, deleteGroup } from '../services/api.js';
+import React, { useState } from 'react';
+import { createGroup, deleteGroup } from '../services/api.js';
 import ConfirmModal from './ConfirmModal.jsx';
 import GroupEditModal from './GroupEditModal.jsx';
 import { useLanguage } from '../contexts/LanguageContext.jsx';
@@ -17,11 +17,9 @@ const PlusIcon = () => (
   </svg>
 );
 
-// Accepter onGroupChange, onEditStrategy, onEditRules
-function GroupsManager({ token, properties, onGroupChange, onEditStrategy, onEditRules, userProfile, refreshKey }) {
+// Accepter groups et groupsLoading du parent pour éviter double fetch ; onGroupChange, onEditStrategy, onEditRules
+function GroupsManager({ token, properties, groups = [], groupsLoading = false, onGroupChange, onEditStrategy, onEditRules, userProfile }) {
   const { t, language } = useLanguage();
-  const [groups, setGroups] = useState([]);
-  const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState('');
   const [newGroupName, setNewGroupName] = useState('');
   const [showCreateForm, setShowCreateForm] = useState(false);
@@ -32,23 +30,6 @@ function GroupsManager({ token, properties, onGroupChange, onEditStrategy, onEdi
   // État pour la modale de confirmation
   const [confirmModal, setConfirmModal] = useState({ isOpen: false, message: '', onConfirm: null });
 
-  const fetchGroups = useCallback(async () => {
-    try {
-      setIsLoading(true);
-      const data = await getGroups(token);
-      setGroups(data);
-      setError(''); 
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setIsLoading(false);
-    }
-  }, [token]);
-
-  useEffect(() => {
-    fetchGroups();
-  }, [fetchGroups, refreshKey]);
-
   const handleCreateGroup = async (e) => {
     e.preventDefault();
     if (!newGroupName.trim()) return; 
@@ -56,8 +37,7 @@ function GroupsManager({ token, properties, onGroupChange, onEditStrategy, onEdi
       await createGroup({ name: newGroupName.trim() }, token);
       setNewGroupName(''); 
       setShowCreateForm(false);
-      fetchGroups(); 
-      onGroupChange(); // Notifier le parent (Dashboard)
+      onGroupChange();
     } catch (err) {
       setError(err.message);
     }
@@ -70,7 +50,6 @@ function GroupsManager({ token, properties, onGroupChange, onEditStrategy, onEdi
       onConfirm: async () => {
         try {
           await deleteGroup(groupId, token);
-          fetchGroups(); 
           onGroupChange();
         } catch (err) {
           setError(err.message);
@@ -88,7 +67,6 @@ function GroupsManager({ token, properties, onGroupChange, onEditStrategy, onEdi
   };
 
   const handleSaveEditModal = () => {
-    fetchGroups();
     onGroupChange();
   };
 
@@ -106,10 +84,10 @@ function GroupsManager({ token, properties, onGroupChange, onEditStrategy, onEdi
   };
 
   const renderGroupList = () => {
-    if (isLoading) {
+    if (groupsLoading) {
       return <p className="text-sm text-global-inactive">{t('groupsManager.loading')}</p>;
     }
-    if (groups.length === 0) {
+    if (!groups || groups.length === 0) {
       return <p className="text-sm text-global-inactive">{t('groupsManager.noGroups')}</p>;
     }
     return (

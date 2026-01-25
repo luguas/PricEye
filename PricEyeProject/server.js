@@ -9946,17 +9946,36 @@ app.get('/api/news', authenticateToken, async (req, res) => {
         const newsDoc = await db.getSystemCache(cacheKey);
         
         // Vérifier si le cache existe et est à jour (moins de 24h) - AVANT de vérifier le quota
-        const oneDay = 24 * 60 * 60 * 1000;
+        const oneDayMs = 24 * 60 * 60 * 1000;
         let cacheIsValid = false;
-        let cacheAge = null;
+        let cacheAgeMs = null;
+        
+        function parseCacheUpdatedAt(doc) {
+            const raw = doc?.updated_at ?? doc?.updatedAt;
+            if (raw == null) return null;
+            try {
+                let ms;
+                if (typeof raw === 'number') {
+                    ms = raw < 1e12 ? raw * 1000 : raw;
+                } else {
+                    ms = new Date(raw).getTime();
+                }
+                return Number.isNaN(ms) ? null : ms;
+            } catch {
+                return null;
+            }
+        }
         
         if (newsDoc && newsDoc.data) {
             const cacheLanguage = newsDoc.language;
             if (cacheLanguage && cacheLanguage !== language) {
                 console.log(`Cache trouvé pour une autre langue (${cacheLanguage} au lieu de ${language}), invalide.`);
-            } else if (newsDoc.updated_at) {
-                cacheAge = Date.now() - new Date(newsDoc.updated_at).getTime();
-                cacheIsValid = cacheAge < oneDay;
+            } else {
+                const updatedMs = parseCacheUpdatedAt(newsDoc);
+                if (updatedMs != null) {
+                    cacheAgeMs = Date.now() - updatedMs;
+                    cacheIsValid = cacheAgeMs >= 0 && cacheAgeMs < oneDayMs;
+                }
             }
         }
         
@@ -9996,8 +10015,7 @@ app.get('/api/news', authenticateToken, async (req, res) => {
         if (forceRefresh) {
             console.log(`Régénération forcée du cache des actualités pour la langue ${language}...`);
             try {
-                await updateMarketNewsCache(language);
-                const refreshedNewsDoc = await db.getSystemCache(cacheKey);
+                const refreshedNewsDoc = await updateMarketNewsCache(language);
                 if (refreshedNewsDoc && refreshedNewsDoc.data) {
                     // Mettre à jour les tokens après l'appel IA réussi
                     // Note: updateMarketNewsCache ne retourne pas les tokens, on doit les estimer
@@ -10071,16 +10089,14 @@ app.get('/api/news', authenticateToken, async (req, res) => {
             }
             
             // Si le cache est expiré, régénérer automatiquement
-            if (newsDoc && newsDoc.data && cacheAge) {
-                console.log(`Cache expiré pour ${language} (${Math.round(cacheAge / (60 * 60 * 1000))}h), régénération automatique...`);
+            if (newsDoc && newsDoc.data && cacheAgeMs != null) {
+                console.log(`Cache expiré pour ${language} (${Math.round(cacheAgeMs / (60 * 60 * 1000))}h), régénération automatique...`);
             } else {
                 console.log(`Génération des actualités pour la langue ${language}${forceRefresh ? ' (force refresh)' : ' (cache manquant)'}...`);
             }
             
             try {
-                await updateMarketNewsCache(language);
-                // Réessayer après génération
-                const newNewsDoc = await db.getSystemCache(cacheKey);
+                const newNewsDoc = await updateMarketNewsCache(language);
                 if (newNewsDoc && newNewsDoc.data) {
                     // Mettre à jour les tokens après l'appel IA réussi
                     tokensUsed = 2000; // Estimation par défaut
@@ -10425,13 +10441,15 @@ async function updateMarketNewsCache(language = 'fr') {
         }
 
         const cacheKey = `marketNews_${language}`;
-        await db.setSystemCache(cacheKey, newsData, {
+        const result = await db.setSystemCache(cacheKey, newsData, {
             language: language
         });
         console.log(`Mise à jour du cache des actualités (${language}) terminée avec succès.`);
+        return result;
 
     } catch (error) {
         console.error(`Erreur lors de la mise à jour du cache des actualités (${language}):`, error.message);
+        throw error;
     }
 }
 
