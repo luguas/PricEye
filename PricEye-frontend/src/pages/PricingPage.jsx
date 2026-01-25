@@ -42,7 +42,11 @@ function PricingPage({ token, userProfile }) {
   const [selectionStart, setSelectionStart] = useState(null);
   const [selectionEnd, setSelectionEnd] = useState(null);
   const [isSelecting, setIsSelecting] = useState(false);
-  const [selectionMode, setSelectionMode] = useState('booking'); 
+  const [selectionMode, setSelectionMode] = useState('booking');
+  
+  // Dates éditables pour les formulaires
+  const [editableStartDate, setEditableStartDate] = useState('');
+  const [editableEndDate, setEditableEndDate] = useState(''); 
   
   // Formulaires
   const [bookingPrice, setBookingPrice] = useState('');
@@ -322,6 +326,16 @@ function PricingPage({ token, userProfile }) {
 
   useEffect(() => { fetchCalendarData(); }, [fetchCalendarData]);
 
+  // Synchroniser les dates éditables avec la sélection
+  useEffect(() => {
+    if (selectionStart) {
+      setEditableStartDate(selectionStart);
+    }
+    if (selectionEnd) {
+      setEditableEndDate(selectionEnd);
+    }
+  }, [selectionStart, selectionEnd]);
+
 
   // --- HANDLERS ---
   const handleViewChange = (e) => {
@@ -450,26 +464,89 @@ function PricingPage({ token, userProfile }) {
         window.addEventListener('mouseup', handleMouseUp);
         return () => window.removeEventListener('mouseup', handleMouseUp);
   }, []);
-  const clearSelection = () => { setSelectionStart(null); setSelectionEnd(null); };
+  const clearSelection = () => { 
+    setSelectionStart(null); 
+    setSelectionEnd(null); 
+    setEditableStartDate('');
+    setEditableEndDate('');
+  };
+
+  // Handlers pour les dates éditables - onChange pour la saisie libre
+  const handleStartDateChange = (e) => {
+    const newDate = e.target.value;
+    setEditableStartDate(newDate);
+    // Ne pas mettre à jour selectionStart immédiatement, attendre onBlur
+  };
+
+  const handleEndDateChange = (e) => {
+    const newDate = e.target.value;
+    setEditableEndDate(newDate);
+    // Ne pas mettre à jour selectionEnd immédiatement, attendre onBlur
+  };
+
+  // Validation et mise à jour de la sélection après saisie complète
+  const handleStartDateBlur = (e) => {
+    const newDate = e.target.value;
+    if (newDate) {
+      setSelectionStart(newDate);
+      // Si la date de fin est antérieure à la nouvelle date de début, mettre à jour la date de fin
+      if (editableEndDate && newDate > editableEndDate) {
+        setSelectionEnd(newDate);
+        setEditableEndDate(newDate);
+      }
+    } else {
+      // Si le champ est vide, réinitialiser à la valeur de sélection actuelle
+      setEditableStartDate(selectionStart || '');
+    }
+  };
+
+  const handleEndDateBlur = (e) => {
+    const newDate = e.target.value;
+    if (newDate) {
+      setSelectionEnd(newDate);
+      // Si la date de début est postérieure à la nouvelle date de fin, mettre à jour la date de début
+      if (editableStartDate && newDate < editableStartDate) {
+        setSelectionStart(newDate);
+        setEditableStartDate(newDate);
+      }
+    } else {
+      // Si le champ est vide, réinitialiser à la valeur de sélection actuelle
+      setEditableEndDate(selectionEnd || '');
+    }
+  };
 
   // --- SAUVEGARDES ---
   const handleSaveBooking = async (e) => {
       e.preventDefault();
+      
+      // Valider et mettre à jour les dates éditables avant la soumission
+      const startDate = editableStartDate || selectionStart;
+      const endDate = editableEndDate || selectionEnd;
+      
+      if (!startDate || !endDate) {
+          setError(t('pricing.errors.invalidDates') || 'Veuillez sélectionner une période valide');
+          return;
+      }
+      
+      // Mettre à jour la sélection avec les dates éditables
+      setSelectionStart(startDate);
+      setSelectionEnd(endDate);
+      
       let pid = selectedId;
       if (selectedView === 'group') {
           const group = allGroups.find(g => String(g.id) === String(selectedId));
           pid = group?.main_property_id || group?.mainPropertyId;
       }
       
-      const start = new Date(selectionStart);
-      const end = new Date(selectionEnd);
+      const start = new Date(startDate);
+      const end = new Date(endDate);
       end.setDate(end.getDate() + 1);
       const nights = Math.max(1, Math.ceil((end - start) / (1000 * 60 * 60 * 24)));
       
       setIsLoading(true);
       try {
           await addBooking(pid, {
-              startDate: selectionStart,
+              startDate: startDate,
               endDate: end.toISOString().split('T')[0],
               pricePerNight: Number(bookingPrice),
               totalPrice: Number(bookingPrice) * nights,
@@ -484,6 +561,20 @@ function PricingPage({ token, userProfile }) {
 
   const handleSavePriceOverride = async (e) => {
       e.preventDefault();
+      
+      // Valider et mettre à jour les dates éditables avant la soumission
+      const startDate = editableStartDate || selectionStart;
+      const endDate = editableEndDate || selectionEnd;
+      
+      if (!startDate || !endDate) {
+          setError(t('pricing.errors.invalidDates') || 'Veuillez sélectionner une période valide');
+          return;
+      }
+      
+      // Mettre à jour la sélection avec les dates éditables
+      setSelectionStart(startDate);
+      setSelectionEnd(endDate);
+      
       let targets = [];
 
       if (selectedView === 'group') {
@@ -515,8 +606,8 @@ function PricingPage({ token, userProfile }) {
       setIsLoading(true);
       try {
           const overrides = [];
-          let cur = new Date(selectionStart);
-          const end = new Date(selectionEnd);
+          let cur = new Date(startDate);
+          const end = new Date(endDate);
           while(cur <= end) {
               overrides.push({ date: cur.toISOString().split('T')[0], price: Number(manualPrice), isLocked: isPriceLocked });
               cur.setDate(cur.getDate() + 1);
@@ -613,8 +704,23 @@ function PricingPage({ token, userProfile }) {
     <form onSubmit={handleSaveBooking} className="flex flex-col gap-3 text-left">
         <div>
             <label className="text-xs text-global-inactive block mb-1">{t('pricing.selectedPeriod')}</label>
-            <div className="bg-global-bg-small-box border border-global-stroke-box rounded-[10px] p-2 text-sm text-white">
-                {selectionStart} → {selectionEnd}
+            <div className="flex gap-2">
+                <input 
+                    type="date" 
+                    value={editableStartDate} 
+                    onChange={handleStartDateChange}
+                    onBlur={handleStartDateBlur}
+                    className="flex-1 bg-global-bg-small-box border border-global-stroke-box rounded-[10px] p-2 text-sm text-white outline-none focus:border-global-content-highlight-2nd"
+                />
+                <span className="text-white self-center">→</span>
+                <input 
+                    type="date" 
+                    value={editableEndDate} 
+                    onChange={handleEndDateChange}
+                    onBlur={handleEndDateBlur}
+                    min={editableStartDate || undefined}
+                    className="flex-1 bg-global-bg-small-box border border-global-stroke-box rounded-[10px] p-2 text-sm text-white outline-none focus:border-global-content-highlight-2nd"
+                />
             </div>
         </div>
         <div>
@@ -645,8 +751,23 @@ function PricingPage({ token, userProfile }) {
         <form onSubmit={handleSavePriceOverride} className="flex flex-col gap-3 text-left">
             <div>
                 <label className="text-xs text-global-inactive block mb-1">{t('pricing.selectedPeriod')}</label>
-                <div className="bg-global-bg-small-box border border-global-stroke-box rounded-[10px] p-2 text-sm text-white">
-                    {selectionStart} → {selectionEnd}
+                <div className="flex gap-2">
+                    <input 
+                        type="date" 
+                        value={editableStartDate} 
+                        onChange={handleStartDateChange}
+                        onBlur={handleStartDateBlur}
+                        className="flex-1 bg-global-bg-small-box border border-global-stroke-box rounded-[10px] p-2 text-sm text-white outline-none focus:border-global-content-highlight-2nd"
+                    />
+                    <span className="text-white self-center">→</span>
+                    <input 
+                        type="date" 
+                        value={editableEndDate} 
+                        onChange={handleEndDateChange}
+                        onBlur={handleEndDateBlur}
+                        min={editableStartDate || undefined}
+                        className="flex-1 bg-global-bg-small-box border border-global-stroke-box rounded-[10px] p-2 text-sm text-white outline-none focus:border-global-content-highlight-2nd"
+                    />
                 </div>
             </div>
             {hasExistingPrice && existingPriceValue && (

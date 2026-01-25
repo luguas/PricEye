@@ -4610,49 +4610,29 @@ app.get('/api/groups', authenticateToken, async (req, res) => {
   }
 });
 
-app.put('/api/groups/:id', authenticateToken, async (req, res) => {
+// --- Route pour mettre à jour les règles d'un Groupe ---
+app.put('/api/groups/:groupId', authenticateToken, async (req, res) => {
     try {
-        const { id } = req.params;
-        const { name, syncPrices, mainPropertyId } = req.body; 
-        const userId = req.user.uid;
+        const { groupId } = req.params;
+        const updates = req.body; 
 
-        const group = await db.getGroup(id);
+        // Sécurité : ne pas laisser modifier l'ID ou le user_id
+        delete updates.id;
+        delete updates.user_id;
 
-        if (!group) {
-            return res.status(404).send({ error: 'Groupe non trouvé.' });
-        }
+        const { data, error } = await supabase
+            .from('groups')
+            .update(updates)
+            .eq('id', groupId)
+            .select();
 
-        if (group.owner_id !== userId) {
-            return res.status(403).send({ error: 'Action non autorisée sur ce groupe.' });
-        }
+        if (error) throw error;
 
-        const dataToUpdate = {};
-        if (name) {
-            dataToUpdate.name = name;
-        }
-        if (syncPrices != null && typeof syncPrices === 'boolean') {
-            dataToUpdate.sync_prices = syncPrices;
-        }
-        if (mainPropertyId) {
-            // Vérifier que la propriété est dans le groupe
-            const propertyIds = (group.properties || []).map(p => p.id || p);
-            if (propertyIds.includes(mainPropertyId)) {
-                dataToUpdate.main_property_id = mainPropertyId;
-            } else {
-                return res.status(400).send({ error: 'La propriété principale doit faire partie du groupe.' });
-            }
-        }
+        res.status(200).json({ success: true, group: data[0] });
 
-        if (Object.keys(dataToUpdate).length === 0) {
-             return res.status(400).send({ error: 'Aucune donnée valide à mettre à jour (name, syncPrices ou mainPropertyId requis).' });
-        }
-
-        await db.updateGroup(id, dataToUpdate);
-
-        res.status(200).send({ message: 'Groupe mis à jour avec succès', id });
     } catch (error) {
-        console.error('Erreur lors de la mise à jour du groupe:', error);
-        res.status(500).send({ error: 'Erreur lors de la mise à jour du groupe.' });
+        console.error("Erreur update group:", error);
+        res.status(500).json({ error: error.message });
     }
 });
 
@@ -8204,53 +8184,68 @@ app.post('/api/properties/:id/pricing-strategy', authenticateToken, async (req, 
         }
 
         // =================================================================
-        // ÉTAPE D : PROPAGATION AUX GROUPES (SYNC)
+        // ÉTAPE D : PROPAGATION AUX GROUPES (SYNC) ET MISE À JOUR GROUPE
         // =================================================================
-        // Vérifier si cette propriété est la "Main Property" d'un groupe synchronisé
-        // CORRECTION : Table 'groups' au lieu de 'property_groups'
+        
+        // 1. Chercher si c'est une propriété principale de groupe
         const { data: groupData, error: groupError } = await supabase
-            .from('groups')
-            .select('id, name, sync_prices')
+            .from('groups') 
+            .select('*') 
             .eq('main_property_id', id)
             .single();
 
         let syncCount = 0;
 
-        if (groupData && groupData.sync_prices) {
-            console.log(`[Pricing] 🔄 Propagation détectée pour le groupe "${groupData.name}"...`);
+        if (groupData) {
+            console.log(`[Pricing] 🔄 Mise à jour des infos du groupe "${groupData.name}"...`);
 
-            // 1. Récupérer les enfants
-            const { data: children } = await supabase
-                .from('group_members')
-                .select('property_id')
-                .eq('group_id', groupData.id);
+            // 2. MISE À JOUR DE LA TABLE GROUPS
+            // On enregistre la date, la stratégie utilisée et le résumé
+            const updatePayload = {
+                last_pricing_update: new Date().toISOString(),
+                pricing_strategy: method, // 'deterministic' ou 'ai_hybrid'
+                strategy_summary: aiSummary || "Mise à jour automatique",
+                // CORRECTION ICI : Utilisation du nom de colonne 'auto_pricing_enabled'
+                auto_pricing_enabled: true 
+            };
 
-            if (children && children.length > 0) {
-                // 2. Préparer les données pour chaque enfant
-                // On copie exactement les mêmes prix et raisons
-                const bulkOverrides = [];
-                
-                for (const child of children) {
-                    // Pour chaque jour calculé, on crée une entrée pour l'enfant
-                    overridesToSave.forEach(day => {
-                        bulkOverrides.push({
-                            ...day, // date, price, reason...
-                            property_id: child.property_id, // On change l'ID
-                            updatedBy: userId
+            const { error: updateGroupError } = await supabase
+                .from('groups')
+                .update(updatePayload)
+                .eq('id', groupData.id);
+
+            if (updateGroupError) {
+                console.error("Erreur mise à jour table groups:", updateGroupError);
+            }
+
+            // 3. PROPAGATION AUX ENFANTS (Si la synchro est activée)
+            if (groupData.sync_prices) {
+                const { data: children } = await supabase
+                    .from('group_members')
+                    .select('property_id')
+                    .eq('group_id', groupData.id);
+
+                if (children && children.length > 0) {
+                    const bulkOverrides = [];
+                    for (const child of children) {
+                        // On copie les prix calculés
+                        overridesToSave.forEach(day => {
+                            bulkOverrides.push({
+                                ...day,
+                                property_id: child.property_id,
+                                updatedBy: userId
+                            });
                         });
-                    });
-                }
+                    }
 
-                // 3. Sauvegarde en masse (Batch) pour les enfants
-                // Note: db.upsertPriceOverrides attend un property_id, il faut peut-être adapter db ou faire un insert direct
-                // Pour faire simple et efficace, on utilise supabase directement ici pour le bulk cross-property
-                if (bulkOverrides.length > 0) {
-                    const { error: syncError } = await supabase
-                        .from('price_overrides')
-                        .upsert(bulkOverrides, { onConflict: 'property_id, date' });
-                    
-                    if (syncError) console.error("Erreur sync enfants:", syncError);
-                    else syncCount = children.length;
+                    if (bulkOverrides.length > 0) {
+                        const { error: syncError } = await supabase
+                            .from('price_overrides')
+                            .upsert(bulkOverrides, { onConflict: 'property_id, date' });
+                        
+                        if (syncError) console.error("Erreur sync enfants:", syncError);
+                        else syncCount = children.length;
+                    }
                 }
             }
         }
