@@ -864,6 +864,8 @@ async function recalculateAndUpdateBilling(userId) {
     }
 }
 
+/** Verrous par langue pour éviter les régénérations concurrentes des actualités (GET /api/news). */
+const ongoingGenerations = {};
 
 // --- ROUTES D'AUTHENTIFICATION (PUBLIQUES) ---
 app.post('/api/auth/register', async (req, res) => {
@@ -10014,8 +10016,16 @@ app.get('/api/news', authenticateToken, async (req, res) => {
         
         // Si forceRefresh est activé, régénérer le cache immédiatement
         if (forceRefresh) {
-            console.log(`Régénération forcée du cache des actualités pour la langue ${language}...`);
+            if (ongoingGenerations[language]) {
+                console.log(`[News] Génération déjà en cours pour ${language}, requête mise en attente...`);
+                if (newsDoc && newsDoc.data) {
+                    return res.status(200).json(newsDoc.data);
+                }
+                return res.status(429).json({ error: 'Génération en cours, réessayez dans 5 secondes' });
+            }
+            ongoingGenerations[language] = true;
             try {
+                console.log(`Régénération forcée du cache des actualités pour la langue ${language}...`);
                 const refreshedNewsDoc = await updateMarketNewsCache(language);
                 if (refreshedNewsDoc && refreshedNewsDoc.data) {
                     // Mettre à jour les tokens après l'appel IA réussi
@@ -10067,6 +10077,9 @@ app.get('/api/news', authenticateToken, async (req, res) => {
                     console.log(`[AI Quota] Annulation de l'incrémentation pour l'utilisateur ${userId} (appel IA échoué lors du forceRefresh)`);
                 }
                 // Continuer avec le cache existant si la régénération échoue
+            } finally {
+                ongoingGenerations[language] = false;
+                console.log(`[News] Verrou libéré pour ${language}`);
             }
         }
 
@@ -10095,7 +10108,16 @@ app.get('/api/news', authenticateToken, async (req, res) => {
             } else {
                 console.log(`Génération des actualités pour la langue ${language}${forceRefresh ? ' (force refresh)' : ' (cache manquant)'}...`);
             }
-            
+
+            if (ongoingGenerations[language]) {
+                console.log(`[News] Génération déjà en cours pour ${language}, requête mise en attente...`);
+                if (newsDoc && newsDoc.data) {
+                    return res.status(200).json(newsDoc.data);
+                }
+                return res.status(429).json({ error: 'Génération en cours, réessayez dans 5 secondes' });
+            }
+            ongoingGenerations[language] = true;
+
             try {
                 const newNewsDoc = await updateMarketNewsCache(language);
                 if (newNewsDoc && newNewsDoc.data) {
@@ -10183,6 +10205,9 @@ app.get('/api/news', authenticateToken, async (req, res) => {
                     }
                 }
                 return res.status(404).send({ error: 'Cache d\'actualités non encore généré. Veuillez patienter.' });
+            } finally {
+                ongoingGenerations[language] = false;
+                console.log(`[News] Verrou libéré pour ${language}`);
             }
         }
         
