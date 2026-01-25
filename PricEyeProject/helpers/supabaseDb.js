@@ -663,24 +663,35 @@ async function getSystemCache(key) {
 }
 
 /**
- * Met à jour ou crée un cache système
+ * Upsert du cache système. La date updated_at est TOUJOURS définie côté Node.js,
+ * jamais par la base (pas de trigger). Garantit que chaque écriture rafraîchit la date.
+ * @param {Object} payload - { key, data, language? }
+ * @returns {Promise<Object>} La ligne upsertée (avec data, updated_at, ...)
  */
-async function setSystemCache(key, data, metadata = {}) {
+async function upsertSystemCache(payload) {
+  const now = new Date().toISOString();
+  const row = {
+    key: payload.key,
+    data: payload.data,
+    ...(payload.language != null && { language: payload.language }),
+    updated_at: now
+  };
   const { data: result, error } = await supabase
     .from('system_cache')
-    .upsert({
-      key: key,
-      data: data,
-      ...metadata,
-      updated_at: new Date().toISOString()
-    }, {
-      onConflict: 'key'
-    })
+    .upsert(row, { onConflict: 'key' })
     .select()
     .single();
-  
+
   if (error) throw error;
   return result;
+}
+
+/**
+ * Met à jour ou crée un cache système (wrapper vers upsertSystemCache).
+ * @deprecated Préférer upsertSystemCache pour le cache actualités.
+ */
+async function setSystemCache(key, data, metadata = {}) {
+  return upsertSystemCache({ key, data, ...metadata });
 }
 
 /**
@@ -819,6 +830,7 @@ module.exports = {
   upsertPriceOverrides,
   getSystemCache,
   setSystemCache,
+  upsertSystemCache,
   getBooking,
   getBookingsByTeamAndDateRange,
   addPropertiesToGroup,

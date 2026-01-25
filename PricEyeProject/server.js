@@ -9944,41 +9944,42 @@ app.get('/api/news', authenticateToken, async (req, res) => {
         
         const cacheKey = `marketNews_${language}`;
         const newsDoc = await db.getSystemCache(cacheKey);
-        
-        // Vérifier si le cache existe et est à jour (moins de 24h) - AVANT de vérifier le quota
-        const oneDayMs = 24 * 60 * 60 * 1000;
-        let cacheIsValid = false;
-        let cacheAgeMs = null;
-        
-        function parseCacheUpdatedAt(doc) {
-            const raw = doc?.updated_at ?? doc?.updatedAt;
+        const oneDayMs = 24 * 60 * 60 * 1000; // 86 400 000 ms
+
+        function updatedAtToMs(raw) {
             if (raw == null) return null;
             try {
-                let ms;
-                if (typeof raw === 'number') {
-                    ms = raw < 1e12 ? raw * 1000 : raw;
-                } else {
-                    ms = new Date(raw).getTime();
-                }
+                const ms = typeof raw === 'number'
+                    ? (raw < 1e12 ? raw * 1000 : raw)
+                    : new Date(raw).getTime();
                 return Number.isNaN(ms) ? null : ms;
             } catch {
                 return null;
             }
         }
-        
-        if (newsDoc && newsDoc.data) {
-            const cacheLanguage = newsDoc.language;
-            if (cacheLanguage && cacheLanguage !== language) {
-                console.log(`Cache trouvé pour une autre langue (${cacheLanguage} au lieu de ${language}), invalide.`);
-            } else {
-                const updatedMs = parseCacheUpdatedAt(newsDoc);
-                if (updatedMs != null) {
-                    cacheAgeMs = Date.now() - updatedMs;
-                    cacheIsValid = cacheAgeMs >= 0 && cacheAgeMs < oneDayMs;
+
+        let cacheAgeMs = null;
+        const cacheLanguage = newsDoc?.language;
+        const sameLanguage = !cacheLanguage || cacheLanguage === language;
+        const updatedMs = updatedAtToMs(newsDoc?.updated_at ?? newsDoc?.updatedAt);
+        if (updatedMs != null) cacheAgeMs = Date.now() - updatedMs;
+
+        if (newsDoc && newsDoc.data && sameLanguage) {
+            if (cacheAgeMs != null && cacheAgeMs >= 0 && cacheAgeMs < oneDayMs) {
+                if (!Array.isArray(newsDoc.data)) {
+                    console.error(`Format de cache invalide pour marketNews_${language}:`, newsDoc);
+                    return res.status(500).send({ error: 'Format de cache invalide. Veuillez réessayer plus tard.' });
                 }
+                console.log(`[AI Quota] Cache valide retourné pour ${userId} (langue: ${language}) - aucun quota consommé`);
+                return res.status(200).json(newsDoc.data);
             }
         }
-        
+        if (cacheLanguage && !sameLanguage) {
+            console.log(`Cache trouvé pour une autre langue (${cacheLanguage} au lieu de ${language}), invalide.`);
+        }
+
+        const cacheIsValid = false;
+
         // IMPORTANT: Vérifier le quota SEULEMENT si on doit appeler l'IA (forceRefresh OU cache invalide)
         // Si le cache est valide et forceRefresh=false, on retourne directement sans consommer le quota
         let quotaResult = null;
@@ -10124,6 +10125,20 @@ app.get('/api/news', authenticateToken, async (req, res) => {
                     
                     return res.status(200).json(newNewsDoc.data);
                 }
+                if (newsDoc && newsDoc.data) {
+                    console.log(`Régénération OK mais doc invalide, utilisation du cache existant.`);
+                    return res.status(200).json(newsDoc.data);
+                }
+                if (language !== 'fr') {
+                    const frDoc = await db.getSystemCache('marketNews_fr');
+                    if (frDoc && frDoc.data && Array.isArray(frDoc.data)) return res.status(200).json(frDoc.data);
+                }
+                const oldDoc = await db.getSystemCache('marketNews');
+                if (oldDoc && oldDoc.data) {
+                    const arr = Array.isArray(oldDoc.data) ? oldDoc.data : oldDoc.data;
+                    if (Array.isArray(arr)) return res.status(200).json(arr);
+                }
+                return res.status(404).send({ error: 'Cache d\'actualités non encore généré. Veuillez patienter.' });
             } catch (genError) {
                 console.error(`Erreur lors de la génération des actualités pour ${language}:`, genError);
                 // Si l'appel IA échoue, annuler l'incrémentation
@@ -10171,32 +10186,6 @@ app.get('/api/news', authenticateToken, async (req, res) => {
             }
         }
         
-        // Si on arrive ici, le cache est valide et forceRefresh=false
-        // On retourne directement sans consommer le quota
-        const docData = newsDoc;
-        if (!docData || !docData.data) {
-            // Fallback sur l'ancien format de cache
-            const oldCacheDoc = await db.getSystemCache('marketNews');
-            if (oldCacheDoc && oldCacheDoc.data) {
-                const oldData = Array.isArray(oldCacheDoc.data) ? oldCacheDoc.data : oldCacheDoc.data;
-                if (Array.isArray(oldData)) {
-                    return res.status(200).json(oldData);
-                }
-            }
-            return res.status(404).send({ error: 'Cache d\'actualités non encore généré. Veuillez patienter.' });
-        }
-
-        // Récupérer les actualités depuis le cache valide (sans consommer de quota)
-        const newsData = docData.data;
-        if (!Array.isArray(newsData)) {
-            console.error(`Format de cache invalide pour marketNews_${language}:`, docData);
-            return res.status(500).send({ error: 'Format de cache invalide. Veuillez réessayer plus tard.' });
-        }
-
-        // Cache valide retourné sans consommation de quota
-        console.log(`[AI Quota] Cache valide retourné pour ${userId} (langue: ${language}) - aucun quota consommé`);
-        res.status(200).json(newsData); 
-
     } catch (error) {
         console.error('Erreur lors de la récupération des actualités depuis le cache:', error);
          res.status(500).send({ error: `Erreur serveur lors de la récupération des actualités: ${error.message}` });
@@ -10434,16 +10423,20 @@ async function updateMarketNewsCache(language = 'fr') {
             ]
         `;
         
-        const newsData = await callGeminiWithSearch(prompt, 10, language); // Appelle la fonction avec retry
+        const newsData = await callGeminiWithSearch(prompt, 10, language);
 
         if (!newsData || !Array.isArray(newsData)) {
-             throw new Error("Données d'actualités invalides reçues de l'API de recherche.");
+            throw new Error("Données d'actualités invalides reçues de l'API de recherche.");
         }
 
         const cacheKey = `marketNews_${language}`;
-        const result = await db.setSystemCache(cacheKey, newsData, {
-            language: language
-        });
+        const payload = {
+            key: cacheKey,
+            data: newsData,
+            language,
+            updated_at: new Date().toISOString()
+        };
+        const result = await db.upsertSystemCache(payload);
         console.log(`Mise à jour du cache des actualités (${language}) terminée avec succès.`);
         return result;
 
