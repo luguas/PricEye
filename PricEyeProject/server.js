@@ -4892,6 +4892,14 @@ app.put('/api/groups/:id/strategy', authenticateToken, async (req, res) => {
             return res.status(403).send({ error: 'Action non autorisée sur ce groupe.' });
         }
         
+        console.log(`[Groups] Groupe récupéré pour mise à jour stratégie:`, {
+            id: group.id,
+            has_strategy_raw: !!group._strategy_raw,
+            has_rules_raw: !!group._rules_raw,
+            strategy_raw_type: typeof group._strategy_raw,
+            rules_raw_type: typeof group._rules_raw
+        });
+        
         // Valider les données (copié de /api/properties/:id/strategy)
         const allowedStrategies = ['Prudent', 'Équilibré', 'Agressif'];
         if (!strategy || !allowedStrategies.includes(strategy)) {
@@ -4908,9 +4916,17 @@ app.put('/api/groups/:id/strategy', authenticateToken, async (req, res) => {
         // La table groups a une colonne JSONB 'strategy', pas des colonnes directes
         // Fusionner avec les données existantes si elles existent
         // Utiliser _strategy_raw si disponible (JSONB brut), sinon essayer strategy, sinon objet vide
-        const existingStrategy = group._strategy_raw && typeof group._strategy_raw === 'object' && !Array.isArray(group._strategy_raw)
-            ? group._strategy_raw
-            : (group.strategy && typeof group.strategy === 'object' && !Array.isArray(group.strategy) ? group.strategy : {});
+        // Note: getGroup retourne _strategy_raw qui contient le JSONB brut de Supabase
+        let existingStrategy = {};
+        if (group._strategy_raw && typeof group._strategy_raw === 'object' && !Array.isArray(group._strategy_raw)) {
+            existingStrategy = group._strategy_raw;
+        } else if (group.strategy && typeof group.strategy === 'object' && !Array.isArray(group.strategy)) {
+            existingStrategy = group.strategy;
+        } else {
+            // Si strategy n'est pas un objet, c'est peut-être une chaîne (stratégie aplatie)
+            // Dans ce cas, on crée un nouvel objet
+            existingStrategy = {};
+        }
         
         const strategyJsonb = {
             ...existingStrategy, // Conserver les autres champs du JSONB s'ils existent
@@ -4934,7 +4950,13 @@ app.put('/api/groups/:id/strategy', authenticateToken, async (req, res) => {
         }
         
         // Mettre à jour le document du groupe avec le JSONB strategy
-        await db.updateGroup(id, { strategy: strategyJsonb });
+        try {
+            await db.updateGroup(id, { strategy: strategyJsonb });
+            console.log(`[Groups] Stratégie mise à jour pour le groupe ${id}:`, JSON.stringify(strategyJsonb));
+        } catch (updateError) {
+            console.error(`[Groups] Erreur lors de la mise à jour de la stratégie pour le groupe ${id}:`, updateError);
+            throw updateError;
+        }
         
         // Mettre à jour toutes les propriétés du groupe
         for (const propId of propertiesInGroup) {
@@ -4963,6 +4985,14 @@ app.put('/api/groups/:id/rules', authenticateToken, async (req, res) => {
         if (group.owner_id !== userId) {
             return res.status(403).send({ error: 'Action non autorisée sur ce groupe.' });
         }
+
+        console.log(`[Groups] Groupe récupéré pour mise à jour règles:`, {
+            id: group.id,
+            has_strategy_raw: !!group._strategy_raw,
+            has_rules_raw: !!group._rules_raw,
+            strategy_raw_type: typeof group._strategy_raw,
+            rules_raw_type: typeof group._rules_raw
+        });
 
         // Valider les données (copié de /api/properties/:id/rules)
         const { min_stay, max_stay, weekly_discount_percent, monthly_discount_percent, weekend_markup_percent } = req.body;
@@ -4994,6 +5024,32 @@ app.put('/api/groups/:id/rules', authenticateToken, async (req, res) => {
             return res.status(400).send({ error: 'Ce groupe ne contient aucune propriété.' });
         }
         
+        // Mettre à jour le groupe avec les règles (dans un champ JSONB rules)
+        // Fusionner avec les règles existantes si elles existent
+        // Note: getGroup retourne _rules_raw qui contient le JSONB brut de Supabase
+        let existingRules = {};
+        if (group._rules_raw && typeof group._rules_raw === 'object' && !Array.isArray(group._rules_raw)) {
+            existingRules = group._rules_raw;
+        } else if (group.rules && typeof group.rules === 'object' && !Array.isArray(group.rules)) {
+            existingRules = group.rules;
+        } else {
+            existingRules = {};
+        }
+        
+        const rulesJsonb = {
+            ...existingRules, // Conserver les autres champs du JSONB s'ils existent
+            ...cleanRulesData
+        };
+        
+        // Mettre à jour le groupe avec les règles
+        try {
+            await db.updateGroup(id, { rules: rulesJsonb });
+            console.log(`[Groups] Règles mises à jour pour le groupe ${id}:`, JSON.stringify(rulesJsonb));
+        } catch (updateError) {
+            console.error(`[Groups] Erreur lors de la mise à jour des règles pour le groupe ${id}:`, updateError);
+            throw updateError;
+        }
+        
         // Mettre à jour toutes les propriétés du groupe
         for (const propId of propertiesInGroup) {
             await db.updateProperty(propId, cleanRulesData);
@@ -5001,7 +5057,7 @@ app.put('/api/groups/:id/rules', authenticateToken, async (req, res) => {
             await logPropertyChange(propId, req.user.uid, req.user.email, 'update:rules:group', { ...cleanRulesData, groupId: id });
         }
         
-        res.status(200).send({ message: `Règles appliquées à ${propertiesInGroup.length} propriétés.` });
+        res.status(200).send({ message: `Règles appliquées au groupe et à ${propertiesInGroup.length} propriétés.` });
         
     } catch (error) {
         console.error('Erreur lors de la mise à jour des règles de groupe:', error);

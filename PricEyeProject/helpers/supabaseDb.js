@@ -264,14 +264,31 @@ async function createGroup(groupData) {
  * Met à jour un groupe
  */
 async function updateGroup(groupId, updateData) {
+  // Pour les champs JSONB (strategy, rules), Supabase nécessite que les valeurs soient des objets JavaScript valides
+  // Les convertir explicitement en objets si nécessaire
+  const processedData = { ...updateData };
+  
+  // S'assurer que les champs JSONB sont bien des objets
+  if (processedData.strategy && typeof processedData.strategy === 'object') {
+    processedData.strategy = processedData.strategy;
+  }
+  if (processedData.rules && typeof processedData.rules === 'object') {
+    processedData.rules = processedData.rules;
+  }
+  
   const { data, error } = await supabase
     .from('groups')
-    .update({ ...updateData, updated_at: new Date().toISOString() })
+    .update({ ...processedData, updated_at: new Date().toISOString() })
     .eq('id', groupId)
     .select()
     .single();
   
-  if (error) throw error;
+  if (error) {
+    console.error(`[updateGroup] Erreur lors de la mise à jour du groupe ${groupId}:`, error);
+    console.error(`[updateGroup] Données envoyées:`, JSON.stringify(processedData, null, 2));
+    throw error;
+  }
+  
   return data;
 }
 

@@ -54,6 +54,21 @@ function PricingPage({ token, userProfile }) {
   // Modale
   const [alertModal, setAlertModal] = useState({ isOpen: false, message: '', title: 'Information' });
 
+  /** Retourne le groupe auquel appartient une propriété (si elle est dans un groupe). Les prix du groupe = propriété principale. */
+  const getGroupForProperty = useCallback((propertyId) => {
+    if (!propertyId || !allGroups.length) return null;
+    const sid = String(propertyId);
+    const g = allGroups.find((group) => {
+      const ids = (group.properties || []).map((p) => String(typeof p === 'object' ? p?.id ?? p?.property_id : p));
+      return ids.includes(sid);
+    });
+    if (!g) return null;
+    const mainId = g.main_property_id ?? g.mainPropertyId;
+    const syncPrices = g.sync_prices ?? g.syncPrices ?? false;
+    const propertyIds = (g.properties || []).map((p) => (typeof p === 'object' ? p?.id ?? p?.property_id : p)).filter(Boolean);
+    return { group: g, mainId, syncPrices, propertyIds };
+  }, [allGroups]);
+
   // --- 1. CHARGEMENT INITIAL (Logique Backend Prioritaire) ---
   const fetchInitialData = useCallback(async () => {
     if (!token) return; 
@@ -220,15 +235,24 @@ function PricingPage({ token, userProfile }) {
       setIsCalendarLoading(false); setPriceOverrides({}); setBookings({}); return;
     }
     
-    let targetId = selectedId;
+    let overridesTargetId = selectedId;
+    let bookingsTargetId = selectedId;
+
     if (selectedView === 'group') {
         const group = allGroups.find(g => String(g.id) === String(selectedId));
-        // Support snake_case et camelCase
-        targetId = group?.main_property_id || group?.mainPropertyId;
+        const mainId = group?.main_property_id || group?.mainPropertyId;
+        overridesTargetId = mainId;
+        bookingsTargetId = mainId;
+    } else {
+        // Propriété : si elle est dans un groupe, les prix viennent du groupe (propriété principale)
+        const groupInfo = getGroupForProperty(selectedId);
+        if (groupInfo?.mainId) {
+            overridesTargetId = groupInfo.mainId;
+        }
+        bookingsTargetId = selectedId; // Les résas restent par propriété
     }
 
-    if (!targetId) {
-        // Si c'est un groupe sans chef, on arrête là proprement sans erreur
+    if (!overridesTargetId) {
         setIsCalendarLoading(false); return;
     }
 
@@ -242,7 +266,7 @@ function PricingPage({ token, userProfile }) {
       const lastDay = new Date(year, month + 1, 0).getDate();
       const endOfMonth = `${year}-${String(month + 1).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
       
-      const overridesData = await getPriceOverrides(targetId, token, startOfMonth, endOfMonth).catch(()=>({}));
+      const overridesData = await getPriceOverrides(overridesTargetId, token, startOfMonth, endOfMonth).catch(()=>({}));
       const newOverrides = {};
       if (Array.isArray(overridesData)) {
         overridesData.forEach(o => { 
@@ -272,7 +296,7 @@ function PricingPage({ token, userProfile }) {
       }
       setPriceOverrides(newOverrides);
 
-      const bookingsData = await getBookingsForMonth(targetId, year, month, token).catch(()=>[]);
+      const bookingsData = await getBookingsForMonth(bookingsTargetId, year, month, token).catch(()=>[]);
       const newBookings = {};
       if (Array.isArray(bookingsData)) {
         bookingsData.forEach(b => {
@@ -294,7 +318,7 @@ function PricingPage({ token, userProfile }) {
     } finally {
       setIsCalendarLoading(false);
     }
-  }, [selectedId, selectedView, currentCalendarDate, token, allGroups]); 
+  }, [selectedId, selectedView, currentCalendarDate, token, allGroups, getGroupForProperty]); 
 
   useEffect(() => { fetchCalendarData(); }, [fetchCalendarData]);
 
@@ -383,7 +407,17 @@ function PricingPage({ token, userProfile }) {
 
         if (newEnabled) {
             handleGenerateStrategy();
-            setAutoPricingSuccess(t('pricing.autoPricing.success'));
+            // Déterminer le nombre de propriétés affectées
+            let propertyCount = 1; // Par défaut, une propriété
+            if (selectedView === 'group') {
+                const group = allGroups.find(g => String(g.id) === String(selectedId));
+                // Pour un groupe, on compte 1 (propriété principale) ou on pourrait compter toutes les propriétés du groupe
+                propertyCount = 1;
+            }
+            setAutoPricingSuccess(t('pricing.autoPricing.success', { 
+                count: propertyCount, 
+                timezone: autoPricingTimezone 
+            }));
         } else {
             setAutoPricingSuccess(t('pricing.autoPricing.disabled'));
         }
@@ -450,12 +484,33 @@ function PricingPage({ token, userProfile }) {
 
   const handleSavePriceOverride = async (e) => {
       e.preventDefault();
-      let targets = [selectedId];
+      let targets = [];
+
       if (selectedView === 'group') {
           const g = allGroups.find(x => String(x.id) === String(selectedId));
-          const mainId = g?.main_property_id || g?.mainPropertyId;
-          targets = [mainId];
+          const mainId = g?.main_property_id ?? g?.mainPropertyId;
+          if (!mainId) {
+              setAlertModal({ isOpen: true, message: t('pricing.errors.noMainProperty'), title: t('pricing.modal.attention') });
+              return;
+          }
+          const syncPrices = g?.sync_prices ?? g?.syncPrices ?? false;
+          const propertyIds = (g?.properties || []).map(p => (typeof p === 'object' ? p?.id ?? p?.property_id : p)).filter(Boolean);
+          targets = syncPrices && propertyIds.length
+              ? [mainId, ...propertyIds.filter(pid => String(pid) !== String(mainId))]
+              : [mainId];
+      } else {
+          const groupInfo = getGroupForProperty(selectedId);
+          if (groupInfo?.mainId) {
+              targets = groupInfo.syncPrices && groupInfo.propertyIds?.length
+                  ? [groupInfo.mainId, ...groupInfo.propertyIds.filter(pid => String(pid) !== String(groupInfo.mainId))]
+                  : [groupInfo.mainId];
+          } else {
+              targets = [selectedId];
+          }
       }
+
+      targets = targets.filter(Boolean);
+      if (!targets.length) return;
 
       setIsLoading(true);
       try {
@@ -466,7 +521,7 @@ function PricingPage({ token, userProfile }) {
               overrides.push({ date: cur.toISOString().split('T')[0], price: Number(manualPrice), isLocked: isPriceLocked });
               cur.setDate(cur.getDate() + 1);
           }
-          await Promise.all(targets.map(pid => pid && updatePriceOverrides(pid, overrides, token)));
+          await Promise.all(targets.map(pid => updatePriceOverrides(pid, overrides, token)));
           setAlertModal({ isOpen: true, message: t('pricing.errors.priceSuccess', { count: targets.length }), title: t('pricing.modal.success') });
           clearSelection();
           fetchCalendarData();
