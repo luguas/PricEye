@@ -4620,9 +4620,23 @@ app.put('/api/groups/:groupId', authenticateToken, async (req, res) => {
         delete updates.id;
         delete updates.user_id;
 
+        // CORRECTION : Normaliser les noms de colonnes (camelCase -> snake_case)
+        const normalizedUpdates = {};
+        if (updates.mainPropertyId !== undefined) {
+            normalizedUpdates.main_property_id = updates.mainPropertyId;
+            delete updates.mainPropertyId;
+        }
+        if (updates.syncPrices !== undefined) {
+            normalizedUpdates.sync_prices = updates.syncPrices;
+            delete updates.syncPrices;
+        }
+        
+        // Fusionner les mises à jour normalisées avec les autres
+        const finalUpdates = { ...updates, ...normalizedUpdates };
+
         const { data, error } = await supabase
             .from('groups')
-            .update(updates)
+            .update(finalUpdates)
             .eq('id', groupId)
             .select();
 
