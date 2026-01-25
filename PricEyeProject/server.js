@@ -4542,6 +4542,19 @@ app.put('/api/groups/:id/auto-pricing', authenticateToken, async (req, res) => {
             auto_pricing_updated_at: new Date().toISOString()
         });
 
+        // Mettre à jour aussi auto_pricing_updated_at sur le groupe
+        if (enabled) {
+            try {
+                await db.updateGroup(groupId, {
+                    auto_pricing_updated_at: new Date().toISOString()
+                });
+                console.log(`[Auto-Pricing] auto_pricing_updated_at mis à jour pour le groupe ${groupId}`);
+            } catch (updateError) {
+                console.error(`[Auto-Pricing] Erreur lors de la mise à jour de auto_pricing_updated_at pour le groupe ${groupId}:`, updateError);
+                // Ne pas faire échouer la requête si la mise à jour du groupe échoue
+            }
+        }
+
         res.status(200).send({ 
             message: enabled 
                 ? 'Pricing automatique activé pour ce groupe.' 
@@ -10614,9 +10627,10 @@ function getCurrentTimeInTimezone(timezone) {
  * @param {object} property - Données de la propriété
  * @param {string} userId - ID de l'utilisateur
  * @param {string} userEmail - Email de l'utilisateur
+ * @param {object} groupContext - Contexte du groupe (optionnel) avec strategy et rules
  * @returns {Promise<{success: boolean, propertyId: string, message: string}>}
  */
-async function generateAndApplyPricingForProperty(propertyId, property, userId, userEmail) {
+async function generateAndApplyPricingForProperty(propertyId, property, userId, userEmail, groupContext = null) {
     try {
         // Récupérer la propriété complète depuis la base de données pour s'assurer d'avoir tous les champs à jour
         const fullProperty = await db.getProperty(propertyId);
@@ -10681,6 +10695,32 @@ async function generateAndApplyPricingForProperty(propertyId, property, userId, 
         // Utiliser la propriété complète pour le reste de la fonction
         const property = propertyToUse;
         const today = new Date().toISOString().split('T')[0];
+
+        // Utiliser la stratégie et les règles du groupe si disponibles, sinon utiliser celles de la propriété
+        const effectiveStrategy = groupContext?.strategy?.strategy || (typeof groupContext?.strategy === 'string' ? groupContext.strategy : null) || property.strategy || 'Équilibré';
+        const effectiveRules = groupContext?.rules || property.rules || {};
+        
+        // Utiliser les prix du groupe si disponibles, sinon utiliser ceux de la propriété
+        const effectiveBasePrice = groupContext?.strategy?.base_price || property.base_price || 100;
+        const effectiveFloorPrice = groupContext?.strategy?.floor_price || property.floor_price || 50;
+        const effectiveCeilingPrice = groupContext?.strategy?.ceiling_price || property.ceiling_price || effectiveBasePrice * 4;
+
+        // Définir les variables sanitized pour le prompt (utiliser les valeurs effectives)
+        const sanitizedStrategy = effectiveStrategy;
+        const sanitizedBasePrice = effectiveBasePrice;
+        const sanitizedFloorPrice = effectiveFloorPrice;
+        const sanitizedCeilingPrice = effectiveCeilingPrice;
+        
+        // Sanitiser les autres champs de la propriété pour le prompt
+        const sanitizedAddress = (property.address || property.location || '').substring(0, 200);
+        const sanitizedPropertyType = (property.property_type || 'Appartement').substring(0, 50);
+        const sanitizedCapacity = property.capacity || 2;
+        const sanitizedSurface = property.surface || 0;
+        const sanitizedAmenities = Array.isArray(property.amenities) ? property.amenities.slice(0, 50) : [];
+        const sanitizedLocation = (property.location || property.city || '').substring(0, 100);
+        const sanitizedWeeklyDiscount = property.weekly_discount || property.weeklyDiscount || 0;
+        const sanitizedMonthlyDiscount = property.monthly_discount || property.monthlyDiscount || 0;
+        const sanitizedWeekendMarkup = property.weekend_markup_percent || property.weekendMarkupPercent || 0;
 
         // Construire le nouveau prompt pour l'IA (identique à l'endpoint de pricing-strategy)
         const prompt = `
@@ -10844,9 +10884,9 @@ RAPPEL CRITIQUE : La réponse finale doit être UNIQUEMENT ce JSON, sans texte a
             const rawPrice = day.final_suggested_price;
             // Validation initiale avec safety_guardrails
             const validationResult = validatePriceSafety(rawPrice, {
-                base_price: property.base_price,
-                min_price: property.floor_price || 0,
-                max_price: property.ceiling_price || Infinity,
+                base_price: effectiveBasePrice,
+                min_price: effectiveFloorPrice || 0,
+                max_price: effectiveCeilingPrice || Infinity,
                 allow_override: false,
                 sanity_threshold: 0.5
             });
@@ -10899,8 +10939,8 @@ RAPPEL CRITIQUE : La réponse finale doit être UNIQUEMENT ce JSON, sans texte a
         }
 
         // Sauvegarder les prix dans Supabase
-        const floor = property.floor_price;
-        const ceiling = property.ceiling_price;
+        const floor = effectiveFloorPrice;
+        const ceiling = effectiveCeilingPrice;
 
         // Récupérer tous les price_overrides pour cette propriété pour trouver les prix verrouillés
         const allOverrides = await db.getPriceOverrides(propertyId);
@@ -11001,12 +11041,19 @@ async function generatePricingForGroups(userId, userEmail, groups, allProperties
                 continue;
             }
 
-            // Générer les prix pour la propriété principale
+            // Préparer le contexte du groupe avec stratégie et règles
+            const groupContext = {
+                strategy: group.strategy || group._strategy_raw || {},
+                rules: group.rules || {}
+            };
+
+            // Générer les prix pour la propriété principale avec le contexte du groupe
             const result = await generateAndApplyPricingForProperty(
                 group.mainPropertyId,
                 mainProperty,
                 userId,
-                userEmail
+                userEmail,
+                groupContext
             );
 
             if (result.success) {
@@ -11021,8 +11068,19 @@ async function generatePricingForGroups(userId, userEmail, groups, allProperties
                         otherProp.id,
                         otherProp,
                         userId,
-                        userEmail
+                        userEmail,
+                        groupContext
                     );
+                }
+
+                // Mettre à jour auto_pricing_updated_at sur le groupe
+                try {
+                    await db.updateGroup(group.id, {
+                        auto_pricing_updated_at: new Date().toISOString()
+                    });
+                    console.log(`[Auto-Pricing] auto_pricing_updated_at mis à jour pour le groupe ${group.id}`);
+                } catch (updateError) {
+                    console.error(`[Auto-Pricing] Erreur lors de la mise à jour de auto_pricing_updated_at pour le groupe ${group.id}:`, updateError);
                 }
 
                 results.push({
@@ -11126,19 +11184,33 @@ async function processAutoPricingForUser(userId, userData) {
                 if (!mainProperty) continue;
                 
                 // Si ce n'est pas l'heure prévue (00h00), vérifier si une génération a eu lieu aujourd'hui
-                if (!isScheduledTime && mainProperty.auto_pricing_updated_at) {
-                    const updatedAt = new Date(mainProperty.auto_pricing_updated_at);
-                    const now = new Date();
+                if (!isScheduledTime) {
+                    // Vérifier d'abord sur le groupe, puis sur la propriété principale
+                    const groupUpdatedAt = group.auto_pricing_updated_at;
+                    const propertyUpdatedAt = mainProperty.auto_pricing_updated_at;
+                    const updatedAt = groupUpdatedAt || propertyUpdatedAt;
                     
-                    // Vérifier si la mise à jour a eu lieu aujourd'hui (même jour)
-                    const isToday = updatedAt.getFullYear() === now.getFullYear() &&
-                                   updatedAt.getMonth() === now.getMonth() &&
-                                   updatedAt.getDate() === now.getDate();
-                    
-                    if (isToday) {
-                        // Si une génération a eu lieu aujourd'hui et qu'on n'est pas à 00h00, ne pas régénérer
-                        console.log(`[Auto-Pricing] Groupe ${group.id} ignoré: génération déjà effectuée aujourd'hui pour la propriété principale (${updatedAt.toISOString()})`);
-                        continue;
+                    if (updatedAt) {
+                        const updatedAtDate = new Date(updatedAt);
+                        const now = new Date();
+                        
+                        // Utiliser Intl.DateTimeFormat pour obtenir les dates dans le fuseau horaire de l'utilisateur
+                        const dateFormatter = new Intl.DateTimeFormat('en-CA', { 
+                            timeZone: timezone, 
+                            year: 'numeric', 
+                            month: '2-digit', 
+                            day: '2-digit' 
+                        });
+                        
+                        const updatedAtDateStr = dateFormatter.format(updatedAtDate);
+                        const nowDateStr = dateFormatter.format(now);
+                        
+                        // Comparer les dates (format: YYYY-MM-DD)
+                        if (updatedAtDateStr === nowDateStr) {
+                            // Si une génération a eu lieu aujourd'hui et qu'on n'est pas à 00h00, ne pas régénérer
+                            console.log(`[Auto-Pricing] Groupe ${group.id} ignoré: génération déjà effectuée aujourd'hui (${updatedAtDate.toISOString()}) - Fuseau: ${timezone} - Date locale: ${updatedAtDateStr}`);
+                            continue;
+                        }
                     }
                 }
                 
