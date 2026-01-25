@@ -183,6 +183,8 @@ function DashboardPage({ token, userProfile }) {
     }
   }, [token, userProfile?.language, language]);
 
+  const hasFetchedData = useRef(false);
+
   const fetchInitialData = useCallback(async () => {
     if (isPropertyModalOpen || isStrategyModalOpen || isRulesModalOpen) return;
     setIsLoading(true);
@@ -242,25 +244,14 @@ function DashboardPage({ token, userProfile }) {
         }
       }
     }
-  }, [token, isPropertyModalOpen, isStrategyModalOpen, isRulesModalOpen, userProfile?.id, userProfile?.timezone, userProfile?.language, language]); 
-
-  const hasFetchedData = useRef(false);
+  }, [token, userProfile, language]);
 
   useEffect(() => {
     if (!token) return;
     if (hasFetchedData.current) return;
     hasFetchedData.current = true;
-
-    const load = async () => {
-      try {
-        await fetchInitialData();
-      } catch (err) {
-        console.error('Erreur chargement initial Dashboard:', err);
-        hasFetchedData.current = false;
-      }
-    };
-    load();
-  }, [token, fetchInitialData]); 
+    fetchInitialData();
+  }, [token]); 
   
   useEffect(() => {
     const handleClickOutside = (event) => {

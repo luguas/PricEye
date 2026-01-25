@@ -4628,8 +4628,23 @@ app.put('/api/groups/:groupId', authenticateToken, async (req, res) => {
             return res.status(403).json({ error: 'Action non autorisée sur ce groupe.' });
         }
 
+        // DEBUG : voir exactement ce que le front envoie
+        console.log(`[Update Group] Payload reçu pour ${groupId}:`, JSON.stringify(input, null, 2));
+
+        // 1. Détection intelligente du nom de la stratégie
+        let strategyName = 'dynamic';
+        if (typeof input.strategy === 'string') {
+            strategyName = input.strategy;
+        } else if (typeof input.strategy === 'object' && input.strategy !== null) {
+            strategyName = input.strategy.strategy || input.strategy.value || input.strategy.name || input.strategy.type || 'dynamic';
+        } else if (input.strategy_type) {
+            strategyName = input.strategy_type;
+        }
+        console.log(`[Update Group] Stratégie détectée : ${strategyName}`);
+
+        // 2. Reconstruire l'objet 'strategy' pour la base de données
         const strategyData = {
-            strategy: input.strategy || input.strategy_type || 'dynamic',
+            strategy: strategyName,
             base_price: input.base_price,
             floor_price: input.floor_price,
             ceiling_price: input.ceiling_price,

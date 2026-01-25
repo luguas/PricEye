@@ -4,18 +4,15 @@ import CustomScrollbar from './CustomScrollbar.jsx';
 import { useLanguage } from '../contexts/LanguageContext.jsx';
 import { handleQuotaError } from '../utils/quotaErrorHandler.js';
 
-const MIN_NEWS_FETCH_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes entre deux appels (sauf changement de langue)
-
 function NewsFeed({ token, userProfile }) {
   const { t, language: contextLanguage } = useLanguage();
   const language = userProfile?.language || contextLanguage || 'fr';
-  const prevLanguageRef = useRef(undefined);
-  const lastFetchRef = useRef(0);
-  const userProfileRef = useRef(userProfile);
-  userProfileRef.current = userProfile;
   const [news, setNews] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState('');
+
+  const hasFetchedRef = useRef(false);
+  const activeLanguageRef = useRef(language);
 
   const fetchNews = useCallback(async (forceRefresh = false) => {
     if (!token) return;
@@ -24,42 +21,35 @@ function NewsFeed({ token, userProfile }) {
     try {
       const data = await getMarketNews(token, language, forceRefresh);
       setNews(data || []);
-      lastFetchRef.current = Date.now();
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('aiCallCompleted'));
       }
     } catch (err) {
-      const isQuotaError = handleQuotaError(err, setError, null, userProfileRef.current, null);
+      const isQuotaError = handleQuotaError(err, setError, null, userProfile, null);
       if (!isQuotaError) {
         setError(t('newsFeed.loadError', { message: err.message }));
-      }
-      if (typeof window !== 'undefined') {
-        window.dispatchEvent(new CustomEvent('aiCallFailed'));
       }
     } finally {
       setIsLoading(false);
     }
-  }, [token, language, t]);
+  }, [token, language, t, userProfile]);
 
   useEffect(() => {
-    const prev = prevLanguageRef.current;
-    const isFirstMount = prev === undefined;
-    const isLanguageChange = !isFirstMount && prev !== language;
-    prevLanguageRef.current = language;
+    if (!token) return;
 
-    if (isLanguageChange) {
+    if (activeLanguageRef.current !== language) {
+      hasFetchedRef.current = false;
+      activeLanguageRef.current = language;
+      hasFetchedRef.current = true;
       fetchNews(true);
       return;
     }
-    if (isFirstMount) {
-      fetchNews(false);
-      return;
-    }
-    const elapsed = Date.now() - lastFetchRef.current;
-    if (elapsed >= MIN_NEWS_FETCH_INTERVAL_MS) {
+
+    if (!hasFetchedRef.current) {
+      hasFetchedRef.current = true;
       fetchNews(false);
     }
-  }, [language, fetchNews]);
+  }, [token, language, fetchNews]);
 
   const getImpactColor = (category) => {
     switch ((category || '').toLowerCase()) {
