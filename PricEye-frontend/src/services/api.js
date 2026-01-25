@@ -964,9 +964,10 @@ export async function createPortalSession(token) {
  * @param {string} propertyId - ID de la propriété principale
  * @param {object|null} groupContext - Contexte du groupe si c'est une synchronisation de groupe
  * @param {string} token - Jeton d'authentification
+ * @param {boolean} force - Force la génération même si une stratégie existe déjà
  * @returns {Promise<{strategy_summary: string, daily_prices: Array, method: string, days_generated: number, synced_properties?: number}>}
  */
-export const applyPricingStrategy = async (propertyId, groupContext = null, token) => {
+export const applyPricingStrategy = async (propertyId, groupContext = null, token, force = false) => {
   // Utiliser API_BASE_URL défini en haut du fichier
   const authToken = token || globalAuthToken || localStorage.getItem('authToken');
 
@@ -978,7 +979,8 @@ export const applyPricingStrategy = async (propertyId, groupContext = null, toke
     },
     body: JSON.stringify({
       useMarketData: true,
-      group_context: groupContext // On passe les infos du groupe si c'est une synchro
+      group_context: groupContext, // On passe les infos du groupe si c'est une synchro
+      force: force // Force la génération
     }),
   });
 

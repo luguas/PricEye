@@ -349,7 +349,8 @@ function PricingPage({ token, userProfile }) {
        }
   };
 
-  const handleGenerateStrategy = async () => {
+  // Ajoutez le paramètre 'isManualClick' par défaut à true
+  const handleGenerateStrategy = async (isManualClick = true) => {
     let targetId = selectedId;
     let groupContext = null;
 
@@ -374,15 +375,33 @@ function PricingPage({ token, userProfile }) {
 
     setIaLoading(true);
     try {
-      const result = await applyPricingStrategy(targetId, groupContext, token);
-      setAlertModal({ isOpen: true, message: t('pricing.errors.strategySuccess', { count: result.days_generated || 180, summary: '' }), title: t('pricing.modal.success') });
-      fetchCalendarData();
+      // ON PASSE 'isManualClick' COMME PARAMÈTRE 'FORCE'
+      // Si c'est un clic manuel -> true (on force le recalcul)
+      // Si ça vient du toggle auto -> false (on vérifie la date)
+      const result = await applyPricingStrategy(targetId, groupContext, token, isManualClick);
+      
+      if (result.skipped) {
+          // Si le backend a ignoré la demande
+          setAlertModal({ 
+              isOpen: true, 
+              message: "Les prix sont déjà à jour pour aujourd'hui. (Utilisez le bouton 'Générer' pour forcer)", 
+              title: "Déjà à jour" 
+          });
+      } else {
+          setAlertModal({ 
+              isOpen: true, 
+              message: t('pricing.errors.strategySuccess', { count: result.days_generated || 180 }), 
+              title: t('pricing.modal.success') 
+          });
+          fetchCalendarData();
+      }
+      
       window.dispatchEvent(new CustomEvent('aiCallCompleted'));
     } catch (err) {
       if (!err.isQuotaExceeded) setError(t('pricing.errors.strategyError', { message: err.message }));
       window.dispatchEvent(new CustomEvent('aiCallFailed'));
     } finally {
-        setIaLoading(false);
+      setIaLoading(false);
     }
   };
 
@@ -420,7 +439,8 @@ function PricingPage({ token, userProfile }) {
         }
 
         if (newEnabled) {
-            handleGenerateStrategy();
+            // Passer 'false' pour ne PAS forcer si déjà fait aujourd'hui
+            handleGenerateStrategy(false); 
             // Déterminer le nombre de propriétés affectées
             let propertyCount = 1; // Par défaut, une propriété
             if (selectedView === 'group') {

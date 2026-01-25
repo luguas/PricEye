@@ -8017,10 +8017,49 @@ app.post('/api/properties/:id/pricing-strategy', authenticateToken, async (req, 
     const { id } = req.params;
     const userId = req.user.uid;
     const userEmail = req.user.email;
-    const { useMarketData } = req.body;
+    // On récupère le flag 'force' et le contexte de groupe
+    const { useMarketData, group_context, force } = req.body;
     let tokensUsed = 0;
     
     try {
+        // --- NOUVEAU BLOC : VÉRIFICATION ANTI-DOUBLON ---
+        if (!force) {
+            let lastUpdate = null;
+
+            if (group_context && group_context.id) {
+                // Si c'est un groupe, on vérifie la date du groupe
+                const { data: groupCheck } = await supabase
+                    .from('groups')
+                    .select('last_pricing_update')
+                    .eq('id', group_context.id)
+                    .single();
+                lastUpdate = groupCheck?.last_pricing_update;
+            } else {
+                // Sinon on vérifie la propriété
+                const { data: propCheck } = await supabase
+                    .from('properties')
+                    .select('last_pricing_update')
+                    .eq('id', id)
+                    .single();
+                lastUpdate = propCheck?.last_pricing_update;
+            }
+
+            if (lastUpdate) {
+                const lastDate = new Date(lastUpdate).toDateString();
+                const todayDate = new Date().toDateString();
+
+                if (lastDate === todayDate) {
+                    console.log(`[Pricing] ⏩ Génération ignorée : Déjà mis à jour aujourd'hui (${lastDate}).`);
+                    return res.status(200).json({
+                        message: "Stratégie déjà à jour pour aujourd'hui.",
+                        skipped: true, // Indicateur pour le frontend
+                        days_generated: 0
+                    });
+                }
+            }
+        }
+        // -----------------------------------------------------
+
         // 2. Récupérer la propriété
         const property = await db.getProperty(id);
         if (!property) return res.status(404).send({ error: 'Propriété non trouvée.' });
