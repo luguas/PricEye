@@ -1003,11 +1003,31 @@ app.get('/api/users/profile', authenticateToken, async (req, res) => {
                     subscription.items.data.forEach(item => {
                         if (item.price && item.price.unit_amount) {
                             // unit_amount est en centimes, on le convertit en euros
-                            const itemPrice = (item.price.unit_amount / 100) * (item.quantity || 1);
+                            let itemPrice = (item.price.unit_amount / 100) * (item.quantity || 1);
+                            
+                            // Prendre en compte la périodicité (interval) du prix
+                            // Si l'abonnement est annuel, diviser par 12 pour obtenir le prix mensuel
+                            if (item.price.recurring && item.price.recurring.interval) {
+                                const interval = item.price.recurring.interval;
+                                const originalPrice = itemPrice;
+                                
+                                if (interval === 'year') {
+                                    itemPrice = itemPrice / 12; // Convertir le prix annuel en mensuel
+                                } else if (interval === 'week') {
+                                    itemPrice = itemPrice * (52 / 12); // Convertir le prix hebdomadaire en mensuel (approximatif)
+                                } else if (interval === 'day') {
+                                    itemPrice = itemPrice * 30; // Convertir le prix journalier en mensuel (approximatif)
+                                }
+                                // Si interval === 'month', on garde le prix tel quel
+                                
+                                console.log(`[Profile] Prix d'abonnement: ${originalPrice}€/${interval} -> ${itemPrice.toFixed(2)}€/mois`);
+                            }
+                            
                             totalAmount += itemPrice;
                         }
                     });
-                    subscriptionPrice = totalAmount;
+                    subscriptionPrice = Math.round(totalAmount * 100) / 100; // Arrondir à 2 décimales
+                    console.log(`[Profile] Prix total mensuel calculé: ${subscriptionPrice}€`);
                 }
             } catch (stripeError) {
                 console.warn(`[Profile] Erreur lors de la récupération du prix de l'abonnement:`, stripeError.message);
