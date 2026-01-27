@@ -999,11 +999,35 @@ app.get('/api/users/profile', authenticateToken, async (req, res) => {
                 
                 // Calculer le prix total mensuel de l'abonnement
                 if (subscription.items && subscription.items.data && subscription.items.data.length > 0) {
+                    console.log(`[Profile] ${subscription.items.data.length} item(s) d'abonnement trouvé(s)`);
                     let totalAmount = 0;
-                    subscription.items.data.forEach(item => {
+                    const userCurrency = userData.currency || 'EUR';
+                    
+                    subscription.items.data.forEach((item, index) => {
+                        console.log(`[Profile] Item ${index + 1}:`, {
+                            priceId: item.price?.id,
+                            unitAmount: item.price?.unit_amount,
+                            currency: item.price?.currency,
+                            quantity: item.quantity,
+                            interval: item.price?.recurring?.interval
+                        });
                         if (item.price && item.price.unit_amount) {
-                            // unit_amount est en centimes, on le convertit en euros
+                            // unit_amount est en centimes, on le convertit en unité de devise
                             let itemPrice = (item.price.unit_amount / 100) * (item.quantity || 1);
+                            const itemCurrency = item.price.currency?.toUpperCase() || 'EUR';
+                            
+                            // Convertir en euros si nécessaire (taux de change approximatif, à améliorer avec une API)
+                            if (itemCurrency !== 'EUR') {
+                                if (itemCurrency === 'USD') {
+                                    // Taux de change USD vers EUR (approximatif, idéalement utiliser une API de taux de change)
+                                    const usdToEurRate = 0.92; // Taux approximatif janvier 2025
+                                    const originalPrice = itemPrice;
+                                    itemPrice = itemPrice * usdToEurRate;
+                                    console.log(`[Profile] Conversion ${itemCurrency} -> EUR: ${originalPrice.toFixed(2)} ${itemCurrency} = ${itemPrice.toFixed(2)} EUR (taux: ${usdToEurRate})`);
+                                } else {
+                                    console.warn(`[Profile] Devise non supportée pour conversion: ${itemCurrency}. Utilisation de la valeur brute (peut être incorrecte).`);
+                                }
+                            }
                             
                             // Prendre en compte la périodicité (interval) du prix
                             // Si l'abonnement est annuel, diviser par 12 pour obtenir le prix mensuel
@@ -1020,14 +1044,16 @@ app.get('/api/users/profile', authenticateToken, async (req, res) => {
                                 }
                                 // Si interval === 'month', on garde le prix tel quel
                                 
-                                console.log(`[Profile] Prix d'abonnement: ${originalPrice}€/${interval} -> ${itemPrice.toFixed(2)}€/mois`);
+                                console.log(`[Profile] Item: ${itemPrice.toFixed(2)}€/mois (${originalPrice.toFixed(2)}€/${interval}, quantité: ${item.quantity || 1})`);
+                            } else {
+                                console.log(`[Profile] Item: ${itemPrice.toFixed(2)}€ (quantité: ${item.quantity || 1}, devise originale: ${itemCurrency})`);
                             }
                             
                             totalAmount += itemPrice;
                         }
                     });
                     subscriptionPrice = Math.round(totalAmount * 100) / 100; // Arrondir à 2 décimales
-                    console.log(`[Profile] Prix total mensuel calculé: ${subscriptionPrice}€`);
+                    console.log(`[Profile] Prix total mensuel calculé: ${subscriptionPrice}€ (devise préférée utilisateur: ${userCurrency})`);
                 }
             } catch (stripeError) {
                 console.warn(`[Profile] Erreur lors de la récupération du prix de l'abonnement:`, stripeError.message);
@@ -4613,6 +4639,104 @@ app.post('/api/groups', authenticateToken, async (req, res) => {
     } catch (error) {
         console.error('Erreur lors de la création du groupe:', error);
         res.status(500).send({ error: 'Erreur lors de la création du groupe.' });
+    }
+});
+
+// --- MISE À JOUR GROUPE (Général) ---
+app.put('/api/groups/:id', authenticateToken, async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { name, syncPrices, mainPropertyId, sync_prices, main_property_id } = req.body;
+
+        // On gère les deux formats (camelCase et snake_case)
+        const updateData = {
+            name,
+            sync_prices: syncPrices !== undefined ? syncPrices : sync_prices,
+            main_property_id: mainPropertyId !== undefined ? mainPropertyId : main_property_id,
+            updated_at: new Date()
+        };
+
+        // Nettoyage des undefined
+        Object.keys(updateData).forEach(key => updateData[key] === undefined && delete updateData[key]);
+
+        const { data, error } = await supabase
+            .from('groups')
+            .update(updateData)
+            .eq('id', id)
+            .select()
+            .single();
+
+        if (error) throw error;
+        res.json(data);
+    } catch (error) {
+        console.error("Erreur update groupe:", error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// --- MISE À JOUR STRATÉGIE GROUPE ---
+app.put('/api/groups/:id/strategy', authenticateToken, async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { strategy, floor_price, base_price, ceiling_price } = req.body;
+
+        // Validation basique
+        if (!strategy) return res.status(400).json({ error: "La stratégie est requise" });
+
+        const updateData = {
+            strategy: strategy, // "Prudent", "Équilibré", "Agressif"
+            floor_price,
+            base_price,
+            ceiling_price,
+            updated_at: new Date()
+        };
+
+        const { data, error } = await supabase
+            .from('groups')
+            .update(updateData)
+            .eq('id', id)
+            .select()
+            .single();
+
+        if (error) throw error;
+        res.json(data);
+    } catch (error) {
+        console.error("Erreur update stratégie:", error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// --- MISE À JOUR RÈGLES GROUPE ---
+app.put('/api/groups/:id/rules', authenticateToken, async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { 
+            min_stay, max_stay, 
+            weekly_discount_percent, monthly_discount_percent, 
+            weekend_markup_percent 
+        } = req.body;
+
+        const updateData = {
+            min_stay,
+            max_stay,
+            weekly_discount_percent,
+            monthly_discount_percent,
+            weekend_markup_percent,
+            updated_at: new Date()
+        };
+
+        const { data, error } = await supabase
+            .from('groups')
+            .update(updateData)
+            .eq('id', id)
+            .select()
+            .single();
+
+        if (error) throw error;
+        res.json(data);
+    } catch (error) {
+        console.error("Erreur update règles:", error);
+        res.status(500).json({ error: error.message });
     }
 });
 
