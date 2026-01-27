@@ -4706,7 +4706,7 @@ app.put('/api/groups/:id/strategy', authenticateToken, async (req, res) => {
     }
 });
 
-// --- MISE À JOUR RÈGLES GROUPE ---
+// --- MISE À JOUR RÈGLES GROUPE (JSONB) ---
 app.put('/api/groups/:id/rules', authenticateToken, async (req, res) => {
     try {
         const { id } = req.params;
@@ -4716,18 +4716,21 @@ app.put('/api/groups/:id/rules', authenticateToken, async (req, res) => {
             weekend_markup_percent 
         } = req.body;
 
-        const updateData = {
+        // On construit l'objet JSON à stocker dans la colonne 'rules'
+        const rulesPayload = {
             min_stay,
             max_stay,
             weekly_discount_percent,
             monthly_discount_percent,
-            weekend_markup_percent,
-            updated_at: new Date()
+            weekend_markup_percent
         };
 
         const { data, error } = await supabase
             .from('groups')
-            .update(updateData)
+            .update({ 
+                rules: rulesPayload, // C'est ici qu'on cible la colonne JSONB
+                updated_at: new Date()
+            })
             .eq('id', id)
             .select()
             .single();
@@ -4740,7 +4743,7 @@ app.put('/api/groups/:id/rules', authenticateToken, async (req, res) => {
     }
 });
 
-// --- Route pour récupérer les groupes (Bypass RLS) ---
+// --- Route pour récupérer les groupes (Avec aplatissement des règles) ---
 app.get('/api/groups', authenticateToken, async (req, res) => {
   try {
     const userId = req.user.uid;
@@ -4748,8 +4751,15 @@ app.get('/api/groups', authenticateToken, async (req, res) => {
     // Récupérer uniquement les groupes de l'utilisateur connecté
     const groups = await db.getGroupsByOwner(userId);
     
-    console.log(`[API] ${groups.length} groupes trouvés pour l'utilisateur ${userId}.`);
-    res.json(groups);
+    // On fusionne le contenu de la colonne 'rules' avec l'objet principal
+    // Ainsi, le frontend recevra { id: 1, min_stay: 2, ... } au lieu de { id: 1, rules: { min_stay: 2 } }
+    const formattedGroups = groups.map(g => ({
+        ...g,
+        ...(g.rules || {}) // Fusionne les propriétés de 'rules' s'il existe
+    }));
+    
+    console.log(`[API] ${formattedGroups.length} groupes trouvés pour l'utilisateur ${userId}.`);
+    res.json(formattedGroups);
   } catch (error) {
     console.error('Erreur API Groups:', error);
     res.status(500).json({ error: error.message });
