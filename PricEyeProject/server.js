@@ -4675,36 +4675,10 @@ app.put('/api/groups/:id', authenticateToken, async (req, res) => {
 });
 
 // --- MISE À JOUR STRATÉGIE GROUPE ---
-app.put('/api/groups/:id/strategy', authenticateToken, async (req, res) => {
-    try {
-        const { id } = req.params;
-        const { strategy, floor_price, base_price, ceiling_price } = req.body;
-
-        // Validation basique
-        if (!strategy) return res.status(400).json({ error: "La stratégie est requise" });
-
-        const updateData = {
-            strategy: strategy, // "Prudent", "Équilibré", "Agressif"
-            floor_price,
-            base_price,
-            ceiling_price,
-            updated_at: new Date()
-        };
-
-        const { data, error } = await supabase
-            .from('groups')
-            .update(updateData)
-            .eq('id', id)
-            .select()
-            .single();
-
-        if (error) throw error;
-        res.json(data);
-    } catch (error) {
-        console.error("Erreur update stratégie:", error);
-        res.status(500).json({ error: error.message });
-    }
-});
+// NOTE: Cette route a été déplacée plus bas dans le fichier (ligne ~5058)
+// pour une gestion plus complète avec mise à jour des propriétés du groupe
+// Cette route obsolète est conservée pour référence mais ne sera jamais atteinte
+// car la route plus complète est définie en premier dans le code actuel
 
 // --- MISE À JOUR RÈGLES GROUPE (JSONB) ---
 app.put('/api/groups/:id/rules', authenticateToken, async (req, res) => {
@@ -5082,35 +5056,53 @@ app.put('/api/groups/:id/strategy', authenticateToken, async (req, res) => {
         if (!strategy || !allowedStrategies.includes(strategy)) {
             return res.status(400).send({ error: 'Stratégie invalide ou manquante.' });
         }
-        const floorPriceNum = Number(floor_price);
-        const basePriceNum = Number(base_price);
-        const ceilingPriceNum = ceiling_price != null ? Number(ceiling_price) : null;
-        if (isNaN(floorPriceNum) || floorPriceNum < 0 || isNaN(basePriceNum) || basePriceNum < 0) {
-             return res.status(400).send({ error: 'Prix plancher et de base sont requis et doivent être des nombres positifs.' });
-         }
-
-        // Construire l'objet JSONB strategy pour la table groups
-        // La table groups a une colonne JSONB 'strategy', pas des colonnes directes
-        // Fusionner avec les données existantes si elles existent
-        // Utiliser _strategy_raw si disponible (JSONB brut), sinon essayer strategy, sinon objet vide
-        // Note: getGroup retourne _strategy_raw qui contient le JSONB brut de Supabase
+        
+        // Récupérer les valeurs existantes de la stratégie pour les conserver si non fournies
         let existingStrategy = {};
         if (group._strategy_raw && typeof group._strategy_raw === 'object' && !Array.isArray(group._strategy_raw)) {
             existingStrategy = group._strategy_raw;
         } else if (group.strategy && typeof group.strategy === 'object' && !Array.isArray(group.strategy)) {
             existingStrategy = group.strategy;
-        } else {
-            // Si strategy n'est pas un objet, c'est peut-être une chaîne (stratégie aplatie)
-            // Dans ce cas, on crée un nouvel objet
-            existingStrategy = {};
         }
         
+        // Valider et convertir les prix seulement s'ils sont fournis
+        // Si non fournis, on garde les valeurs existantes
+        let floorPriceNum = existingStrategy.floor_price || null;
+        let basePriceNum = existingStrategy.base_price || null;
+        let ceilingPriceNum = existingStrategy.ceiling_price || null;
+        
+        // Si des prix sont fournis, les valider et les utiliser
+        if (floor_price != null && floor_price !== '') {
+            floorPriceNum = Number(floor_price);
+            if (isNaN(floorPriceNum) || floorPriceNum < 0) {
+                return res.status(400).send({ error: 'Le prix plancher doit être un nombre positif.' });
+            }
+        }
+        
+        if (base_price != null && base_price !== '') {
+            basePriceNum = Number(base_price);
+            if (isNaN(basePriceNum) || basePriceNum < 0) {
+                return res.status(400).send({ error: 'Le prix de base doit être un nombre positif.' });
+            }
+        }
+        
+        if (ceiling_price != null && ceiling_price !== '') {
+            ceilingPriceNum = Number(ceiling_price);
+            if (isNaN(ceilingPriceNum) || ceilingPriceNum < 0) {
+                return res.status(400).send({ error: 'Le prix plafond doit être un nombre positif.' });
+            }
+        }
+
+        // Construire l'objet JSONB strategy pour la table groups
+        // La table groups a une colonne JSONB 'strategy', pas des colonnes directes
+        // Fusionner avec les données existantes si elles existent
+        // Note: existingStrategy a déjà été récupéré plus haut
         const strategyJsonb = {
             ...existingStrategy, // Conserver les autres champs du JSONB s'ils existent
-            strategy,
-            floor_price: floorPriceNum,
-            base_price: basePriceNum,
-            ceiling_price: ceilingPriceNum,
+            strategy, // Toujours mettre à jour le nom de la stratégie
+            floor_price: floorPriceNum, // Utiliser la valeur fournie ou existante
+            base_price: basePriceNum, // Utiliser la valeur fournie ou existante
+            ceiling_price: ceilingPriceNum, // Utiliser la valeur fournie ou existante
         };
 
         // Les données pour mettre à jour les propriétés du groupe (colonnes directes)
