@@ -504,12 +504,19 @@ function getWeekId(date) {
 /**
  * Calcule le prix mensuel total pour les Parent Units selon le système de tarification par paliers.
  * 
- * Paliers de tarification :
- * - 1ère unité : €13.99/mo
- * - Unités 2-5 : €11.99/mo (4 unités)
- * - Unités 6-15 : €8.99/mo (10 unités)
- * - Unités 16-30 : €5.49/mo (15 unités)
- * - 30+ unités : €3.99/mo
+ * ⚠️ IMPORTANT : Mettez à jour les valeurs ci-dessous si vos tarifs Stripe changent !
+ * 
+ * Paliers de tarification (PRIX EN CENTIMES) :
+ * - 1ère unité : €13.99/mo (1399 centimes)
+ * - Unités 2-5 : €11.99/mo (1199 centimes) - 4 unités
+ * - Unités 6-15 : €8.99/mo (899 centimes) - 10 unités
+ * - Unités 16-30 : €5.49/mo (549 centimes) - 15 unités
+ * - 30+ unités : €3.99/mo (399 centimes)
+ * 
+ * Pour modifier les tarifs :
+ * 1. Mettez à jour les valeurs dans le tableau TIERS ci-dessous
+ * 2. Mettez à jour les commentaires pour refléter les nouveaux prix
+ * 3. Vérifiez que les valeurs correspondent exactement à vos produits Stripe
  * 
  * @param {number} quantityPrincipal - Nombre total de Parent Units
  * @returns {Object} - { totalAmount, breakdown } où totalAmount est en centimes et breakdown détaille chaque palier
@@ -519,7 +526,8 @@ function calculateTieredPricing(quantityPrincipal) {
         return { totalAmount: 0, breakdown: [] };
     }
     
-    // Prix en centimes par palier
+    // ⚠️ CONFIGURATION DES TARIFS - MODIFIEZ ICI SI VOS PRIX STRIPE CHANGENT ⚠️
+    // Prix en centimes par palier (ex: 1399 = 13.99€)
     const TIERS = [
         { start: 1, end: 1, pricePerUnit: 1399 },      // 1ère unité : €13.99
         { start: 2, end: 5, pricePerUnit: 1199 },     // Unités 2-5 : €11.99
@@ -834,7 +842,10 @@ async function recalculateAndUpdateBilling(userId) {
                 }
             }
             
-            // Prix fixe pour les Child Units (3.99€ par unité)
+            // ⚠️ CONFIGURATION DU PRIX DES PROPRIÉTÉS ENFANTS (Child Units)
+            // Prix fixe pour les Child Units (en centimes)
+            // ⚠️ IMPORTANT : Modifiez cette valeur si votre tarif pour les propriétés enfants change dans Stripe
+            // Cette valeur doit correspondre à CHILD_UNIT_PRICE_CENTS dans /api/reports/kpis
             const childPricePerUnit = 399; // 3.99€ en centimes
             if (childIncrease > 0) {
                 await stripe.invoiceItems.create({
@@ -5556,11 +5567,21 @@ app.get('/api/reports/kpis', authenticateToken, async (req, res) => {
             .eq('team_id', teamId);
 
         // 2. Calculer le nombre d'unités facturables (Parent vs Enfant)
-        const { quantityPrincipal } = calculateBillingQuantities(properties, groups || []);
+        const { quantityPrincipal, quantityChild } = calculateBillingQuantities(properties, groups || []);
         
         // 3. Calculer le coût mensuel théorique
+        // ⚠️ IMPORTANT : Vérifiez que ces valeurs correspondent à vos tarifs Stripe réels !
         const { totalAmount: monthlyCostCents } = calculateTieredPricing(quantityPrincipal);
-        const monthlyCost = monthlyCostCents / 100; // Conversion en euros
+        
+        // ⚠️ CONFIGURATION DU PRIX DES PROPRIÉTÉS ENFANTS (Child Units)
+        // Prix fixe pour les Child Units (en centimes)
+        // Modifiez cette valeur si votre tarif pour les propriétés enfants change dans Stripe
+        const CHILD_UNIT_PRICE_CENTS = 399; // 3.99€ par unité enfant par mois
+        
+        // Calculer le coût total mensuel (Parent Units + Child Units)
+        const monthlyChildCostCents = quantityChild * CHILD_UNIT_PRICE_CENTS;
+        const totalMonthlyCostCents = monthlyCostCents + monthlyChildCostCents;
+        const monthlyCost = totalMonthlyCostCents / 100; // Conversion en euros
         
         // 4. Ramener ce coût à la période sélectionnée (Prorata)
         // ex: Si on regarde 15 jours, le coût est moitié du mois
