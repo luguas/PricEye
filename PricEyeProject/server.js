@@ -5544,6 +5544,8 @@ app.get('/api/reports/kpis', authenticateToken, async (req, res) => {
 
         // 3. Calculer le nombre de jours dans la période
         const daysInPeriod = Math.round((end - start) / (1000 * 60 * 60 * 24)) + 1; // +1 pour inclure le dernier jour
+        // Nuits totales = jours × propriétés. Les nuits "bloquées" (maintenance, indisponible) ne sont pas déduites :
+        // idéalement, soustraire les jours bloqués du total pour un taux d'occupation plus fidèle à la performance commerciale.
         const totalNightsAvailable = totalPropertiesInTeam * daysInPeriod;
 
         // 4. Interroger toutes les réservations de l'équipe qui chevauchent la période
@@ -5772,7 +5774,8 @@ app.get('/api/reports/revenue-over-time', authenticateToken, async (req, res) =>
             labels: Array.from(datesMap.keys()),
             revenueData: Array.from(datesMap.values()).map(d => d.revenue),
             nightsBookedData: Array.from(datesMap.values()).map(d => d.nightsBooked),
-            // Calculer l'offre (nuits disponibles) pour chaque jour
+            // Offre = propriétés - nuits réservées par jour. Les nuits "bloquées" (maintenance) ne sont pas déduites :
+            // pour un taux d'occupation plus fidèle, il faudrait soustraire les jours bloqués du dénominateur.
             supplyData: Array.from(datesMap.values()).map(d => totalPropertiesInTeam - d.nightsBooked)
         });
 
@@ -6310,6 +6313,7 @@ app.get('/api/reports/performance-over-time', authenticateToken, async (req, res
             dailyData.forEach((value, date) => {
                 labels.push(date);
                 bookingCounts.push(value.newBookings);
+                // Occupation = nuits réservées / (propriétés × 1 jour). Nuits bloquées non déduites.
                 const occupancy = totalPropertiesInTeam > 0 ? (value.nightsBooked / totalPropertiesInTeam) * 100 : 0;
                 occupancyRates.push(occupancy);
             });
