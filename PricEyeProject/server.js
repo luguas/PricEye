@@ -8498,24 +8498,19 @@ app.post('/api/properties/:id/pricing-strategy', authenticateToken, async (req, 
         });
 
         // =================================================================
-        // ÉTAPE D : PROPAGATION AUX GROUPES (SYNC) ET MISE À JOUR GROUPE
+        // ÉTAPE D : MISE À JOUR DU GROUPE (AUTONOME — NE PAS SE FIER AU FRONTEND)
         // =================================================================
-        
-        // 1. Identifier le groupe à mettre à jour : group_context (explicite) ou groupe dont cette propriété est la principale
-        const groupContext = req.body.group_context;
-        const groupIdFromContext = groupContext && groupContext.id ? groupContext.id : null;
-
+        // Recherche systématique en base : cette propriété est-elle la principale d'un groupe ?
         const { data: groupData, error: groupError } = await supabase
-            .from('groups') 
-            .select('*') 
+            .from('groups')
+            .select('*')
             .eq('main_property_id', id)
             .single();
 
-        const groupIdToUpdate = groupIdFromContext || (groupData ? groupData.id : null);
         let syncCount = 0;
 
-        // 2. MISE À JOUR DE LA TABLE GROUPS (last_pricing_update) — toujours si on a un groupe cible
-        if (groupIdToUpdate) {
+        if (groupData) {
+            // Un groupe existe dont cette propriété est la principale → mise à jour systématique du groupe
             const updatePayload = {
                 last_pricing_update: nowIso,
                 pricing_strategy: method,
@@ -8525,18 +8520,14 @@ app.post('/api/properties/:id/pricing-strategy', authenticateToken, async (req, 
             const { error: updateGroupError } = await supabase
                 .from('groups')
                 .update(updatePayload)
-                .eq('id', groupIdToUpdate);
+                .eq('id', groupData.id);
             if (updateGroupError) {
                 console.error("Erreur mise à jour table groups (last_pricing_update):", updateGroupError);
             } else {
-                console.log(`[Pricing] 🔄 Groupe ${groupIdToUpdate} : last_pricing_update mis à jour.`);
+                console.log(`[Pricing] 🔄 Groupe "${groupData.name}" (id=${groupData.id}) : last_pricing_update mis à jour.`);
             }
-        }
 
-        if (groupData) {
-            console.log(`[Pricing] 🔄 Mise à jour des infos du groupe "${groupData.name}"...`);
-
-            // 3. PROPAGATION AUX ENFANTS (Si la synchro est activée)
+            // PROPAGATION AUX ENFANTS (Si la synchro est activée)
             if (groupData.sync_prices) {
                 const { data: children } = await supabase
                     .from('group_members')
