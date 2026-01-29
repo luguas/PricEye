@@ -8269,12 +8269,13 @@ app.post('/api/properties/:id/pricing-strategy', authenticateToken, async (req, 
     let tokensUsed = 0;
     
     try {
-        // --- NOUVEAU BLOC : VÉRIFICATION ANTI-DOUBLON ---
+        // --- LE PORTIER : Vérification 24h (date de dernière exécution IA) ---
+        // Si l'utilisateur n'a pas forcé (bouton "Générer maintenant"), on vérifie
+        // que la dernière génération date de plus de 24h pour éviter les recalculs inutiles.
         if (!force) {
             let lastUpdate = null;
 
             if (group_context && group_context.id) {
-                // Si c'est un groupe, on vérifie la date du groupe
                 const { data: groupCheck } = await supabase
                     .from('groups')
                     .select('last_pricing_update')
@@ -8282,7 +8283,6 @@ app.post('/api/properties/:id/pricing-strategy', authenticateToken, async (req, 
                     .single();
                 lastUpdate = groupCheck?.last_pricing_update;
             } else {
-                // Sinon on vérifie la propriété
                 const { data: propCheck } = await supabase
                     .from('properties')
                     .select('last_pricing_update')
@@ -8292,14 +8292,15 @@ app.post('/api/properties/:id/pricing-strategy', authenticateToken, async (req, 
             }
 
             if (lastUpdate) {
-                const lastDate = new Date(lastUpdate).toDateString();
-                const todayDate = new Date().toDateString();
+                const lastMs = new Date(lastUpdate).getTime();
+                const nowMs = Date.now();
+                const diffHours = (nowMs - lastMs) / (1000 * 60 * 60);
 
-                if (lastDate === todayDate) {
-                    console.log(`[Pricing] ⏩ Génération ignorée : Déjà mis à jour aujourd'hui (${lastDate}).`);
+                if (diffHours < 24) {
+                    console.log(`[Pricing] ⏩ Portier : Dernière exécution il y a ${diffHours.toFixed(1)}h (< 24h). Prix déjà à jour.`);
                     return res.status(200).json({
-                        message: "Stratégie déjà à jour pour aujourd'hui.",
-                        skipped: true, // Indicateur pour le frontend
+                        message: "Succès, les prix sont déjà à jour.",
+                        skipped: true,
                         days_generated: 0
                     });
                 }
@@ -8486,12 +8487,15 @@ app.post('/api/properties/:id/pricing-strategy', authenticateToken, async (req, 
             await db.upsertPriceOverrides(id, overridesToSave);
         }
 
-        // Si le pricing automatique est activé pour cette propriété, mettre à jour auto_pricing_updated_at
-        if (property.auto_pricing_enabled) {
-            await db.updateProperty(id, {
-                auto_pricing_updated_at: new Date().toISOString()
-            });
-        }
+        // --- LE TAMPON : Horodatage sur la fiche propriété (date d'exécution du calcul) ---
+        // Toujours enregistrer last_pricing_update = maintenant après sauvegarde des prix.
+        // Profiter pour s'assurer que auto_pricing_enabled est à true (facturation).
+        const nowIso = new Date().toISOString();
+        await db.updateProperty(id, {
+            last_pricing_update: nowIso,
+            auto_pricing_updated_at: nowIso,
+            auto_pricing_enabled: true
+        });
 
         // =================================================================
         // ÉTAPE D : PROPAGATION AUX GROUPES (SYNC) ET MISE À JOUR GROUPE
