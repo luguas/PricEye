@@ -549,6 +549,13 @@ function PricingPage({ token, userProfile }) {
           return;
       }
       
+      // Valider le prix
+      const price = Number(bookingPrice);
+      if (!bookingPrice || isNaN(price) || price <= 0) {
+          setError('Dates de début/fin et prix par nuit valides sont requis.');
+          return;
+      }
+      
       // Mettre à jour la sélection avec les dates éditables
       setSelectionStart(startDate);
       setSelectionEnd(endDate);
@@ -569,8 +576,8 @@ function PricingPage({ token, userProfile }) {
           await addBooking(pid, {
               startDate: startDate,
               endDate: end.toISOString().split('T')[0],
-              pricePerNight: Number(bookingPrice),
-              totalPrice: Number(bookingPrice) * nights,
+              pricePerNight: price,
+              totalPrice: price * nights,
               channel: bookingChannel,
               bookedAt: new Date().toISOString()
           }, token);
@@ -589,6 +596,13 @@ function PricingPage({ token, userProfile }) {
       
       if (!startDate || !endDate) {
           setError(t('pricing.errors.invalidDates') || 'Veuillez sélectionner une période valide');
+          return;
+      }
+      
+      // Valider le prix
+      const price = Number(manualPrice);
+      if (!manualPrice || isNaN(price) || price <= 0) {
+          setError('Dates de début/fin et prix par nuit valides sont requis.');
           return;
       }
       
@@ -630,7 +644,7 @@ function PricingPage({ token, userProfile }) {
           let cur = new Date(startDate);
           const end = new Date(endDate);
           while(cur <= end) {
-              overrides.push({ date: cur.toISOString().split('T')[0], price: Number(manualPrice), isLocked: isPriceLocked });
+              overrides.push({ date: cur.toISOString().split('T')[0], price: price, isLocked: isPriceLocked });
               cur.setDate(cur.getDate() + 1);
           }
           await Promise.all(targets.map(pid => updatePriceOverrides(pid, overrides, token)));

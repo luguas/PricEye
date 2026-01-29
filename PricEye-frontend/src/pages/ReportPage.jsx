@@ -13,7 +13,8 @@ import {
   getRevenueVsTarget,
   getAdrByChannel,
   getGrossMargin,
-  getTeamBookings
+  getTeamBookings,
+  getMySubscriptionCost
 } from '../services/api.js';
 import { exportToExcel } from '../utils/exportUtils.js';
 import Chart from 'chart.js/auto'; 
@@ -171,6 +172,7 @@ function ReportPage({ token, userProfile }) {
   const [adrByChannelData, setAdrByChannelData] = useState(null); // Pour le graphique ADR par canal
   const [grossMarginData, setGrossMarginData] = useState(null); // Pour le graphique Marge brute (%)
   const [marketSnapshot, setMarketSnapshot] = useState(null); // Pour le bloc Analyse demande 24h (marché)
+  const [subscriptionCostEur, setSubscriptionCostEur] = useState(null); // Coût mensuel réel (backend) pour le ROI
 
   // État pour la modale d'alerte
   const [alertModal, setAlertModal] = useState({ isOpen: false, message: '', title: '' });
@@ -236,36 +238,35 @@ function ReportPage({ token, userProfile }) {
 
     const gains = kpis.iaGain || 0;
     
-    // Récupérer le prix de l'abonnement depuis le profil utilisateur
-    // Si l'utilisateur a un abonnement actif, utiliser le prix réel
-    // Sinon, utiliser une valeur par défaut basée sur le statut
+    // Priorité au coût mensuel renvoyé par GET /api/users/mon-cout-abonnement (backend)
     let monthlyCost = 0;
-    const subscriptionStatus = userProfile?.subscriptionStatus || 'none';
-    
-    if (subscriptionStatus === 'active' || subscriptionStatus === 'trialing') {
-      // Si l'utilisateur a un prix d'abonnement dans son profil, l'utiliser
-      if (userProfile?.subscriptionPrice) {
-        monthlyCost = userProfile.subscriptionPrice;
-      } else if (userProfile?.monthlyPrice) {
-        monthlyCost = userProfile.monthlyPrice;
-      } else {
-        // Valeur par défaut pour un abonnement actif (peut être ajustée selon vos tarifs)
-        // Pour l'instant, on utilise 50€/mois comme estimation
-        monthlyCost = 50;
-      }
+    if (subscriptionCostEur != null && !isNaN(Number(subscriptionCostEur))) {
+      monthlyCost = Number(subscriptionCostEur);
     } else {
-      // Pas d'abonnement actif, coût = 0
-      monthlyCost = 0;
+      // Fallback : profil utilisateur ou valeur par défaut
+      const subscriptionStatus = userProfile?.subscriptionStatus || 'none';
+      if (subscriptionStatus === 'active' || subscriptionStatus === 'trialing') {
+        if (userProfile?.subscriptionPrice !== null && userProfile?.subscriptionPrice !== undefined) {
+          monthlyCost = Number(userProfile.subscriptionPrice);
+        } else if (userProfile?.monthlyPrice !== null && userProfile?.monthlyPrice !== undefined) {
+          monthlyCost = Number(userProfile.monthlyPrice);
+        } else {
+          monthlyCost = 50;
+          console.warn('[ROI] Prix d\'abonnement non trouvé, utilisation de la valeur par défaut:', monthlyCost);
+        }
+      }
     }
     
-    // Calculer le nombre de mois dans la période sélectionnée
-    const { startDate, endDate } = getDatesFromRange(dateRange, userProfile?.timezone || 'UTC');
-    const start = new Date(startDate);
-    const end = new Date(endDate);
-    const monthsDiff = (end.getFullYear() - start.getFullYear()) * 12 + (end.getMonth() - start.getMonth()) + 1;
+    // Le coût PricEye affiché est le coût mensuel de l'abonnement (sans prorata)
+    const cost = monthlyCost;
     
-    // Coût total pour la période
-    const cost = monthlyCost * monthsDiff;
+    // Log pour débogage (voir si la source est l'API ou le fallback)
+    const costSource = subscriptionCostEur != null && !isNaN(Number(subscriptionCostEur)) ? 'API /mon-cout-abonnement' : 'fallback (profil ou 50€)';
+    console.log('[ROI] Calcul final:', {
+      monthlyCost: cost,
+      gains,
+      costSource
+    });
     
     // Calculer le ROI: (Gains / Coût) * 100
     // Si le coût est 0 (pas d'abonnement), le ROI est infini, on affiche 0 ou un message spécial
@@ -276,7 +277,7 @@ function ReportPage({ token, userProfile }) {
       cost: cost,
       gains: gains
     };
-  }, [kpis, dateRange, userProfile]);
+  }, [kpis, userProfile, subscriptionCostEur]);
 
   // Fonction utilitaire pour calculer les graduations dynamiques
   const calculateScaleConfig = (dataArray, defaultMax = null, defaultStepSize = null) => {
@@ -671,6 +672,20 @@ function ReportPage({ token, userProfile }) {
     fetchAllProperties();
   }, [fetchAllProperties]);
 
+  // Récupérer le coût mensuel réel d'abonnement (backend) pour le ROI au chargement de la page
+  useEffect(() => {
+    if (!token) return;
+    getMySubscriptionCost(token)
+      .then((data) => {
+        if (data != null && typeof data.amountEur === 'number') {
+          setSubscriptionCostEur(data.amountEur);
+        }
+      })
+      .catch((err) => {
+        console.warn('[ReportPage] Impossible de récupérer le coût abonnement:', err?.message || err);
+      });
+  }, [token]);
+
   // NOTE: Les données ADR vs Marché et Distribution prix sont maintenant chargées via getPositioningReport dans fetchKpisAndCharts
   // NOTE: Les données de prévisions et financières sont maintenant chargées via les nouveaux endpoints dans fetchKpisAndCharts
   // Ce useEffect a été supprimé car les données sont maintenant réelles et chargées depuis l'API
@@ -700,8 +715,7 @@ function ReportPage({ token, userProfile }) {
           if (status) filters.status = status;
           if (location) filters.location = location;
 
-          // 3. Appeler l'API pour les deux périodes en parallèle
-          // NOUVEAU: Récupérer aussi les bookings pour extraire les canaux uniques
+          // 3. Appeler l'API pour les deux périodes en parallèle (+ coût abonnement pour le ROI)
           const [
               currentData, 
               prevData, 
@@ -711,14 +725,14 @@ function ReportPage({ token, userProfile }) {
               perfData, 
               marketSnapshotData, 
               positioningReport,
-              // NOUVEAUX APPELS pour les prévisions et données financières
               forecastRevenueData,
               forecastScenariosData,
               forecastRadarData,
               revenueVsTargetData,
               adrByChannelData,
               grossMarginData,
-              bookingsData // NOUVEAU: Pour extraire les canaux uniques
+              bookingsData,
+              subscriptionCostData
           ] = await Promise.all([
               getReportKpis(token, currentStartDate, currentEndDate, filters),
               getReportKpis(token, prevStartDate, prevEndDate, filters),
@@ -728,17 +742,22 @@ function ReportPage({ token, userProfile }) {
               getPerformanceOverTime(token, currentStartDate, currentEndDate, filters),
               getMarketDemandSnapshot(token, userProfile.timezone || 'Europe/Paris'),
               getPositioningReport(token, currentStartDate, currentEndDate, filters),
-              // NOUVEAUX APPELS
               getForecastRevenue(token, currentStartDate, currentEndDate, 4, filters),
               getForecastScenarios(token, currentStartDate, currentEndDate, 4, filters),
               getForecastRadar(token, currentStartDate, currentEndDate, null, filters),
               getRevenueVsTarget(token, currentStartDate, currentEndDate, filters),
               getAdrByChannel(token, currentStartDate, currentEndDate, filters),
               getGrossMargin(token, currentStartDate, currentEndDate, filters),
-              getTeamBookings(token, currentStartDate, currentEndDate, filters) // NOUVEAU: Pour extraire les canaux
+              getTeamBookings(token, currentStartDate, currentEndDate, filters),
+              getMySubscriptionCost(token).catch(() => null)
           ]);
 
-          // NOUVEAU: Mettre à jour les bookings pour extraire les canaux
+          // Coût mensuel réel (route /api/users/mon-cout-abonnement) pour le ROI
+          const costEur = subscriptionCostData?.amountEur;
+          if (costEur != null && !isNaN(Number(costEur))) {
+            setSubscriptionCostEur(Number(costEur));
+          }
+
           if (bookingsData && Array.isArray(bookingsData)) {
             setAllBookings(bookingsData);
           }

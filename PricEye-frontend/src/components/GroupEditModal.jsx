@@ -64,7 +64,7 @@ function GroupEditModal({ token, onClose, onSave, group, properties, userProfile
 
   // État stratégie
   const [strategyData, setStrategyData] = useState({
-    strategy: t('strategyModal.balanced'),
+    strategy: group?.strategy || (group?._strategy_raw?.strategy) || 'Équilibré',
     floor_price: '',
     base_price: '',
     ceiling_price: '',
@@ -93,8 +93,13 @@ function GroupEditModal({ token, onClose, onSave, group, properties, userProfile
       setPropertiesInGroupIds(group.properties || []);
 
       // Initialiser la stratégie
+      // La stratégie peut être dans group.strategy (aplatie) ou dans group._strategy_raw.strategy (JSONB brut)
+      const strategyName = group.strategy || 
+                          (group._strategy_raw && typeof group._strategy_raw === 'object' ? group._strategy_raw.strategy : null) ||
+                          'Équilibré'; // Valeur par défaut (pas la traduction, mais la valeur réelle)
+      
       setStrategyData({
-        strategy: group.strategy || t('strategyModal.balanced'),
+        strategy: strategyName,
         floor_price: group.floor_price != null ? String(group.floor_price) : '',
         base_price: group.base_price != null ? String(group.base_price) : '',
         ceiling_price: group.ceiling_price != null ? String(group.ceiling_price) : '',
@@ -128,13 +133,17 @@ function GroupEditModal({ token, onClose, onSave, group, properties, userProfile
         main_property_id: mainPropertyId  // Snake_case pour la DB
       }, token);
 
-      // 2. Mettre à jour la stratégie
-      if (strategyData.floor_price && strategyData.base_price) {
+      // 2. Mettre à jour la stratégie (nom + prix si fournis)
+      // Envoyer la mise à jour si le nom de la stratégie a changé OU si des prix ont été renseignés
+      const strategyNameChanged = strategyData.strategy && strategyData.strategy !== (group?.strategy || (group?._strategy_raw?.strategy) || 'Équilibré');
+      const hasPriceData = strategyData.floor_price !== '' || strategyData.base_price !== '' || strategyData.ceiling_price !== '';
+      
+      if (strategyNameChanged || hasPriceData) {
         await updateGroupStrategy(group.id, {
           strategy: strategyData.strategy,
-          floor_price: parseInt(strategyData.floor_price, 10),
-          base_price: parseInt(strategyData.base_price, 10),
-          ceiling_price: strategyData.ceiling_price ? parseInt(strategyData.ceiling_price, 10) : null,
+          floor_price: strategyData.floor_price !== '' ? parseFloat(strategyData.floor_price) : null,
+          base_price: strategyData.base_price !== '' ? parseFloat(strategyData.base_price) : null,
+          ceiling_price: strategyData.ceiling_price !== '' ? parseFloat(strategyData.ceiling_price) : null,
         }, token);
       }
 

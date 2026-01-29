@@ -229,6 +229,16 @@ export function getUserProfile(token) {
   return apiRequest('/api/users/profile', { token });
 }
 
+/**
+ * Récupère le coût mensuel réel de l'abonnement pour l'utilisateur connecté.
+ * Utilise le calcul backend (paliers, groupes, activation IA) pour un montant exact.
+ * @param {string} token - Jeton d'authentification
+ * @returns {Promise<{ amountEur: number, quantityPrincipal: number, quantityChild: number }>}
+ */
+export function getMySubscriptionCost(token) {
+  return apiRequest('/api/users/mon-cout-abonnement', { token });
+}
+
 export function updateUserProfile(profileData, token) {
   return apiRequest('/api/users/profile', {
     method: 'PUT',
