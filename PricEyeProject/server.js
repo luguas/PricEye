@@ -565,61 +565,38 @@ function calculateTieredPricing(quantityPrincipal) {
 }
 
 /**
- * Calcule les quantités de facturation pour un utilisateur basées sur ses propriétés et groupes.
+ * Calcule les quantités facturables pour un utilisateur basées sur TOUTES ses propriétés et groupes.
  * 
- * NOUVELLE LOGIQUE EN 3 ÉTAPES (basée sur l'état "Activé/Désactivé") :
+ * LOGIQUE : Toutes les propriétés sont comptées, indépendamment de l'activation du pricing automatique.
  * 
- * 1. PRIORITÉ AUX GROUPES ACTIFS (Le "Tarif Famille")
- *    - Vérifie si "Pricing Automatique" (sync_prices) est activé au niveau du groupe
- *    - Si OUI : Première propriété = Principale, autres = Enfants (marquées comme "traitées")
- *    - Si NON : Le groupe est ignoré, propriétés passent à l'étape 2
+ * 1. GROUPES (Le "Tarif Famille")
+ *    - Traite TOUS les groupes (sans vérifier l'activation)
+ *    - Première propriété = Principale, autres = Enfants
  * 
  * 2. PROPRIÉTÉS INDIVIDUELLES (Le "Tarif Solo")
- *    - Pour les propriétés non traitées (sans groupe actif ou groupe inactif)
- *    - Vérifie si "Pricing Automatique" (auto_pricing_enabled) est activé individuellement
- *    - Si OUI : Propriété = Principale (fonctionne en autonomie)
- *    - Si NON : Propriété inactive (coût 0)
+ *    - Traite TOUTES les propriétés non incluses dans un groupe
+ *    - Chaque propriété = Principale (fonctionne en autonomie)
  * 
- * 3. EXCLUSION (Coût Zéro)
- *    - Propriétés ni dans un groupe actif ni activées individuellement = coût 0€
- * 
- * @param {Array} userProperties - Liste des propriétés de l'utilisateur (avec auto_pricing_enabled)
- * @param {Array} userGroups - Liste des groupes de l'utilisateur (avec sync_prices et propriétés incluses)
+ * @param {Array} userProperties - Liste de toutes les propriétés de l'utilisateur
+ * @param {Array} userGroups - Liste de tous les groupes de l'utilisateur
  * @returns {Object} - { quantityPrincipal, quantityChild }
  */
 function calculateBillingQuantities(userProperties, userGroups) {
     let quantityPrincipal = 0; 
     let quantityChild = 0;     
 
-    // Set pour marquer les propriétés déjà traitées (dans un groupe actif)
-    const processedProperties = new Set();
+    // Set pour éviter de compter une propriété deux fois
+    const processedPropertyIds = new Set();
     
-    // Créer un Map pour accéder rapidement aux propriétés par ID
-    const propertiesMap = new Map();
-    userProperties.forEach(prop => {
-        const propId = typeof prop === 'string' ? prop : (prop.id || prop.property_id);
-        if (propId) {
-            propertiesMap.set(propId, typeof prop === 'string' ? {} : prop);
-        }
-    });
-    
-    // ÉTAPE 1 : Priorité aux Groupes Actifs (Le "Tarif Famille")
+    // --- ÉTAPE 1 : Traiter TOUS les Groupes ---
     userGroups.forEach(group => {
-        // Vérifier si le "Pricing Automatique" est activé au niveau du groupe
-        const syncPrices = group.sync_prices || group.syncPrices || false;
-        
-        if (!syncPrices) {
-            // Groupe inactif : ignorer pour l'instant, les propriétés passeront à l'étape 2
-            return;
-        }
-        
         const groupProperties = group.properties || [];
         
         if (groupProperties.length === 0) {
             return; // Groupe vide, ignorer
         }
         
-        // Convertir toutes les propriétés en IDs
+        // Normaliser les IDs
         const groupPropertyIds = groupProperties.map(prop => {
             return typeof prop === 'string' ? prop : (prop.id || prop.property_id);
         }).filter(Boolean);
@@ -628,56 +605,37 @@ function calculateBillingQuantities(userProperties, userGroups) {
             return; // Aucune propriété valide dans le groupe
         }
         
-        // Identifier la propriété principale du groupe
+        // Identifier la propriété principale
         const mainPropertyId = group.mainPropertyId || group.main_property_id;
-        let principalPropertyId;
         
+        // Déterminer la principale (par défaut la première si non définie)
+        let principalId = groupPropertyIds[0];
         if (mainPropertyId && groupPropertyIds.includes(mainPropertyId)) {
-            principalPropertyId = mainPropertyId;
-        } else {
-            // Fallback : utiliser la première propriété
-            principalPropertyId = groupPropertyIds[0];
+            principalId = mainPropertyId;
         }
+
+        // 1. Compter la Propriété Principale (Tarif Plein)
+        quantityPrincipal += 1;
+        processedPropertyIds.add(principalId);
         
-        // Compter la propriété principale comme PROPRIÉTÉ PRINCIPALE (tarif plein)
-        if (principalPropertyId) {
-            quantityPrincipal += 1;
-            processedProperties.add(principalPropertyId);
-        }
+        // 2. Compter les Enfants (Tarif Réduit)
+        const childIds = groupPropertyIds.filter(id => id !== principalId);
+        quantityChild += childIds.length;
         
-        // Compter les autres propriétés du groupe comme PROPRIÉTÉS ENFANTS (tarif réduit)
-        const childPropertyIds = groupPropertyIds.filter(id => id !== principalPropertyId);
-        quantityChild += childPropertyIds.length;
-        
-        // Marquer toutes les propriétés du groupe comme "traitées"
-        groupPropertyIds.forEach(propId => {
-            processedProperties.add(propId);
-        });
+        // Marquer toutes les propriétés du groupe comme traitées
+        groupPropertyIds.forEach(id => processedPropertyIds.add(id));
     });
 
-    // ÉTAPE 2 : Propriétés Individuelles (Le "Tarif Solo")
-    // Traiter uniquement les propriétés non traitées à l'étape 1
-    userProperties.forEach(prop => {
-        const propId = typeof prop === 'string' ? prop : (prop.id || prop.property_id);
+    // --- ÉTAPE 2 : Traiter TOUTES les Propriétés Individuelles (non dans un groupe) ---
+    userProperties.forEach(p => {
+        const propId = typeof p === 'string' ? p : (p.id || p.property_id);
         
-        if (!propId || processedProperties.has(propId)) {
-            return; // Propriété déjà traitée ou ID invalide
-        }
-        
-        // Vérifier si le "Pricing Automatique" est activé individuellement
-        const autoPricingEnabled = prop.auto_pricing_enabled || prop.autoPricingEnabled || false;
-        
-        if (autoPricingEnabled) {
-            // Propriété activée individuellement = PROPRIÉTÉ PRINCIPALE (tarif plein)
+        // Si la propriété n'a pas été traitée via un groupe
+        if (propId && !processedPropertyIds.has(propId)) {
+            // Toutes les propriétés individuelles comptent comme Principales
             quantityPrincipal += 1;
-            processedProperties.add(propId);
         }
-        // Si non activée : propriété inactive (coût 0), on ne fait rien
     });
-
-    // ÉTAPE 3 : Exclusion (Coût Zéro)
-    // Les propriétés qui ne sont ni dans un groupe actif ni activées individuellement
-    // ne sont pas comptées (déjà géré par la logique ci-dessus)
 
     return { quantityPrincipal, quantityChild };
 }
