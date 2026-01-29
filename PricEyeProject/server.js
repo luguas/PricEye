@@ -8501,36 +8501,40 @@ app.post('/api/properties/:id/pricing-strategy', authenticateToken, async (req, 
         // ÉTAPE D : PROPAGATION AUX GROUPES (SYNC) ET MISE À JOUR GROUPE
         // =================================================================
         
-        // 1. Chercher si c'est une propriété principale de groupe
+        // 1. Identifier le groupe à mettre à jour : group_context (explicite) ou groupe dont cette propriété est la principale
+        const groupContext = req.body.group_context;
+        const groupIdFromContext = groupContext && groupContext.id ? groupContext.id : null;
+
         const { data: groupData, error: groupError } = await supabase
             .from('groups') 
             .select('*') 
             .eq('main_property_id', id)
             .single();
 
+        const groupIdToUpdate = groupIdFromContext || (groupData ? groupData.id : null);
         let syncCount = 0;
 
-        if (groupData) {
-            console.log(`[Pricing] 🔄 Mise à jour des infos du groupe "${groupData.name}"...`);
-
-            // 2. MISE À JOUR DE LA TABLE GROUPS
-            // On enregistre la date, la stratégie utilisée et le résumé
+        // 2. MISE À JOUR DE LA TABLE GROUPS (last_pricing_update) — toujours si on a un groupe cible
+        if (groupIdToUpdate) {
             const updatePayload = {
-                last_pricing_update: new Date().toISOString(),
-                pricing_strategy: method, // 'deterministic' ou 'ai_hybrid'
+                last_pricing_update: nowIso,
+                pricing_strategy: method,
                 strategy_summary: aiSummary || "Mise à jour automatique",
-                // CORRECTION ICI : Utilisation du nom de colonne 'auto_pricing_enabled'
-                auto_pricing_enabled: true 
+                auto_pricing_enabled: true
             };
-
             const { error: updateGroupError } = await supabase
                 .from('groups')
                 .update(updatePayload)
-                .eq('id', groupData.id);
-
+                .eq('id', groupIdToUpdate);
             if (updateGroupError) {
-                console.error("Erreur mise à jour table groups:", updateGroupError);
+                console.error("Erreur mise à jour table groups (last_pricing_update):", updateGroupError);
+            } else {
+                console.log(`[Pricing] 🔄 Groupe ${groupIdToUpdate} : last_pricing_update mis à jour.`);
             }
+        }
+
+        if (groupData) {
+            console.log(`[Pricing] 🔄 Mise à jour des infos du groupe "${groupData.name}"...`);
 
             // 3. PROPAGATION AUX ENFANTS (Si la synchro est activée)
             if (groupData.sync_prices) {
