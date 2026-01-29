@@ -8449,14 +8449,38 @@ app.post('/api/properties/:id/pricing-strategy', authenticateToken, async (req, 
             // (Insérer ici logique d'annulation quota si nécessaire)
         }
 
-        // 4. Sauvegarde en base
-        const overridesToSave = finalCalendar.map(day => ({
-            date: day.date,
-            price: day.price,
-            reason: day.reason,
-            isLocked: false,
-            updatedBy: userId
-        }));
+        // 4. Sauvegarde en base — PROTECTION DES PRIX VERROUILLÉS (LOCK)
+        const { data: lockedPrices } = await supabase
+            .from('price_overrides')
+            .select('date, price, is_locked')
+            .eq('property_id', id)
+            .eq('is_locked', true)
+            .gte('date', today)
+            .lte('date', endDateStr);
+
+        const lockedMap = new Map();
+        if (lockedPrices) {
+            lockedPrices.forEach(p => lockedMap.set(p.date, p.price));
+        }
+
+        const overridesToSave = finalCalendar.map(day => {
+            if (lockedMap.has(day.date)) {
+                return {
+                    date: day.date,
+                    price: lockedMap.get(day.date),
+                    reason: 'Prix verrouillé manuellement',
+                    isLocked: true,
+                    updatedBy: userId
+                };
+            }
+            return {
+                date: day.date,
+                price: day.price,
+                reason: day.reason,
+                isLocked: false,
+                updatedBy: userId
+            };
+        });
 
         if (overridesToSave.length > 0) {
             await db.upsertPriceOverrides(id, overridesToSave);
@@ -11926,15 +11950,15 @@ app.put('/api/properties/:id/price-overrides', authenticateToken, async (req, re
             return res.status(403).send({ error: 'Action non autorisée.' });
         }
 
-        // Préparer les données pour Supabase
+        // Préparer les données pour Supabase (isLocked/updatedBy = clés attendues par le helper)
         const overridesToUpsert = overrides
             .filter(override => override.date)
             .map(override => ({
                 date: override.date,
                 price: Number(override.price),
-                is_locked: override.isLocked !== undefined ? Boolean(override.isLocked) : false,
+                isLocked: override.isLocked === true,
                 reason: 'Manuel',
-                updated_by: userId
+                updatedBy: userId
             }));
 
         // Utiliser le helper pour upsert les price overrides
