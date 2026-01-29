@@ -1131,6 +1131,43 @@ app.get('/api/users/profile', authenticateToken, async (req, res) => {
     }
 });
 
+/**
+ * GET /api/users/mon-cout-abonnement
+ * Retourne le coût mensuel réel de l'abonnement pour l'utilisateur connecté,
+ * calculé à partir de ses propriétés, groupes et de la grille tarifaire (paliers + enfants).
+ * Utilisé par le frontend (ex: graphique ROI) pour afficher un coût exact au lieu d'une estimation.
+ */
+app.get('/api/users/mon-cout-abonnement', authenticateToken, async (req, res) => {
+    try {
+        const userId = req.user.uid;
+        const userProfile = await db.getUser(userId);
+        if (!userProfile) {
+            return res.status(404).json({ error: 'Profil utilisateur non trouvé.' });
+        }
+
+        const teamId = userProfile.team_id || userId;
+        const userProperties = await db.getPropertiesByTeam(teamId);
+        const userGroups = await db.getGroupsByOwner(userId);
+
+        const quantities = calculateBillingQuantities(userProperties || [], userGroups || []);
+        const { totalAmount: principalCents } = calculateTieredPricing(quantities.quantityPrincipal);
+
+        const CHILD_UNIT_PRICE_CENTS = 399; // 3.99€ par unité enfant par mois
+        const childCents = quantities.quantityChild * CHILD_UNIT_PRICE_CENTS;
+        const totalCents = principalCents + childCents;
+        const amountEur = Math.round(totalCents) / 100;
+
+        res.status(200).json({
+            amountEur,
+            quantityPrincipal: quantities.quantityPrincipal,
+            quantityChild: quantities.quantityChild
+        });
+    } catch (error) {
+        console.error('[mon-cout-abonnement] Erreur:', error);
+        res.status(500).json({ error: 'Erreur lors du calcul du coût d\'abonnement.', details: error.message });
+    }
+});
+
 // GET /api/users/ai-quota - Récupérer le quota IA de l'utilisateur
 /**
  * GET /api/users/injection-stats - Récupère les statistiques de monitoring des injections pour l'utilisateur
