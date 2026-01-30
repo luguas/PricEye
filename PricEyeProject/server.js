@@ -8574,6 +8574,260 @@ app.post('/api/properties/:id/pricing-strategy', authenticateToken, async (req, 
     }
 });
 
+// POST /api/groups/:id/pricing-strategy - Pricer un groupe avec les règles du groupe et les caractéristiques de la propriété principale
+app.post('/api/groups/:id/pricing-strategy', authenticateToken, async (req, res) => {
+    const groupId = req.params.id;
+    const userId = req.user.uid;
+    const userEmail = req.user.email;
+    const { force } = req.body || {};
+    let tokensUsed = 0;
+
+    try {
+        const group = await db.getGroup(groupId);
+        if (!group) return res.status(404).json({ error: 'Groupe non trouvé.' });
+        if (group.owner_id !== userId) return res.status(403).json({ error: 'Action non autorisée sur ce groupe.' });
+
+        const mainPropertyId = group.main_property_id || group.mainPropertyId;
+        if (!mainPropertyId) return res.status(400).json({ error: 'Ce groupe n\'a pas de propriété principale définie.' });
+
+        const property = await db.getProperty(mainPropertyId);
+        if (!property) return res.status(404).json({ error: 'Propriété principale du groupe non trouvée.' });
+
+        // Portier : vérification last_pricing_update du groupe (pas de la propriété)
+        if (!force) {
+            const lastUpdate = group.last_pricing_update;
+            if (lastUpdate) {
+                const lastMs = new Date(lastUpdate).getTime();
+                const diffHours = (Date.now() - lastMs) / (1000 * 60 * 60);
+                if (diffHours < 24) {
+                    console.log(`[Pricing Groupe] ⏩ Portier : Dernière exécution il y a ${diffHours.toFixed(1)}h (< 24h).`);
+                    return res.status(200).json({
+                        message: "Succès, les prix du groupe sont déjà à jour.",
+                        skipped: true,
+                        days_generated: 0
+                    });
+                }
+            }
+        }
+
+        // Contexte de pricing : caractéristiques de la propriété principale + règles/stratégie du groupe
+        const groupStrategy = group._strategy_raw || group.strategy;
+        const groupRules = group._rules_raw || group.rules;
+        const strategyName = (typeof groupStrategy === 'object' && groupStrategy?.strategy) ? groupStrategy.strategy : (groupStrategy || group.strategy || 'Équilibré');
+        const floorPrice = (groupStrategy && typeof groupStrategy === 'object' && groupStrategy.floor_price != null) ? groupStrategy.floor_price : (property.floor_price ?? property.base_price * 0.7);
+        const basePrice = (groupStrategy && typeof groupStrategy === 'object' && groupStrategy.base_price != null) ? groupStrategy.base_price : property.base_price;
+        const ceilingPrice = (groupStrategy && typeof groupStrategy === 'object' && groupStrategy.ceiling_price != null) ? groupStrategy.ceiling_price : (property.ceiling_price ?? property.base_price * 3);
+        const weekendMarkup = (groupRules && typeof groupRules === 'object' && groupRules.weekend_markup_percent != null) ? groupRules.weekend_markup_percent : (groupRules?.markup ?? property.weekend_markup_percent ?? 15);
+
+        const pricingProperty = {
+            ...property,
+            id: mainPropertyId,
+            strategy: strategyName,
+            floor_price: Number(floorPrice) || Math.round(basePrice * 0.7),
+            base_price: Number(basePrice) || 100,
+            ceiling_price: Number(ceilingPrice) || Math.round(basePrice * 3),
+            weekend_markup_percent: Number(weekendMarkup) ?? 15
+        };
+
+        const today = new Date().toISOString().split('T')[0];
+        const endDate = new Date();
+        endDate.setDate(endDate.getDate() + 180);
+        const endDateStr = endDate.toISOString().split('T')[0];
+        const city = property.location?.split(',')[0].trim() || '';
+        const country = property.country || 'FR';
+
+        const deterministicPricing = require('./utils/deterministic_pricing');
+        console.log(`[Pricing Groupe] 1. Calcul du socle déterministe (règles groupe + prop principale)...`);
+        const deterministicCalendar = await deterministicPricing.generateDeterministicPricingCalendar({
+            property: pricingProperty,
+            startDate: today,
+            endDate: endDateStr,
+            city,
+            country
+        });
+
+        let finalCalendar = [];
+        let method = 'deterministic';
+        let aiSummary = '';
+
+        try {
+            console.log(`[Pricing Groupe] 2. Appel de l'IA pour optimisation...`);
+            const sampleBasePrice = deterministicCalendar[0]?.price || pricingProperty.base_price;
+            const language = property.language || 'fr';
+            const prompt = `
+            CONTEXTE:
+            Tu es un expert Revenue Manager. Je vais te fournir un calendrier de prix de base calculé mathématiquement (saisonnalité simple).
+            Ta mission est d'optimiser ces prix en fonction de la demande réelle, des événements à ${city} et de la psychologie.
+
+            DONNÉES:
+            - Propriété: ${property.name} (${property.property_type}, ${property.capacity} pers) à ${city}.
+            - Prix de Base Mathématique (Moyenne): ${sampleBasePrice}€
+            - Stratégie du groupe: ${strategyName}
+
+            INSTRUCTIONS:
+            Génère une liste de prix optimisés pour les 180 prochains jours.
+            - Si un événement majeur a lieu à ${city}, augmente fortement le prix (+50% à +200%).
+            - Si c'est une période creuse, baisse légèrement pour attirer (-10%).
+            - Garde la logique Week-end (plus cher) sauf si demande très faible.
+
+            FORMAT DE RÉPONSE ATTENDU (JSON PUR, pas de texte):
+            {
+                "market_sentiment": "Court résumé de la tendance (ex: Forte demande due aux JO)",
+                "calendar": [
+                    { "date": "YYYY-MM-DD", "price": 120, "reason": "Weekend + Concert" }
+                ]
+            }
+            `;
+            const aiResponseRaw = await callGeminiWithSearch(prompt, 10, language);
+            let aiResponse;
+            if (aiResponseRaw && typeof aiResponseRaw === 'object' && 'data' in aiResponseRaw) {
+                aiResponse = aiResponseRaw.data;
+                tokensUsed = aiResponseRaw.tokens || 1000;
+            } else {
+                aiResponse = aiResponseRaw;
+                tokensUsed = 1000;
+            }
+
+            if (aiResponse && aiResponse.calendar) {
+                console.log(`[Pricing Groupe] ✓ IA Réussie. Fusion des stratégies.`);
+                const aiMap = new Map(aiResponse.calendar.map(d => [d.date, d]));
+                const minP = pricingProperty.floor_price || 0;
+                const maxP = pricingProperty.ceiling_price || 9999;
+                finalCalendar = deterministicCalendar.map(detDay => {
+                    const aiDay = aiMap.get(detDay.date);
+                    let finalPrice = detDay.price;
+                    let reason = detDay.reasoning;
+                    if (aiDay) {
+                        finalPrice = aiDay.price;
+                        reason = `IA: ${aiDay.reason}`;
+                    }
+                    if (finalPrice < minP) { finalPrice = minP; reason += " (Plancher)"; }
+                    if (finalPrice > maxP) { finalPrice = maxP; reason += " (Plafond)"; }
+                    return { date: detDay.date, price: Math.round(finalPrice), reason };
+                });
+                method = 'ai_hybrid';
+                aiSummary = aiResponse.market_sentiment || '';
+            } else {
+                throw new Error("Format réponse IA invalide");
+            }
+        } catch (aiError) {
+            console.warn(`[Pricing Groupe] ⚠️ Échec IA (${aiError.message}). Repli sur le déterministe.`);
+            finalCalendar = deterministicCalendar.map(d => ({
+                date: d.date,
+                price: d.price,
+                reason: d.reasoning || "Prix calculé (Algorithme)"
+            }));
+        }
+
+        const { data: lockedPrices } = await supabase
+            .from('price_overrides')
+            .select('date, price, is_locked')
+            .eq('property_id', mainPropertyId)
+            .eq('is_locked', true)
+            .gte('date', today)
+            .lte('date', endDateStr);
+        const lockedMap = new Map((lockedPrices || []).map(p => [p.date, p.price]));
+
+        const overridesToSave = finalCalendar.map(day => {
+            if (lockedMap.has(day.date)) {
+                return {
+                    date: day.date,
+                    price: lockedMap.get(day.date),
+                    reason: 'Prix verrouillé manuellement',
+                    isLocked: true,
+                    updatedBy: userId
+                };
+            }
+            return {
+                date: day.date,
+                price: day.price,
+                reason: day.reason,
+                isLocked: false,
+                updatedBy: userId
+            };
+        });
+
+        if (overridesToSave.length > 0) {
+            await db.upsertPriceOverrides(mainPropertyId, overridesToSave);
+        }
+
+        const nowIso = new Date().toISOString();
+
+        // Mise à jour directe du groupe : last_pricing_update (et stratégie) dans la table groups
+        const updatePayload = {
+            last_pricing_update: nowIso,
+            pricing_strategy: method,
+            strategy_summary: aiSummary || "Mise à jour automatique",
+            auto_pricing_enabled: true
+        };
+        const { error: updateGroupError } = await supabase
+            .from('groups')
+            .update(updatePayload)
+            .eq('id', groupId);
+        if (updateGroupError) {
+            console.error("[Pricing Groupe] Erreur mise à jour table groups (last_pricing_update):", updateGroupError);
+        } else {
+            console.log(`[Pricing Groupe] 🔄 Groupe "${group.name}" (id=${groupId}) : last_pricing_update mis à jour.`);
+        }
+
+        // Mise à jour de la propriété principale (horodatage)
+        await db.updateProperty(mainPropertyId, {
+            last_pricing_update: nowIso,
+            auto_pricing_updated_at: nowIso,
+            auto_pricing_enabled: true
+        });
+
+        let syncCount = 0;
+        if (group.sync_prices || group.syncPrices) {
+            const { data: memberRows } = await supabase
+                .from('group_properties')
+                .select('property_id')
+                .eq('group_id', groupId);
+            const memberIds = (memberRows || []).map(r => r.property_id).filter(pid => pid !== mainPropertyId);
+            if (memberIds.length > 0) {
+                const bulkOverrides = [];
+                for (const pid of memberIds) {
+                    overridesToSave.forEach(day => {
+                        bulkOverrides.push({
+                            property_id: pid,
+                            date: day.date,
+                            price: day.price,
+                            reason: day.reason || 'Manuel',
+                            is_locked: day.isLocked || false,
+                            updated_by: userId
+                        });
+                    });
+                }
+                if (bulkOverrides.length > 0) {
+                    const { error: syncError } = await supabase
+                        .from('price_overrides')
+                        .upsert(bulkOverrides, { onConflict: 'property_id,date' });
+                    if (syncError) console.error("[Pricing Groupe] Erreur sync membres:", syncError);
+                    else syncCount = memberIds.length;
+                }
+                for (const pid of memberIds) {
+                    await db.updateProperty(pid, {
+                        last_pricing_update: nowIso,
+                        auto_pricing_updated_at: nowIso,
+                        auto_pricing_enabled: true
+                    }).catch(() => {});
+                }
+            }
+        }
+
+        res.status(200).json({
+            strategy_summary: aiSummary || "Stratégie algorithmique standard",
+            daily_prices: finalCalendar,
+            method,
+            days_generated: finalCalendar.length,
+            synced_properties: syncCount
+        });
+    } catch (error) {
+        console.error("Erreur critique pricing groupe:", error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
 /**
  * POST /api/pricing/recommend
  * Retourne un prix recommandé par le moteur de pricing IA pour une propriété / date donnée.
