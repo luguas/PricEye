@@ -970,15 +970,14 @@ export async function createPortalSession(token) {
 }
 
 /**
- * Applique une stratégie de pricing à une propriété (avec support des groupes)
- * @param {string} propertyId - ID de la propriété principale
- * @param {object|null} groupContext - Contexte du groupe si c'est une synchronisation de groupe
+ * Applique une stratégie de pricing à une propriété
+ * @param {string} propertyId - ID de la propriété
+ * @param {object|null} groupContext - Contexte du groupe (ignoré si on utilise applyGroupPricingStrategy pour un groupe)
  * @param {string} token - Jeton d'authentification
  * @param {boolean} force - Force la génération même si une stratégie existe déjà
  * @returns {Promise<{strategy_summary: string, daily_prices: Array, method: string, days_generated: number, synced_properties?: number}>}
  */
 export const applyPricingStrategy = async (propertyId, groupContext = null, token, force = false) => {
-  // Utiliser API_BASE_URL défini en haut du fichier
   const authToken = token || globalAuthToken || localStorage.getItem('authToken');
 
   const response = await fetch(`${API_BASE_URL}/api/properties/${propertyId}/pricing-strategy`, {
@@ -989,8 +988,8 @@ export const applyPricingStrategy = async (propertyId, groupContext = null, toke
     },
     body: JSON.stringify({
       useMarketData: true,
-      group_context: groupContext, // On passe les infos du groupe si c'est une synchro
-      force: force // Force la génération
+      group_context: groupContext,
+      force: force
     }),
   });
 
@@ -998,9 +997,41 @@ export const applyPricingStrategy = async (propertyId, groupContext = null, toke
 
   if (!response.ok) {
     const error = new Error(data.error || data.message || 'Erreur lors de la génération de la stratégie');
-    // On marque l'erreur si c'est un problème de quota pour l'interface
     if (response.status === 402 || data.code === 'QUOTA_EXCEEDED') {
         error.isQuotaExceeded = true;
+    }
+    throw error;
+  }
+
+  return data;
+};
+
+/**
+ * Applique une stratégie de pricing à un groupe : utilise les règles du groupe et les caractéristiques
+ * de la propriété principale, propage les prix aux membres et met à jour last_pricing_update sur le groupe.
+ * @param {string} groupId - ID du groupe
+ * @param {string} token - Jeton d'authentification
+ * @param {boolean} force - Force la génération même si déjà à jour (< 24h)
+ * @returns {Promise<{strategy_summary: string, daily_prices: Array, method: string, days_generated: number, synced_properties?: number}>}
+ */
+export const applyGroupPricingStrategy = async (groupId, token, force = false) => {
+  const authToken = token || globalAuthToken || localStorage.getItem('authToken');
+
+  const response = await fetch(`${API_BASE_URL}/api/groups/${groupId}/pricing-strategy`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${authToken}`,
+    },
+    body: JSON.stringify({ force }),
+  });
+
+  const data = await response.json();
+
+  if (!response.ok) {
+    const error = new Error(data.error || data.message || 'Erreur lors de la génération de la stratégie du groupe');
+    if (response.status === 402 || data.code === 'QUOTA_EXCEEDED') {
+      error.isQuotaExceeded = true;
     }
     throw error;
   }

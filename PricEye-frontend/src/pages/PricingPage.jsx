@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { getProperties, getGroups, addBooking, getBookingsForMonth, getAutoPricingStatus, enableAutoPricing, getPriceOverrides, updatePriceOverrides, applyPricingStrategy, getPropertyAutoPricingStatus, enablePropertyAutoPricing, getGroupAutoPricingStatus, enableGroupAutoPricing } from '../services/api.js';
+import { getProperties, getGroups, addBooking, getBookingsForMonth, getAutoPricingStatus, enableAutoPricing, getPriceOverrides, updatePriceOverrides, applyPricingStrategy, applyGroupPricingStrategy, getPropertyAutoPricingStatus, enablePropertyAutoPricing, getGroupAutoPricingStatus, enableGroupAutoPricing } from '../services/api.js';
 import { jwtDecode } from 'jwt-decode'; 
 import Bouton from '../components/Bouton.jsx';
 import AlertModal from '../components/AlertModal.jsx';
@@ -357,13 +357,11 @@ function PricingPage({ token, userProfile }) {
   // Ajoutez le paramètre 'isManualClick' par défaut à true
   const handleGenerateStrategy = async (isManualClick = true) => {
     let targetId = selectedId;
-    let groupContext = null;
+    const isGroup = selectedView === 'group';
 
-    if (selectedView === 'group') {
+    if (isGroup) {
         const group = allGroups.find(g => String(g.id) === String(selectedId));
-        targetId = group?.main_property_id; // Utiliser uniquement le format Supabase
-        groupContext = group;
-        if (!targetId) {
+        if (!group?.main_property_id) {
              setAlertModal({ isOpen: true, message: t('pricing.errors.noMainProperty'), title: t('pricing.modal.attention') });
              return;
         }
@@ -380,10 +378,11 @@ function PricingPage({ token, userProfile }) {
 
     setIaLoading(true);
     try {
-      // ON PASSE 'isManualClick' COMME PARAMÈTRE 'FORCE'
-      // Si c'est un clic manuel -> true (on force le recalcul)
-      // Si ça vient du toggle auto -> false (on vérifie la date)
-      const result = await applyPricingStrategy(targetId, groupContext, token, isManualClick);
+      // Groupe : endpoint dédié (règles du groupe + prop principale, last_pricing_update sur le groupe)
+      // Propriété : endpoint propriété
+      const result = isGroup
+        ? await applyGroupPricingStrategy(selectedId, token, isManualClick)
+        : await applyPricingStrategy(targetId, null, token, isManualClick);
       
       if (result.skipped) {
           // Si le portier a refusé (dernière exécution < 24h)
