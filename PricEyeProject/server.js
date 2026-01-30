@@ -71,10 +71,8 @@ console.log('✅ Configuration Stripe chargée avec succès');
 const allowedOrigins = [
     'https://priceye.onrender.com',    // L'API elle-même
     'http://localhost:5173',           // Votre app React en local (Vite dev)
-    'http://localhost:4173',           // Votre app React en local (Vite preview)
-    'http://localhost:3000',
-    'https://priceye.vercel.app',
-    'https://pric-eye.vercel.app'           // Votre app React en local (CRA)
+    'http://localhost:4173',      
+    'https://app.priceye-ai.com',     // Votre app React en local (Vite preview)        // Votre app React en local (CRA)
     // 'https://votre-frontend-sur-vercel.app' // << AJOUTEZ L'URL DE VOTRE FRONTEND DÉPLOYÉ ICI
 ];
 
