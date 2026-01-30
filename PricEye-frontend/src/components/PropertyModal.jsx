@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { addProperty, updateProperty, syncPropertyData } from '../services/api.js';
+import { addProperty, updateProperty, syncPropertyData, getProperties } from '../services/api.js';
 import { useLanguage } from '../contexts/LanguageContext.jsx';
 import TrialLimitModal from './TrialLimitModal.jsx';
 import CustomScrollbar from './CustomScrollbar.jsx';
@@ -221,6 +221,21 @@ function PropertyModal({ token, onClose, onSave, property, initialStep = 1 }) {
     setSyncMessage('');
     setIsLoading(true);
     try {
+      // Vérifier si le nom de la propriété existe déjà
+      const propertyName = formData.name || formData.address;
+      if (propertyName) {
+        const allProperties = await getProperties(token);
+        const duplicateName = allProperties.find(p => 
+          p.name === propertyName && 
+          (!isEditing || p.id !== property.id) // Exclure la propriété en cours d'édition
+        );
+        
+        if (duplicateName) {
+          setError(t('propertyModal.duplicateNameError'));
+          setIsLoading(false);
+          return;
+        }
+      }
       // Combiner tous les équipements
       const allAmenities = [
         ...(formData.amenities || []),

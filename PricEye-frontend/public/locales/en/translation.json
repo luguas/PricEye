@@ -264,6 +264,7 @@
     "filter": "Filter",
     "clickToNavigate": "Click to navigate to this step",
     "editPricingStrategy": "Edit Strategy",
+    "duplicateNameError": "A property with this name already exists. Please choose a different name.",
     "steps": {
       "basicInfo": "Basic Info",
       "characteristics": "Characteristics",
@@ -495,6 +496,7 @@
     "modifyPrice": "Modify price",
     "clickToAddOrModifyPrice": "Click on a day to add or modify a price",
     "legend": {
+      "selection": "Selection",
       "priceSelection": "Price selection",
       "booked": "Booked",
       "bookingSelection": "Booking selection",
@@ -705,7 +707,9 @@
       "information": "Information",
       "errorLoadingProperties": "Error loading properties",
       "errorLoadingKpis": "Error loading KPIs",
-      "unknownError": "Unknown error"
+      "unknownError": "Unknown error",
+      "occupancyDisclaimer": "Total nights = days × properties. Blocked nights (e.g. maintenance) are not deducted.",
+      "noPreviousPeriodHistory": "No previous period history yet — comparisons will be more meaningful over time."
     }
   },
   "billing": {

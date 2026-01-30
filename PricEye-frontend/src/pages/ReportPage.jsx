@@ -18,7 +18,8 @@ import {
 } from '../services/api.js';
 import { exportToExcel } from '../utils/exportUtils.js';
 import Chart from 'chart.js/auto'; 
-import { getDatesFromRange, getPreviousDates } from '../utils/dateUtils.js'; // Importer les deux fonctions
+import { getDatesFromRange, getPreviousDates } from '../utils/dateUtils.js';
+import { convertFromEur } from '../utils/currency.js';
 import BoutonStatePrincipal from '../components/BoutonStatePrincipal.jsx';
 import IconsStateExport from '../components/IconsStateExport.jsx';
 import Filtre from '../components/Filtre.jsx';
@@ -238,32 +239,35 @@ function ReportPage({ token, userProfile }) {
 
     const gains = kpis.iaGain || 0;
     
-    // Priorité au coût mensuel renvoyé par GET /api/users/mon-cout-abonnement (backend)
-    let monthlyCost = 0;
+    // Priorité au coût mensuel en EUR renvoyé par GET /api/users/mon-cout-abonnement (backend)
+    let monthlyCostEur = 0;
     if (subscriptionCostEur != null && !isNaN(Number(subscriptionCostEur))) {
-      monthlyCost = Number(subscriptionCostEur);
+      monthlyCostEur = Number(subscriptionCostEur);
     } else {
-      // Fallback : profil utilisateur ou valeur par défaut
+      // Fallback : profil utilisateur ou valeur par défaut (supposé en EUR)
       const subscriptionStatus = userProfile?.subscriptionStatus || 'none';
       if (subscriptionStatus === 'active' || subscriptionStatus === 'trialing') {
         if (userProfile?.subscriptionPrice !== null && userProfile?.subscriptionPrice !== undefined) {
-          monthlyCost = Number(userProfile.subscriptionPrice);
+          monthlyCostEur = Number(userProfile.subscriptionPrice);
         } else if (userProfile?.monthlyPrice !== null && userProfile?.monthlyPrice !== undefined) {
-          monthlyCost = Number(userProfile.monthlyPrice);
+          monthlyCostEur = Number(userProfile.monthlyPrice);
         } else {
-          monthlyCost = 50;
-          console.warn('[ROI] Prix d\'abonnement non trouvé, utilisation de la valeur par défaut:', monthlyCost);
+          monthlyCostEur = 50;
+          console.warn('[ROI] Prix d\'abonnement non trouvé, utilisation de la valeur par défaut:', monthlyCostEur);
         }
       }
     }
-    
-    // Le coût PricEye affiché est le coût mensuel de l'abonnement (sans prorata)
-    const cost = monthlyCost;
+
+    // Conversion EUR → devise de l'utilisateur pour affichage et ROI
+    const userCurrency = userProfile?.currency || 'EUR';
+    const cost = convertFromEur(monthlyCostEur, userCurrency);
     
     // Log pour débogage (voir si la source est l'API ou le fallback)
     const costSource = subscriptionCostEur != null && !isNaN(Number(subscriptionCostEur)) ? 'API /mon-cout-abonnement' : 'fallback (profil ou 50€)';
     console.log('[ROI] Calcul final:', {
-      monthlyCost: cost,
+      monthlyCostEur: monthlyCostEur,
+      costInUserCurrency: cost,
+      userCurrency,
       gains,
       costSource
     });
@@ -2407,6 +2411,13 @@ function ReportPage({ token, userProfile }) {
           )}
         </div>
 
+        {/* Message informatif quand il n'y a pas encore d'historique N-1 (comparaisons peu parlantes) */}
+        {!isKpiLoading && prevKpis != null && (prevKpis.totalRevenue == null || prevKpis.totalRevenue === 0) && (prevKpis.totalNightsBooked == null || prevKpis.totalNightsBooked === 0) && (
+          <div className="self-stretch rounded-[10px] border border-global-stroke-box bg-global-bg-small-box/50 px-4 py-2 flex items-center gap-2">
+            <span className="text-global-inactive text-sm">{t('reports.messages.noPreviousPeriodHistory')}</span>
+          </div>
+        )}
+
         {/* Nouvelle section de filtres avec le style Figma */}
         <div className="bg-global-bg-box rounded-[14px] border-solid border-global-stroke-box border p-6 flex flex-col gap-3 items-start justify-start self-stretch shrink-0 relative">
           <div className="flex flex-row items-center justify-between self-stretch shrink-0 relative">
@@ -2623,10 +2634,13 @@ function ReportPage({ token, userProfile }) {
             <div className="self-stretch shrink-0 grid gap-6 relative" style={{ gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gridTemplateRows: 'repeat(1, minmax(0, 1fr))' }}>
               {/* Graphique RevPAR, ADR & Occupation */}
               <div className="bg-global-bg-box rounded-[14px] border-solid border-global-stroke-box border p-6 flex flex-col gap-6 items-start justify-start relative" style={{ gridColumn: '1 / span 1', gridRow: '1 / span 1' }}>
-              <div className="self-stretch shrink-0 h-7 relative">
+              <div className="self-stretch shrink-0 relative">
                 <div className="text-global-blanc text-left font-['Inter-Medium',_sans-serif] text-xl leading-7 font-medium" style={{ letterSpacing: '-0.45px' }}>
                   {t('reports.charts.revparAdrOccupancy')}
                 </div>
+                <p className="text-global-inactive text-xs mt-1" title={t('reports.messages.occupancyDisclaimer')}>
+                  {t('reports.messages.occupancyDisclaimer')}
+                </p>
               </div>
               <div className="pt-[5px] pb-[5px] flex flex-col gap-2.5 items-start justify-start self-stretch shrink-0 relative">
                 <div className="self-stretch shrink-0 h-[256.26px] relative w-full">

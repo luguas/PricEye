@@ -494,7 +494,7 @@ function GroupEditModal({ token, onClose, onSave, group, properties, userProfile
                     <div key={prop.id} className="bg-[rgba(29,41,61,0.50)] rounded-[10px] border-solid border-[rgba(49,65,88,0.50)] border p-4 flex flex-col gap-4 items-start justify-start self-stretch shrink-0 relative">
                       <div className="flex flex-row items-center justify-between self-stretch shrink-0 relative">
                         <div className="text-[#ffffff] text-left font-h3-font-family text-h3-font-size font-h3-font-weight relative flex-1">
-                          {prop.address || prop.name}
+                          {prop.name || prop.address}
                         </div>
                         <div className="flex flex-row gap-2 items-start justify-end shrink-0 relative">
                           <button
@@ -538,7 +538,7 @@ function GroupEditModal({ token, onClose, onSave, group, properties, userProfile
                           {availableProperties.map(prop => (
                             <div key={prop.id} className="bg-global-bg-small-box rounded-lg border-solid border-global-stroke-box border pt-3 pr-4 pb-3 pl-5 flex flex-row items-center justify-between w-full shrink-0 relative">
                               <div className="text-global-blanc text-left font-h4-font-family text-h4-font-size leading-h4-line-height font-h4-font-weight relative flex-1 min-w-0">
-                                {prop.address || prop.name}
+                                {prop.name || prop.address}
                               </div>
                               <BoutonStatePrincipal
                                 component={<IconsStateAdd className="!w-5 !self-[unset]" state="add" />}

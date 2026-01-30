@@ -264,6 +264,7 @@
     "filter": "Filtrer",
     "clickToNavigate": "Cliquer pour naviguer vers cette étape",
     "editPricingStrategy": "Modifier la stratégie",
+    "duplicateNameError": "Une propriété avec ce nom existe déjà. Veuillez choisir un nom différent.",
     "steps": {
       "basicInfo": "Infos de base",
       "characteristics": "Caractéristiques",
@@ -495,6 +496,7 @@
     "modifyPrice": "Modifier le prix",
     "clickToAddOrModifyPrice": "Cliquez sur un jour pour ajouter ou modifier un prix",
     "legend": {
+      "selection": "Sélection",
       "priceSelection": "Sélection prix",
       "booked": "Réservé",
       "bookingSelection": "Sélection réservation",
@@ -705,7 +707,9 @@
       "information": "Information",
       "errorLoadingProperties": "Erreur lors du chargement des propriétés",
       "errorLoadingKpis": "Erreur lors du chargement des KPIs",
-      "unknownError": "Erreur inconnue"
+      "unknownError": "Erreur inconnue",
+      "occupancyDisclaimer": "Nuits totales = nombre de jours × nombre de propriétés. Les nuits bloquées (ex. maintenance) ne sont pas déduites.",
+      "noPreviousPeriodHistory": "Pas encore d'historique sur la période précédente — les comparaisons seront plus parlantes avec le temps."
     }
   },
   "billing": {

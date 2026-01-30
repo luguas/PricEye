@@ -79,9 +79,13 @@ function PricingPage({ token, userProfile }) {
     setIsLoading(true);
     setError(''); 
     try {
-      // A. Récupérer les Propriétés
+      // A. Récupérer les Propriétés (uniquement les actives)
       const propsData = await getProperties(token);
-      const validProperties = propsData.filter(prop => prop.id && typeof prop.id === 'string');
+      const validProperties = propsData.filter(prop => 
+        prop.id && 
+        typeof prop.id === 'string' && 
+        (prop.status === 'active' || !prop.status) // Afficher seulement les propriétés actives
+      );
       
       // B. Récupérer les Groupes (Via API Backend pour contourner RLS)
       let groupsData = [];
@@ -382,10 +386,10 @@ function PricingPage({ token, userProfile }) {
       const result = await applyPricingStrategy(targetId, groupContext, token, isManualClick);
       
       if (result.skipped) {
-          // Si le backend a ignoré la demande
+          // Si le portier a refusé (dernière exécution < 24h)
           setAlertModal({ 
               isOpen: true, 
-              message: "Les prix sont déjà à jour pour aujourd'hui. (Utilisez le bouton 'Générer' pour forcer)", 
+              message: result.message || "Succès, les prix sont déjà à jour. (Utilisez le bouton « Générer » pour forcer un recalcul)", 
               title: "Déjà à jour" 
           });
       } else {
@@ -694,11 +698,11 @@ function PricingPage({ token, userProfile }) {
         const isClickedDate = dateStr === selectedDateForAnalysis; // Jour actuellement cliqué
         
         if (isSel) {
-             bg = selectionMode === 'booking' ? 'bg-calendrierbg-bleu' : 'bg-calendrierbg-vert';
-             border = selectionMode === 'booking' ? 'border-calendrierstroke-bleu' : 'border-calendrierstroke-vert';
-             // Effet spécial pour le jour cliqué dans la sélection
+             // Toujours bleu pour la sélection (prix ou résa) afin de bien la distinguer des jours déjà pricés (verts)
+             bg = 'bg-calendrierbg-bleu';
+             border = 'border-calendrierstroke-bleu';
              if (isClickedDate) {
-                border = selectionMode === 'booking' ? 'border-calendrierstroke-bleu border-2 shadow-xl' : 'border-calendrierstroke-vert border-2 shadow-xl';
+                border = 'border-calendrierstroke-bleu border-2 shadow-xl';
              }
         } else if (bk) {
              bg = 'bg-calendrierbg-orange';
@@ -901,7 +905,8 @@ function PricingPage({ token, userProfile }) {
             </section>
 
             <section className="flex flex-col gap-3 pt-4 border-t border-global-stroke-box w-full">
-                <div className="flex items-start justify-center gap-6">
+                <div className="flex items-start justify-center gap-6 flex-wrap">
+                    <div className="flex items-center gap-2"><div className="w-3 h-3 bg-calendrierbg-bleu rounded border border-calendrierstroke-bleu"/> <span className="text-gray-400 text-xs">{t('pricing.legend.selection')}</span></div>
                     <div className="flex items-center gap-2"><div className="w-3 h-3 bg-calendrierbg-vert rounded border border-calendrierstroke-vert"/> <span className="text-gray-400 text-xs">{t('pricing.legend.priceDefined')}</span></div>
                     <div className="flex items-center gap-2"><div className="w-3 h-3 bg-calendrierbg-orange rounded border border-calendrierstroke-orange"/> <span className="text-gray-400 text-xs">{t('pricing.legend.reserved')}</span></div>
                     <div className="flex items-center gap-2"><div className="w-3 h-3 bg-global-bg-small-box rounded border border-global-stroke-box"/> <span className="text-gray-400 text-xs">{t('pricing.legend.empty')}</span></div>
