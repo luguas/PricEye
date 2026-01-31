@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { jwtDecode } from 'jwt-decode';
 import { AuthProvider, useAuth } from './contexts/AuthContext'; // Import du Context
 import { LanguageProvider } from './contexts/LanguageContext';
@@ -17,6 +17,7 @@ import AccessBlockedPage from './pages/AccessBlockedPage.jsx';
 import { getUserProfile, getGroupRecommendations, getProperties } from './services/api.js'; 
 import NavBar from './components/NavBar.jsx';
 import PageTopBar from './components/PageTopBar.jsx';
+import LoadingSpinner from './components/LoadingSpinner.jsx';
 
 /**
  * Applique le thème (clair/sombre/auto) à l'élément <html>.
@@ -51,6 +52,71 @@ function AppRouter() {
   const [isLoadingNotifications, setIsLoadingNotifications] = useState(false);
   const [propertyCount, setPropertyCount] = useState(null);
   const [checkoutSessionId, setCheckoutSessionId] = useState(null);
+  const [apiRequestsInProgress, setApiRequestsInProgress] = useState(0);
+  const [showApiLoader, setShowApiLoader] = useState(false);
+  const [isDesktop, setIsDesktop] = useState(() => typeof window !== 'undefined' && window.matchMedia('(min-width: 768px)').matches);
+  const loaderShownAtRef = useRef(0);
+  const countRef = useRef(0);
+  const hideTimeoutRef = useRef(null);
+
+  countRef.current = apiRequestsInProgress;
+
+  useEffect(() => {
+    const mq = window.matchMedia('(min-width: 768px)');
+    const onChange = () => setIsDesktop(mq.matches);
+    mq.addEventListener('change', onChange);
+    return () => mq.removeEventListener('change', onChange);
+  }, []);
+
+  // Compter les requêtes API (pour savoir quand tout est chargé)
+  useEffect(() => {
+    const onStart = () => setApiRequestsInProgress((c) => c + 1);
+    const onEnd = () => setApiRequestsInProgress((c) => Math.max(0, c - 1));
+    window.addEventListener('api-request-start', onStart);
+    window.addEventListener('api-request-end', onEnd);
+    return () => {
+      window.removeEventListener('api-request-start', onStart);
+      window.removeEventListener('api-request-end', onEnd);
+    };
+  }, []);
+
+  // Overlay uniquement au premier chargement ou au changement d'onglet (pas à chaque requête API)
+  useEffect(() => {
+    setShowApiLoader(true);
+    loaderShownAtRef.current = Date.now();
+  }, [currentView]);
+
+  // Cacher l'overlay seulement après : plus de requêtes depuis 1.2s ET affichage visible depuis au moins 2.5s (évite double affichage)
+  const MIN_DISPLAY_MS = 2500;
+  const IDLE_BEFORE_HIDE_MS = 1200;
+
+  useEffect(() => {
+    if (apiRequestsInProgress > 0) return;
+
+    const tryHide = () => {
+      if (hideTimeoutRef.current) clearTimeout(hideTimeoutRef.current);
+      hideTimeoutRef.current = setTimeout(() => {
+        hideTimeoutRef.current = null;
+        if (countRef.current > 0) return;
+        const elapsed = Date.now() - loaderShownAtRef.current;
+        if (elapsed >= MIN_DISPLAY_MS) {
+          setShowApiLoader(false);
+        } else {
+          const remaining = MIN_DISPLAY_MS - elapsed;
+          hideTimeoutRef.current = setTimeout(() => {
+            hideTimeoutRef.current = null;
+            if (countRef.current > 0) return;
+            setShowApiLoader(false);
+          }, remaining);
+        }
+      }, IDLE_BEFORE_HIDE_MS);
+    };
+
+    tryHide();
+    return () => {
+      if (hideTimeoutRef.current) clearTimeout(hideTimeoutRef.current);
+    };
+  }, [apiRequestsInProgress]);
 
   // Gérer le changement de thème
   const handleThemeChange = (newTheme) => {
@@ -244,7 +310,7 @@ function AppRouter() {
       />
 
       <div className="flex flex-col min-h-screen">
-        <div className="hidden md:block">
+        <div className="hidden md:block relative z-[9999]">
           <PageTopBar
             userName={userProfile?.name || userProfile?.email || 'Utilisateur'}
             propertyCount={propertyCount}
@@ -255,7 +321,7 @@ function AppRouter() {
             userProfile={userProfile}
           />
         </div>
-        <nav className="bg-bg-sidebar md:hidden p-4 flex-shrink-0 flex flex-col rounded-b-3xl border border-border-primary">
+        <nav className="bg-bg-sidebar md:hidden p-4 flex-shrink-0 flex flex-col rounded-b-3xl border border-border-primary relative z-[9999]">
           <div>
               <h1 className="text-2xl font-bold text-white mb-6">Pricing IA</h1>
               <ul className="space-y-2">
@@ -273,6 +339,13 @@ function AppRouter() {
           {renderMainContent()}
         </main>
       </div>
+
+      {showApiLoader && (
+        <LoadingSpinner
+          overlay
+          contentAreaLeft={isDesktop ? (isNavCollapsed ? 96 : 255) : 0}
+        />
+      )}
     </div>
   );
 }

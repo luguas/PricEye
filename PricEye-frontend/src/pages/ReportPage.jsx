@@ -12,14 +12,11 @@ import {
   getForecastRadar,
   getRevenueVsTarget,
   getAdrByChannel,
-  getGrossMargin,
-  getTeamBookings,
-  getMySubscriptionCost
+  getTeamBookings
 } from '../services/api.js';
 import { exportToExcel } from '../utils/exportUtils.js';
 import Chart from 'chart.js/auto'; 
 import { getDatesFromRange, getPreviousDates } from '../utils/dateUtils.js';
-import { convertFromEur } from '../utils/currency.js';
 import BoutonStatePrincipal from '../components/BoutonStatePrincipal.jsx';
 import IconsStateExport from '../components/IconsStateExport.jsx';
 import Filtre from '../components/Filtre.jsx';
@@ -171,9 +168,7 @@ function ReportPage({ token, userProfile }) {
   const [forecastRadarData, setForecastRadarData] = useState(null); // Pour le graphique Prévisions synthétiques par propriété
   const [revenueVsTargetData, setRevenueVsTargetData] = useState(null); // Pour le graphique Revenu total vs Objectif
   const [adrByChannelData, setAdrByChannelData] = useState(null); // Pour le graphique ADR par canal
-  const [grossMarginData, setGrossMarginData] = useState(null); // Pour le graphique Marge brute (%)
   const [marketSnapshot, setMarketSnapshot] = useState(null); // Pour le bloc Analyse demande 24h (marché)
-  const [subscriptionCostEur, setSubscriptionCostEur] = useState(null); // Coût mensuel réel (backend) pour le ROI
 
   // État pour la modale d'alerte
   const [alertModal, setAlertModal] = useState({ isOpen: false, message: '', title: '' });
@@ -192,7 +187,6 @@ function ReportPage({ token, userProfile }) {
   const forecastRadarChartRef = useRef(null); // Pour le graphique Prévisions synthétiques par propriété
   const revenueVsTargetChartRef = useRef(null); // Pour le graphique Revenu total vs Objectif
   const adrByChannelChartRef = useRef(null); // Pour le graphique ADR par canal
-  const grossMarginChartRef = useRef(null); // Pour le graphique Marge brute (%)
   const revenueChartInstance = useRef(null);
   const marketChartInstance = useRef(null);
   const revparChartInstance = useRef(null);
@@ -206,7 +200,6 @@ function ReportPage({ token, userProfile }) {
   const forecastRadarChartInstance = useRef(null); // Instance du graphique Prévisions synthétiques par propriété
   const revenueVsTargetChartInstance = useRef(null); // Instance du graphique Revenu total vs Objectif
   const adrByChannelChartInstance = useRef(null); // Instance du graphique ADR par canal
-  const grossMarginChartInstance = useRef(null); // Instance du graphique Marge brute (%)
   
   // Fonctions de formatage
   const formatCurrency = (amount) => {
@@ -230,58 +223,6 @@ function ReportPage({ token, userProfile }) {
   const formatScore = (amount) => {
       return `${(amount || 0).toFixed(0)}%`;
   };
-
-  // Fonction pour calculer le ROI réel
-  const calculateROI = useMemo(() => {
-    if (!kpis || kpis.iaGain === undefined || kpis.iaGain === null) {
-      return { roi: 0, cost: 0, gains: 0 };
-    }
-
-    const gains = kpis.iaGain || 0;
-    
-    // Priorité au coût mensuel en EUR renvoyé par GET /api/users/mon-cout-abonnement (backend)
-    let monthlyCostEur = 0;
-    if (subscriptionCostEur != null && !isNaN(Number(subscriptionCostEur))) {
-      monthlyCostEur = Number(subscriptionCostEur);
-    } else {
-      // Fallback : profil utilisateur ou valeur par défaut (supposé en EUR)
-      const subscriptionStatus = userProfile?.subscriptionStatus || 'none';
-      if (subscriptionStatus === 'active' || subscriptionStatus === 'trialing') {
-        if (userProfile?.subscriptionPrice !== null && userProfile?.subscriptionPrice !== undefined) {
-          monthlyCostEur = Number(userProfile.subscriptionPrice);
-        } else if (userProfile?.monthlyPrice !== null && userProfile?.monthlyPrice !== undefined) {
-          monthlyCostEur = Number(userProfile.monthlyPrice);
-        } else {
-          monthlyCostEur = 50;
-          console.warn('[ROI] Prix d\'abonnement non trouvé, utilisation de la valeur par défaut:', monthlyCostEur);
-        }
-      }
-    }
-
-    // Conversion EUR → devise de l'utilisateur pour affichage et ROI
-    const userCurrency = userProfile?.currency || 'EUR';
-    const cost = convertFromEur(monthlyCostEur, userCurrency);
-    
-    // Log pour débogage (voir si la source est l'API ou le fallback)
-    const costSource = subscriptionCostEur != null && !isNaN(Number(subscriptionCostEur)) ? 'API /mon-cout-abonnement' : 'fallback (profil ou 50€)';
-    console.log('[ROI] Calcul final:', {
-      monthlyCostEur: monthlyCostEur,
-      costInUserCurrency: cost,
-      userCurrency,
-      gains,
-      costSource
-    });
-    
-    // Calculer le ROI: (Gains / Coût) * 100
-    // Si le coût est 0 (pas d'abonnement), le ROI est infini, on affiche 0 ou un message spécial
-    const roi = cost > 0 ? (gains / cost) * 100 : (gains > 0 ? Infinity : 0);
-    
-    return {
-      roi: roi === Infinity ? 0 : Math.max(0, roi), // ROI ne peut pas être négatif, et on gère l'infini
-      cost: cost,
-      gains: gains
-    };
-  }, [kpis, userProfile, subscriptionCostEur]);
 
   // Fonction utilitaire pour calculer les graduations dynamiques
   const calculateScaleConfig = (dataArray, defaultMax = null, defaultStepSize = null) => {
@@ -656,7 +597,6 @@ function ReportPage({ token, userProfile }) {
   // - getForecastScenarios() pour les scénarios de prévision
   // - getForecastRadar() pour les prévisions radar
   // - getRevenueVsTarget() pour revenu vs objectif
-  // - getGrossMargin() pour la marge brute
 
   // Fetch all properties (pour les filtres)
   const fetchAllProperties = useCallback(async () => {
@@ -675,20 +615,6 @@ function ReportPage({ token, userProfile }) {
   useEffect(() => {
     fetchAllProperties();
   }, [fetchAllProperties]);
-
-  // Récupérer le coût mensuel réel d'abonnement (backend) pour le ROI au chargement de la page
-  useEffect(() => {
-    if (!token) return;
-    getMySubscriptionCost(token)
-      .then((data) => {
-        if (data != null && typeof data.amountEur === 'number') {
-          setSubscriptionCostEur(data.amountEur);
-        }
-      })
-      .catch((err) => {
-        console.warn('[ReportPage] Impossible de récupérer le coût abonnement:', err?.message || err);
-      });
-  }, [token]);
 
   // NOTE: Les données ADR vs Marché et Distribution prix sont maintenant chargées via getPositioningReport dans fetchKpisAndCharts
   // NOTE: Les données de prévisions et financières sont maintenant chargées via les nouveaux endpoints dans fetchKpisAndCharts
@@ -719,7 +645,7 @@ function ReportPage({ token, userProfile }) {
           if (status) filters.status = status;
           if (location) filters.location = location;
 
-          // 3. Appeler l'API pour les deux périodes en parallèle (+ coût abonnement pour le ROI)
+          // 3. Appeler l'API pour les deux périodes en parallèle
           const [
               currentData, 
               prevData, 
@@ -734,9 +660,7 @@ function ReportPage({ token, userProfile }) {
               forecastRadarData,
               revenueVsTargetData,
               adrByChannelData,
-              grossMarginData,
-              bookingsData,
-              subscriptionCostData
+              bookingsData
           ] = await Promise.all([
               getReportKpis(token, currentStartDate, currentEndDate, filters),
               getReportKpis(token, prevStartDate, prevEndDate, filters),
@@ -751,16 +675,8 @@ function ReportPage({ token, userProfile }) {
               getForecastRadar(token, currentStartDate, currentEndDate, null, filters),
               getRevenueVsTarget(token, currentStartDate, currentEndDate, filters),
               getAdrByChannel(token, currentStartDate, currentEndDate, filters),
-              getGrossMargin(token, currentStartDate, currentEndDate, filters),
-              getTeamBookings(token, currentStartDate, currentEndDate, filters),
-              getMySubscriptionCost(token).catch(() => null)
+              getTeamBookings(token, currentStartDate, currentEndDate, filters)
           ]);
-
-          // Coût mensuel réel (route /api/users/mon-cout-abonnement) pour le ROI
-          const costEur = subscriptionCostData?.amountEur;
-          if (costEur != null && !isNaN(Number(costEur))) {
-            setSubscriptionCostEur(Number(costEur));
-          }
 
           if (bookingsData && Array.isArray(bookingsData)) {
             setAllBookings(bookingsData);
@@ -884,16 +800,6 @@ function ReportPage({ token, userProfile }) {
             setAdrByChannelData(null);
           }
           
-          // NOUVEAU: Mettre à jour les données de marge brute
-          if (grossMarginData) {
-            setGrossMarginData({
-              labels: grossMarginData.labels || [],
-              data: grossMarginData.data || []
-            });
-          } else {
-            setGrossMarginData(null);
-          }
-          
       } catch (err) {
           console.error('Error loading KPIs:', err);
           setError(`${t('reports.messages.errorLoadingKpis')}: ${err.message || t('reports.messages.unknownError')}`);
@@ -914,7 +820,6 @@ function ReportPage({ token, userProfile }) {
           setForecastRadarData(null);
           setRevenueVsTargetData(null);
           setAdrByChannelData(null);
-          setGrossMarginData(null);
       } finally {
           setIsKpiLoading(false);
       }
@@ -1016,10 +921,6 @@ function ReportPage({ token, userProfile }) {
       if (adrByChannelChartInstance.current) { 
         try { adrByChannelChartInstance.current.destroy(); } catch(e) {}
         adrByChannelChartInstance.current = null;
-      }
-      if (grossMarginChartInstance.current) { 
-        try { grossMarginChartInstance.current.destroy(); } catch(e) {}
-        grossMarginChartInstance.current = null;
       }
     };
 
@@ -2233,78 +2134,6 @@ function ReportPage({ token, userProfile }) {
           console.error('Error creating ADR by Channel chart:', error);
         }
       }
-
-      // Graphique Marge brute (%)
-      if (grossMarginChartRef.current && isValidData(grossMarginData, ['labels', 'data'])) {
-        try {
-          // Pour les pourcentages, on utilise un max de 100 si les données sont < 100, sinon on calcule dynamiquement
-          const maxMarginValue = Math.max(...(grossMarginData.data || []).filter(v => typeof v === 'number' && !isNaN(v)));
-          const grossMarginScale = maxMarginValue <= 100 
-            ? { max: 100, stepSize: 25 }
-            : calculateScaleConfig(grossMarginData.data);
-          const ctxGrossMargin = grossMarginChartRef.current.getContext('2d');
-          grossMarginChartInstance.current = new Chart(ctxGrossMargin, {
-        type: 'line',
-        data: {
-          labels: grossMarginData.labels,
-          datasets: [
-            {
-              label: t('reports.charts.grossMargin'),
-              data: grossMarginData.data,
-              borderColor: '#00d3f2',
-              backgroundColor: 'rgba(0, 211, 242, 0.1)',
-              tension: 0.3,
-              fill: true,
-              pointRadius: 4,
-              pointBackgroundColor: '#00d3f2',
-              pointBorderColor: '#00d3f2',
-              pointBorderWidth: 2,
-              pointHoverRadius: 6,
-            }
-          ]
-        },
-        options: {
-          scales: {
-            x: {
-              ticks: {
-                color: '#94a3b8',
-                font: { family: 'Inter-Regular, sans-serif', size: 12 },
-                padding: 8
-              },
-              grid: { display: false },
-              border: { display: false }
-            },
-            y: {
-              beginAtZero: true,
-              max: grossMarginScale.max,
-              ticks: {
-                color: '#94a3b8',
-                font: { family: 'Inter-Regular, sans-serif', size: 12 },
-                stepSize: grossMarginScale.stepSize,
-                precision: 0,
-                padding: 4,
-                callback: function(value) {
-                  return value.toFixed(0);
-                }
-              },
-              grid: {
-                color: 'rgba(148, 163, 184, 0.2)',
-                drawBorder: false,
-                lineWidth: 1
-              },
-              border: { display: false }
-            }
-          },
-          plugins: {
-            legend: { display: false }
-          },
-          maintainAspectRatio: false
-        }
-      });
-        } catch (error) {
-          console.error('Error creating Gross Margin chart:', error);
-        }
-      }
     }, 100); // Petit délai pour s'assurer que le DOM est prêt
 
      return () => {
@@ -2322,10 +2151,9 @@ function ReportPage({ token, userProfile }) {
          if (forecastRadarChartInstance.current) { forecastRadarChartInstance.current.destroy(); }
          if (revenueVsTargetChartInstance.current) { revenueVsTargetChartInstance.current.destroy(); }
          if (adrByChannelChartInstance.current) { adrByChannelChartInstance.current.destroy(); }
-         if (grossMarginChartInstance.current) { grossMarginChartInstance.current.destroy(); }
      };
 
-  }, [chartData, performanceData, revparData, iaData, marketData, adrVsMarketData, priceDistributionData, forecastRevenueData, forecastAdrData, forecastScenariosData, forecastRadarData, revenueVsTargetData, adrByChannelData, grossMarginData, isKpiLoading, activeTab]); // Se redéclenche si les données des graphiques changent, si le chargement change, ou si l'onglet change
+  }, [chartData, performanceData, revparData, iaData, marketData, adrVsMarketData, priceDistributionData, forecastRevenueData, forecastAdrData, forecastScenariosData, forecastRadarData, revenueVsTargetData, adrByChannelData, isKpiLoading, activeTab]); // Se redéclenche si les données des graphiques changent, si le chargement change, ou si l'onglet change
 
   const handleExport = () => {
     if (filteredProperties.length === 0) {
@@ -2771,25 +2599,26 @@ function ReportPage({ token, userProfile }) {
             
             <div className="self-stretch shrink-0 grid gap-6 relative" style={{ gridTemplateColumns: '2fr 1fr' }}>
             {/* Graphique Tendance marché - Offre vs Demande */}
-            <div className="bg-[rgba(15,23,43,0.40)] rounded-[14px] border-solid border-[rgba(49,65,88,0.50)] border pt-[25px] pr-[25px] pb-px pl-[25px] flex flex-col gap-6 items-start justify-start h-[452px] relative">
+            <div className="bg-[rgba(15,23,43,0.40)] rounded-[14px] border-solid border-[rgba(49,65,88,0.50)] border pt-[25px] pr-[25px] pb-6 pl-[25px] flex flex-col gap-6 items-start justify-start h-[452px] relative">
               <div className="self-stretch shrink-0 h-7 relative">
                 <div className="text-[#ffffff] text-left font-['Inter-Medium',_sans-serif] text-xl leading-7 font-medium" style={{ letterSpacing: "-0.45px" }}>
                   {t('reports.charts.marketTrend')}
                 </div>
               </div>
-              <div className="self-stretch shrink-0 h-[350px] relative">
-                {isKpiLoading ? (
-                  <div className="flex items-center justify-center h-full w-full">
-                    <p className="text-global-inactive">{t('reports.messages.loading')}</p>
-                  </div>
-                ) : (
-                  <div className="w-full h-full relative">
-                    <canvas ref={marketTrendChartRef} className="w-full h-full"></canvas>
-                  </div>
-                )}
-              </div>
-              {/* Légende personnalisée */}
-              <div className="flex flex-row gap-6 items-center justify-center self-stretch shrink-0 relative">
+              <div className="flex flex-col gap-2.5 items-start justify-start self-stretch shrink-0 relative">
+                <div className="self-stretch shrink-0 h-[350px] relative">
+                  {isKpiLoading ? (
+                    <div className="flex items-center justify-center h-full w-full">
+                      <p className="text-global-inactive">{t('reports.messages.loading')}</p>
+                    </div>
+                  ) : (
+                    <div className="w-full h-full relative">
+                      <canvas ref={marketTrendChartRef} className="w-full h-full"></canvas>
+                    </div>
+                  )}
+                </div>
+                {/* Légende personnalisée */}
+                <div className="flex flex-row gap-6 items-center justify-center self-stretch shrink-0 relative">
                 <div className="shrink-0 h-6 relative flex items-center gap-2">
                   <div className="w-3.5 h-3.5 rounded-full bg-global-content-highlight-2nd shrink-0"></div>
                   <div className="text-global-content-highlight-2nd text-center font-['Inter-Regular',_sans-serif] text-base leading-6 font-normal" style={{ letterSpacing: "-0.31px" }}>
@@ -2803,10 +2632,11 @@ function ReportPage({ token, userProfile }) {
                   </div>
                 </div>
               </div>
+              </div>
             </div>
 
             {/* Analyse demande 24h */}
-            <div className="bg-[rgba(15,23,43,0.40)] rounded-[14px] border-solid border-[rgba(49,65,88,0.50)] border pt-[25px] pr-[25px] pb-px pl-[25px] flex flex-col gap-6 items-start justify-start h-[352px] relative">
+            <div className="bg-[rgba(15,23,43,0.40)] rounded-[14px] border-solid border-[rgba(49,65,88,0.50)] border pt-[25px] pr-[25px] pb-6 pl-[25px] flex flex-col gap-6 items-start justify-start h-[352px] relative">
               <div className="self-stretch shrink-0 h-7 relative">
                 <div className="text-[#ffffff] text-left font-['Inter-Regular',_sans-serif] text-xl leading-7 font-normal" style={{ letterSpacing: "-0.45px" }}>
                   {t('reports.charts.demandAnalysis24h')}
@@ -2859,42 +2689,44 @@ function ReportPage({ token, userProfile }) {
         {activeTab === 'positioning' && (
           <div className="self-stretch shrink-0 grid gap-6 relative" style={{ gridTemplateColumns: 'repeat(2, minmax(0, 1fr))' }}>
             {/* Graphique ADR vs Marché */}
-            <div className="bg-[rgba(15,23,43,0.40)] rounded-[14px] border-solid border-[rgba(49,65,88,0.50)] border pt-[25px] pr-[25px] pb-px pl-[25px] flex flex-col gap-6 items-start justify-start h-[402px] relative">
+            <div className="bg-[rgba(15,23,43,0.40)] rounded-[14px] border-solid border-[rgba(49,65,88,0.50)] border pt-[25px] pr-[25px] pb-6 pl-[25px] flex flex-col gap-6 items-start justify-start h-[402px] relative">
               <div className="self-stretch shrink-0 h-7 relative">
                 <div className="text-[#ffffff] text-left font-['Inter-Medium',_sans-serif] text-xl leading-7 font-medium" style={{ letterSpacing: "-0.45px" }}>
                   {t('reports.charts.adrVsMarket')}
                 </div>
               </div>
-              <div className="self-stretch shrink-0 h-[300px] relative">
-                {isKpiLoading ? (
-                  <div className="flex items-center justify-center h-full w-full">
-                    <p className="text-global-inactive">{t('reports.messages.loading')}</p>
-                  </div>
-                ) : (
-                  <div className="w-full h-full relative">
-                    <canvas ref={adrVsMarketChartRef} className="w-full h-full"></canvas>
-                  </div>
-                )}
-              </div>
-              {/* Légende personnalisée */}
-              <div className="flex flex-row gap-6 items-center justify-center self-stretch shrink-0 relative">
-                <div className="shrink-0 h-6 relative flex items-center gap-2">
-                  <div className="w-3.5 h-3.5 rounded-full bg-[#94a3b8] shrink-0"></div>
-                  <div className="text-global-inactive text-center font-['Inter-Regular',_sans-serif] text-base leading-6 font-normal" style={{ letterSpacing: "-0.31px" }}>
-                    {t('reports.legends.marketAdr')}
-                  </div>
+              <div className="flex flex-col gap-2.5 items-start justify-start self-stretch shrink-0 relative">
+                <div className="self-stretch shrink-0 h-[300px] relative">
+                  {isKpiLoading ? (
+                    <div className="flex items-center justify-center h-full w-full">
+                      <p className="text-global-inactive">{t('reports.messages.loading')}</p>
+                    </div>
+                  ) : (
+                    <div className="w-full h-full relative">
+                      <canvas ref={adrVsMarketChartRef} className="w-full h-full"></canvas>
+                    </div>
+                  )}
                 </div>
-                <div className="shrink-0 h-6 relative flex items-center gap-2">
-                  <div className="w-3.5 h-3.5 rounded-full bg-global-content-highlight-2nd shrink-0"></div>
-                  <div className="text-global-content-highlight-2nd text-center font-['Inter-Regular',_sans-serif] text-base leading-6 font-normal" style={{ letterSpacing: "-0.31px" }}>
-                    {t('reports.legends.yourAdr')}
+                {/* Légende personnalisée */}
+                <div className="flex flex-row gap-6 items-center justify-center self-stretch shrink-0 relative">
+                  <div className="shrink-0 h-6 relative flex items-center gap-2">
+                    <div className="w-3.5 h-3.5 rounded-full bg-[#94a3b8] shrink-0"></div>
+                    <div className="text-global-inactive text-center font-['Inter-Regular',_sans-serif] text-base leading-6 font-normal" style={{ letterSpacing: "-0.31px" }}>
+                      {t('reports.legends.marketAdr')}
+                    </div>
+                  </div>
+                  <div className="shrink-0 h-6 relative flex items-center gap-2">
+                    <div className="w-3.5 h-3.5 rounded-full bg-global-content-highlight-2nd shrink-0"></div>
+                    <div className="text-global-content-highlight-2nd text-center font-['Inter-Regular',_sans-serif] text-base leading-6 font-normal" style={{ letterSpacing: "-0.31px" }}>
+                      {t('reports.legends.yourAdr')}
+                    </div>
                   </div>
                 </div>
               </div>
             </div>
 
             {/* Graphique Distribution prix concurrents */}
-            <div className="bg-[rgba(15,23,43,0.40)] rounded-[14px] border-solid border-[rgba(49,65,88,0.50)] border pt-[25px] pr-[25px] pb-px pl-[25px] flex flex-col gap-6 items-start justify-start h-[402px] relative">
+            <div className="bg-[rgba(15,23,43,0.40)] rounded-[14px] border-solid border-[rgba(49,65,88,0.50)] border pt-[25px] pr-[25px] pb-6 pl-[25px] flex flex-col gap-6 items-start justify-start h-[402px] relative">
               <div className="self-stretch shrink-0 h-7 relative">
                 <div className="text-[#ffffff] text-left font-['Inter-Regular',_sans-serif] text-xl leading-7 font-normal" style={{ letterSpacing: "-0.45px" }}>
                   {t('reports.charts.competitorPriceDistribution')}
@@ -2920,76 +2752,80 @@ function ReportPage({ token, userProfile }) {
             {/* Première ligne : Revenus futurs & Occupation prévue / ADR, RevPAR & Occupation prévus */}
             <div className="self-stretch shrink-0 grid gap-6 relative" style={{ gridTemplateColumns: 'repeat(2, minmax(0, 1fr))' }}>
               {/* Graphique Revenus futurs & Occupation prévue */}
-              <div className="bg-[rgba(15,23,43,0.40)] rounded-[14px] border-solid border-[rgba(49,65,88,0.50)] border pt-[25px] pr-[25px] pb-px pl-[25px] flex flex-col gap-6 items-start justify-start h-[402px] relative">
+              <div className="bg-[rgba(15,23,43,0.40)] rounded-[14px] border-solid border-[rgba(49,65,88,0.50)] border pt-[25px] pr-[25px] pb-6 pl-[25px] flex flex-col gap-6 items-start justify-start h-[402px] relative">
                 <div className="self-stretch shrink-0 h-7 relative">
                   <div className="text-[#ffffff] text-left font-['Inter-Medium',_sans-serif] text-xl leading-7 font-medium" style={{ letterSpacing: "-0.45px" }}>
                     {t('reports.charts.futureRevenue')}
                   </div>
                 </div>
-                <div className="self-stretch shrink-0 h-[300px] relative">
-                  {isKpiLoading ? (
-                    <div className="flex items-center justify-center h-full w-full">
-                      <p className="text-global-inactive">{t('reports.messages.loading')}</p>
-                    </div>
-                  ) : (
-                    <div className="w-full h-full relative">
-                      <canvas ref={forecastRevenueChartRef} className="w-full h-full"></canvas>
-                    </div>
-                  )}
-                </div>
-                {/* Légende personnalisée */}
-                <div className="flex flex-row gap-6 items-center justify-center self-stretch shrink-0 relative">
-                  <div className="shrink-0 h-6 relative flex items-center gap-2">
-                    <div className="w-3.5 h-3.5 rounded-full bg-[#06b6d4] shrink-0"></div>
-                    <div className="text-[#06b6d4] text-center font-['Inter-Regular',_sans-serif] text-base leading-6 font-normal" style={{ letterSpacing: "-0.31px" }}>
-                      {t('reports.legends.occupancy')}
-                    </div>
+                <div className="flex flex-col gap-2.5 items-start justify-start self-stretch shrink-0 relative">
+                  <div className="self-stretch shrink-0 h-[300px] relative">
+                    {isKpiLoading ? (
+                      <div className="flex items-center justify-center h-full w-full">
+                        <p className="text-global-inactive">{t('reports.messages.loading')}</p>
+                      </div>
+                    ) : (
+                      <div className="w-full h-full relative">
+                        <canvas ref={forecastRevenueChartRef} className="w-full h-full"></canvas>
+                      </div>
+                    )}
                   </div>
-                  <div className="shrink-0 h-6 relative flex items-center gap-2">
-                    <div className="w-3.5 h-3.5 rounded-full bg-[#1e40af] shrink-0"></div>
-                    <div className="text-[#1e40af] text-center font-['Inter-Regular',_sans-serif] text-base leading-6 font-normal" style={{ letterSpacing: "-0.31px" }}>
-                      {t('reports.legends.forecastedRevenue')}
+                  {/* Légende personnalisée */}
+                  <div className="flex flex-row gap-6 items-center justify-center self-stretch shrink-0 relative">
+                    <div className="shrink-0 h-6 relative flex items-center gap-2">
+                      <div className="w-3.5 h-3.5 rounded-full bg-[#06b6d4] shrink-0"></div>
+                      <div className="text-[#06b6d4] text-center font-['Inter-Regular',_sans-serif] text-base leading-6 font-normal" style={{ letterSpacing: "-0.31px" }}>
+                        {t('reports.legends.occupancy')}
+                      </div>
+                    </div>
+                    <div className="shrink-0 h-6 relative flex items-center gap-2">
+                      <div className="w-3.5 h-3.5 rounded-full bg-[#1e40af] shrink-0"></div>
+                      <div className="text-[#1e40af] text-center font-['Inter-Regular',_sans-serif] text-base leading-6 font-normal" style={{ letterSpacing: "-0.31px" }}>
+                        {t('reports.legends.forecastedRevenue')}
+                      </div>
                     </div>
                   </div>
                 </div>
               </div>
 
               {/* Graphique ADR, RevPAR & Occupation prévus */}
-              <div className="bg-[rgba(15,23,43,0.40)] rounded-[14px] border-solid border-[rgba(49,65,88,0.50)] border pt-[25px] pr-[25px] pb-px pl-[25px] flex flex-col gap-6 items-start justify-start h-[402px] relative">
+              <div className="bg-[rgba(15,23,43,0.40)] rounded-[14px] border-solid border-[rgba(49,65,88,0.50)] border pt-[25px] pr-[25px] pb-6 pl-[25px] flex flex-col gap-6 items-start justify-start h-[402px] relative">
                 <div className="self-stretch shrink-0 h-7 relative">
                   <div className="text-[#ffffff] text-left font-['Inter-Medium',_sans-serif] text-xl leading-7 font-medium" style={{ letterSpacing: "-0.45px" }}>
                     {t('reports.charts.forecastedAdrRevparOccupancy')}
                   </div>
                 </div>
-                <div className="self-stretch shrink-0 h-[300px] relative">
-                  {isKpiLoading ? (
-                    <div className="flex items-center justify-center h-full w-full">
-                      <p className="text-global-inactive">{t('reports.messages.loading')}</p>
-                    </div>
-                  ) : (
-                    <div className="w-full h-full relative">
-                      <canvas ref={forecastAdrChartRef} className="w-full h-full"></canvas>
-                    </div>
-                  )}
-                </div>
-                {/* Légende personnalisée */}
-                <div className="flex flex-row gap-6 items-center justify-center self-stretch shrink-0 relative">
-                  <div className="shrink-0 h-6 relative flex items-center gap-2">
-                    <div className="w-3.5 h-3.5 rounded-full bg-[#8b5cf6] shrink-0"></div>
-                    <div className="text-[#8b5cf6] text-center font-['Inter-Regular',_sans-serif] text-base leading-6 font-normal" style={{ letterSpacing: "-0.31px" }}>
-                      {t('reports.legends.adr')}
-                    </div>
+                <div className="flex flex-col gap-2.5 items-start justify-start self-stretch shrink-0 relative">
+                  <div className="self-stretch shrink-0 h-[300px] relative">
+                    {isKpiLoading ? (
+                      <div className="flex items-center justify-center h-full w-full">
+                        <p className="text-global-inactive">{t('reports.messages.loading')}</p>
+                      </div>
+                    ) : (
+                      <div className="w-full h-full relative">
+                        <canvas ref={forecastAdrChartRef} className="w-full h-full"></canvas>
+                      </div>
+                    )}
                   </div>
-                  <div className="shrink-0 h-6 relative flex items-center gap-2">
-                    <div className="w-3.5 h-3.5 rounded-full bg-[#10b981] shrink-0"></div>
-                    <div className="text-[#10b981] text-center font-['Inter-Regular',_sans-serif] text-base leading-6 font-normal" style={{ letterSpacing: "-0.31px" }}>
-                      {t('reports.legends.occupancy')}
+                  {/* Légende personnalisée */}
+                  <div className="flex flex-row gap-6 items-center justify-center self-stretch shrink-0 relative">
+                    <div className="shrink-0 h-6 relative flex items-center gap-2">
+                      <div className="w-3.5 h-3.5 rounded-full bg-[#8b5cf6] shrink-0"></div>
+                      <div className="text-[#8b5cf6] text-center font-['Inter-Regular',_sans-serif] text-base leading-6 font-normal" style={{ letterSpacing: "-0.31px" }}>
+                        {t('reports.legends.adr')}
+                      </div>
                     </div>
-                  </div>
-                  <div className="shrink-0 h-6 relative flex items-center gap-2">
-                    <div className="w-3.5 h-3.5 rounded-full bg-[#06b6d4] shrink-0"></div>
-                    <div className="text-[#06b6d4] text-center font-['Inter-Regular',_sans-serif] text-base leading-6 font-normal" style={{ letterSpacing: "-0.31px" }}>
-                      {t('reports.legends.revpar')}
+                    <div className="shrink-0 h-6 relative flex items-center gap-2">
+                      <div className="w-3.5 h-3.5 rounded-full bg-[#10b981] shrink-0"></div>
+                      <div className="text-[#10b981] text-center font-['Inter-Regular',_sans-serif] text-base leading-6 font-normal" style={{ letterSpacing: "-0.31px" }}>
+                        {t('reports.legends.occupancy')}
+                      </div>
+                    </div>
+                    <div className="shrink-0 h-6 relative flex items-center gap-2">
+                      <div className="w-3.5 h-3.5 rounded-full bg-[#06b6d4] shrink-0"></div>
+                      <div className="text-[#06b6d4] text-center font-['Inter-Regular',_sans-serif] text-base leading-6 font-normal" style={{ letterSpacing: "-0.31px" }}>
+                        {t('reports.legends.revpar')}
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -2997,48 +2833,50 @@ function ReportPage({ token, userProfile }) {
             </div>
 
             {/* Deuxième ligne : Scénarios de prévision */}
-            <div className="bg-[rgba(15,23,43,0.40)] rounded-[14px] border-solid border-[rgba(49,65,88,0.50)] border pt-[25px] pr-[25px] pb-px pl-[25px] flex flex-col gap-6 items-start justify-start self-stretch shrink-0 h-[452px] relative">
+            <div className="bg-[rgba(15,23,43,0.40)] rounded-[14px] border-solid border-[rgba(49,65,88,0.50)] border pt-[25px] pr-[25px] pb-6 pl-[25px] flex flex-col gap-6 items-start justify-start self-stretch shrink-0 h-[452px] relative">
               <div className="self-stretch shrink-0 h-7 relative">
                 <div className="text-[#ffffff] text-left font-['Inter-Medium',_sans-serif] text-xl leading-7 font-medium" style={{ letterSpacing: "-0.45px" }}>
                   {t('reports.charts.forecastScenarios')}
                 </div>
               </div>
-              <div className="self-stretch shrink-0 h-[350px] relative">
-                {isKpiLoading ? (
-                  <div className="flex items-center justify-center h-full w-full">
-                    <p className="text-global-inactive">{t('reports.messages.loading')}</p>
-                  </div>
-                ) : (
-                  <div className="w-full h-full relative">
-                    <canvas ref={forecastScenariosChartRef} className="w-full h-full"></canvas>
-                  </div>
-                )}
-              </div>
-              {/* Légende personnalisée */}
-              <div className="flex flex-row gap-6 items-center justify-center self-stretch shrink-0 relative">
-                <div className="shrink-0 h-6 relative flex items-center gap-2">
-                  <div className="w-3.5 h-3.5 rounded-full bg-[#06b6d4] shrink-0"></div>
-                  <div className="text-[#06b6d4] text-center font-['Inter-Regular',_sans-serif] text-base leading-6 font-normal" style={{ letterSpacing: "-0.31px" }}>
-                    {t('reports.scenarios.baseline')}
-                  </div>
+              <div className="flex flex-col gap-2.5 items-start justify-start self-stretch shrink-0 relative">
+                <div className="self-stretch shrink-0 h-[350px] relative">
+                  {isKpiLoading ? (
+                    <div className="flex items-center justify-center h-full w-full">
+                      <p className="text-global-inactive">{t('reports.messages.loading')}</p>
+                    </div>
+                  ) : (
+                    <div className="w-full h-full relative">
+                      <canvas ref={forecastScenariosChartRef} className="w-full h-full"></canvas>
+                    </div>
+                  )}
                 </div>
-                <div className="shrink-0 h-6 relative flex items-center gap-2">
-                  <div className="w-3.5 h-3.5 rounded-full bg-[#10b981] shrink-0"></div>
-                  <div className="text-[#10b981] text-center font-['Inter-Regular',_sans-serif] text-base leading-6 font-normal" style={{ letterSpacing: "-0.31px" }}>
-                    {t('reports.scenarios.optimistic')}
+                {/* Légende personnalisée */}
+                <div className="flex flex-row gap-6 items-center justify-center self-stretch shrink-0 relative">
+                  <div className="shrink-0 h-6 relative flex items-center gap-2">
+                    <div className="w-3.5 h-3.5 rounded-full bg-[#06b6d4] shrink-0"></div>
+                    <div className="text-[#06b6d4] text-center font-['Inter-Regular',_sans-serif] text-base leading-6 font-normal" style={{ letterSpacing: "-0.31px" }}>
+                      {t('reports.scenarios.baseline')}
+                    </div>
                   </div>
-                </div>
-                <div className="shrink-0 h-6 relative flex items-center gap-2">
-                  <div className="w-3.5 h-3.5 rounded-full bg-[#ef4444] shrink-0"></div>
-                  <div className="text-[#ef4444] text-center font-['Inter-Regular',_sans-serif] text-base leading-6 font-normal" style={{ letterSpacing: "-0.31px" }}>
-                    {t('reports.scenarios.pessimistic')}
+                  <div className="shrink-0 h-6 relative flex items-center gap-2">
+                    <div className="w-3.5 h-3.5 rounded-full bg-[#10b981] shrink-0"></div>
+                    <div className="text-[#10b981] text-center font-['Inter-Regular',_sans-serif] text-base leading-6 font-normal" style={{ letterSpacing: "-0.31px" }}>
+                      {t('reports.scenarios.optimistic')}
+                    </div>
+                  </div>
+                  <div className="shrink-0 h-6 relative flex items-center gap-2">
+                    <div className="w-3.5 h-3.5 rounded-full bg-[#ef4444] shrink-0"></div>
+                    <div className="text-[#ef4444] text-center font-['Inter-Regular',_sans-serif] text-base leading-6 font-normal" style={{ letterSpacing: "-0.31px" }}>
+                      {t('reports.scenarios.pessimistic')}
+                    </div>
                   </div>
                 </div>
               </div>
             </div>
 
             {/* Troisième ligne : Prévisions synthétiques par propriété */}
-            <div className="bg-[rgba(15,23,43,0.40)] rounded-[14px] border-solid border-[rgba(49,65,88,0.50)] border pt-[25px] pr-[25px] pb-px pl-[25px] flex flex-col gap-6 items-start justify-start self-stretch shrink-0 h-[452px] relative">
+            <div className="bg-[rgba(15,23,43,0.40)] rounded-[14px] border-solid border-[rgba(49,65,88,0.50)] border pt-[25px] pr-[25px] pb-6 pl-[25px] flex flex-col gap-6 items-start justify-start self-stretch shrink-0 h-[452px] relative">
               <div className="self-stretch shrink-0 h-7 relative">
                 <div className="text-[#ffffff] text-left font-['Inter-Medium',_sans-serif] text-xl leading-7 font-medium" style={{ letterSpacing: "-0.45px" }}>
                   Synthetic Forecasts by Property
@@ -3062,44 +2900,45 @@ function ReportPage({ token, userProfile }) {
         {activeTab === 'financial' && (
           <div className="flex flex-col gap-6 items-start justify-start relative">
             {/* Revenu total vs Objectif */}
-            <div className="bg-[rgba(15,23,43,0.40)] rounded-[14px] border-solid border-[rgba(49,65,88,0.50)] border pt-[25px] pr-[25px] pb-px pl-[25px] flex flex-col gap-6 items-start justify-start self-stretch shrink-0 h-[452px] relative">
+            <div className="bg-[rgba(15,23,43,0.40)] rounded-[14px] border-solid border-[rgba(49,65,88,0.50)] border pt-[25px] pr-[25px] pb-6 pl-[25px] flex flex-col gap-6 items-start justify-start self-stretch shrink-0 h-[452px] relative">
               <div className="self-stretch shrink-0 h-7 relative">
                 <div className="text-[#ffffff] text-left font-['Inter-Medium',_sans-serif] text-xl leading-7 font-medium" style={{ letterSpacing: "-0.45px" }}>
                   {t('reports.charts.revenueVsTarget')}
                 </div>
               </div>
-              <div className="self-stretch shrink-0 h-[350px] relative">
-                {isKpiLoading ? (
-                  <div className="flex items-center justify-center h-full w-full">
-                    <p className="text-global-inactive">{t('reports.messages.loading')}</p>
-                  </div>
-                ) : (
-                  <div className="w-full h-full relative">
-                    <canvas ref={revenueVsTargetChartRef} className="w-full h-full"></canvas>
-                  </div>
-                )}
-              </div>
-              {/* Légende personnalisée */}
-              <div className="flex flex-row gap-6 items-center justify-center self-stretch shrink-0 relative">
-                <div className="shrink-0 h-6 relative flex items-center gap-2">
-                  <div className="w-3.5 h-3.5 rounded-full bg-[#64748b] shrink-0"></div>
-                  <div className="text-[#64748b] text-center font-['Inter-Regular',_sans-serif] text-base leading-6 font-normal" style={{ letterSpacing: "-0.31px" }}>
-                    {t('reports.legends.target')}
-                  </div>
+              <div className="flex flex-col gap-2.5 items-start justify-start self-stretch shrink-0 relative">
+                <div className="self-stretch shrink-0 h-[350px] relative">
+                  {isKpiLoading ? (
+                    <div className="flex items-center justify-center h-full w-full">
+                      <p className="text-global-inactive">{t('reports.messages.loading')}</p>
+                    </div>
+                  ) : (
+                    <div className="w-full h-full relative">
+                      <canvas ref={revenueVsTargetChartRef} className="w-full h-full"></canvas>
+                    </div>
+                  )}
                 </div>
-                <div className="shrink-0 h-6 relative flex items-center gap-2">
-                  <div className="w-3.5 h-3.5 rounded-full bg-[#06b6d4] shrink-0"></div>
-                  <div className="text-[#06b6d4] text-center font-['Inter-Regular',_sans-serif] text-base leading-6 font-normal" style={{ letterSpacing: "-0.31px" }}>
-                    {t('reports.legends.realRevenue')}
+                {/* Légende personnalisée */}
+                <div className="flex flex-row gap-6 items-center justify-center self-stretch shrink-0 relative">
+                  <div className="shrink-0 h-6 relative flex items-center gap-2">
+                    <div className="w-3.5 h-3.5 rounded-full bg-[#64748b] shrink-0"></div>
+                    <div className="text-[#64748b] text-center font-['Inter-Regular',_sans-serif] text-base leading-6 font-normal" style={{ letterSpacing: "-0.31px" }}>
+                      {t('reports.legends.target')}
+                    </div>
+                  </div>
+                  <div className="shrink-0 h-6 relative flex items-center gap-2">
+                    <div className="w-3.5 h-3.5 rounded-full bg-[#06b6d4] shrink-0"></div>
+                    <div className="text-[#06b6d4] text-center font-['Inter-Regular',_sans-serif] text-base leading-6 font-normal" style={{ letterSpacing: "-0.31px" }}>
+                      {t('reports.legends.realRevenue')}
+                    </div>
                   </div>
                 </div>
               </div>
             </div>
 
-            {/* ADR par canal et ROI PricEye */}
-            <div className="self-stretch shrink-0 grid gap-6 relative" style={{ gridTemplateColumns: 'repeat(2, minmax(0, 1fr))' }}>
-              {/* ADR par canal */}
-              <div className="bg-[rgba(15,23,43,0.40)] rounded-[14px] border-solid border-[rgba(49,65,88,0.50)] border pt-[25px] pr-[25px] pb-px pl-[25px] flex flex-col gap-6 items-start justify-start h-[530px] relative">
+            {/* ADR par canal */}
+            <div className="self-stretch shrink-0 grid gap-6 relative" style={{ gridTemplateColumns: '1fr' }}>
+              <div className="bg-[rgba(15,23,43,0.40)] rounded-[14px] border-solid border-[rgba(49,65,88,0.50)] border pt-[25px] pr-[25px] pb-6 pl-[25px] flex flex-col gap-6 items-start justify-start h-[530px] relative">
                 <div className="self-stretch shrink-0 h-7 relative">
                   <div className="text-[#ffffff] text-left font-['Inter-Regular',_sans-serif] text-xl leading-7 font-normal" style={{ letterSpacing: "-0.45px" }}>
                     ADR by Channel
@@ -3133,81 +2972,6 @@ function ReportPage({ token, userProfile }) {
                     </div>
                   ))}
                 </div>
-              </div>
-
-              {/* ROI PricEye */}
-              <div className="bg-[rgba(15,23,43,0.40)] rounded-[14px] border-solid border-[rgba(49,65,88,0.50)] border pt-[25px] pr-[25px] pb-px pl-[25px] flex flex-col gap-6 items-start justify-start h-[530px] relative">
-                <div className="self-stretch shrink-0 h-7 relative">
-                  <div className="text-[#ffffff] text-left font-['Inter-Regular',_sans-serif] text-xl leading-7 font-normal" style={{ letterSpacing: "-0.45px" }}>
-                    {t('reports.charts.priceyeRoi')}
-                  </div>
-                </div>
-                {isKpiLoading ? (
-                  <div className="flex items-center justify-center h-full w-full">
-                    <p className="text-global-inactive">{t('reports.messages.loading')}</p>
-                  </div>
-                ) : (
-                  <div className="flex flex-col gap-6 items-center justify-center self-stretch flex-1 relative">
-                    <div className="flex flex-col gap-2 items-start justify-start shrink-0 w-[187.41px] h-[92px] relative">
-                      <div className="self-stretch shrink-0 h-[60px] relative">
-                        <div className="text-center font-['Inter-Regular',_sans-serif] text-6xl leading-[60px] font-normal absolute left-[13.89px] top-[0.5px]" style={{ background: "linear-gradient(to left, rgba(0, 0, 0, 0.00), rgba(0, 0, 0, 0.00)), linear-gradient(90deg, rgba(81, 162, 255, 1.00) 0%,rgba(0, 211, 242, 1.00) 100%)", backgroundClip: "text", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent", letterSpacing: "0.26px" }}>
-                          {calculateROI.roi.toFixed(0)}%
-                        </div>
-                      </div>
-                      <div className="self-stretch shrink-0 h-6 relative">
-                        <div className="text-[#90a1b9] text-center font-['Inter-Regular',_sans-serif] text-base leading-6 font-normal absolute left-0 top-[-0.5px]" style={{ letterSpacing: "-0.31px" }}>
-                          Return on investment
-                        </div>
-                      </div>
-                    </div>
-                    <div className="flex flex-col gap-3 items-start justify-start shrink-0 w-96 h-[108px] relative">
-                      <div className="bg-[rgba(29,41,61,0.50)] rounded-[10px] pr-3 pl-3 flex flex-row items-center justify-between self-stretch shrink-0 h-12 relative">
-                        <div className="shrink-0 w-[82.87px] h-5 relative">
-                          <div className="text-[#90a1b9] text-left font-['Inter-Regular',_sans-serif] text-sm leading-5 font-normal absolute left-0 top-[0.5px]" style={{ letterSpacing: "-0.15px" }}>
-                            {t('reports.legends.priceyeCost')}
-                          </div>
-                        </div>
-                        <div className="shrink-0 w-[49.59px] h-6 relative">
-                          <div className="text-[#00d492] text-left font-['Inter-Regular',_sans-serif] text-base leading-6 font-normal absolute left-0 top-[-0.5px]" style={{ letterSpacing: "-0.31px" }}>
-                            {formatCurrency(calculateROI.cost)}
-                          </div>
-                        </div>
-                      </div>
-                      <div className="bg-[rgba(29,41,61,0.50)] rounded-[10px] pr-3 pl-3 flex flex-row items-center justify-between self-stretch shrink-0 h-12 relative">
-                        <div className="shrink-0 w-[92.27px] h-5 relative">
-                          <div className="text-[#90a1b9] text-left font-['Inter-Regular',_sans-serif] text-sm leading-5 font-normal absolute left-0 top-[0.5px]" style={{ letterSpacing: "-0.15px" }}>
-                            Generated gains
-                          </div>
-                        </div>
-                        <div className="shrink-0 w-[51.91px] h-6 relative">
-                          <div className="text-[#00d3f2] text-left font-['Inter-Regular',_sans-serif] text-base leading-6 font-normal absolute left-0 top-[-0.5px]" style={{ letterSpacing: "-0.31px" }}>
-                            {formatCurrency(calculateROI.gains)}
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {/* Marge brute (%) */}
-            <div className="bg-[rgba(15,23,43,0.40)] rounded-[14px] border-solid border-[rgba(49,65,88,0.50)] border pt-[25px] pr-[25px] pb-px pl-[25px] flex flex-col gap-6 items-start justify-start self-stretch shrink-0 h-[402px] relative">
-              <div className="self-stretch shrink-0 h-7 relative">
-                <div className="text-[#ffffff] text-left font-['Inter-Medium',_sans-serif] text-xl leading-7 font-medium" style={{ letterSpacing: "-0.45px" }}>
-                  {t('reports.charts.grossMargin')}
-                </div>
-              </div>
-              <div className="self-stretch shrink-0 h-[300px] relative">
-                {isKpiLoading ? (
-                  <div className="flex items-center justify-center h-full w-full">
-                    <p className="text-global-inactive">{t('reports.messages.loading')}</p>
-                  </div>
-                ) : (
-                  <div className="w-full h-full relative">
-                    <canvas ref={grossMarginChartRef} className="w-full h-full"></canvas>
-                  </div>
-                )}
               </div>
             </div>
           </div>

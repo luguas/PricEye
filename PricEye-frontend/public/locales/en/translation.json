@@ -117,6 +117,7 @@
     "light": "Light",
     "dark": "Dark",
     "notifications": "Notifications",
+    "noNotifications": "No notifications",
     "notifyOnBooking": "Alert me by email for each new booking",
     "notifyOnApiError": "Alert me if an API connection is broken",
     "automaticReports": "Automatic Reports",
@@ -467,8 +468,12 @@
       "more": "more"
     },
     "errors": {
-      "loadError": "Loading error: {{message}}"
-    }
+      "loadError": "Loading error: {{message}}",
+      "deleteError": "Error deleting: {{message}}"
+    },
+    "deleteBooking": "Delete",
+    "deleteConfirm": "Delete booking",
+    "deleteBookingConfirm": "Delete the booking from {{start}} to {{end}}?"
   },
   "pricing": {
     "title": "Pricing Calendar",
@@ -550,8 +555,12 @@
       "bookingDateError": "The selected period contains already booked days ({{date}}). Please choose another period.",
       "bookingEndDateError": "End date must be after start date.",
       "bookingError": "Error adding booking: {{message}}",
-      "bookingSuccess": "Booking added successfully!"
+      "bookingSuccess": "Booking added successfully!",
+      "bookingDeleted": "Booking deleted successfully!"
     },
+    "deleteBooking": "Delete booking",
+    "deleteBookingConfirm": "Delete the booking from {{start}} to {{end}}?",
+    "clickToDeleteBooking": "Click to delete this booking",
     "channels": {
       "direct": "Direct",
       "airbnb": "Airbnb",

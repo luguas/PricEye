@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { createPortal } from 'react-dom';
 import { createGroup, addPropertiesToGroup } from '../services/api.js';
+import { useLanguage } from '../contexts/LanguageContext.jsx';
 
 /**
  * Menu contextuel pour afficher les notifications de suggestions de groupe.
@@ -13,6 +14,7 @@ import { createGroup, addPropertiesToGroup } from '../services/api.js';
  * @param {object} props.position - Position du menu { top, right }
  */
 function NotificationsMenu({ isOpen, onClose, recommendations, token, onGroupCreated, position }) {
+  const { t } = useLanguage();
   const [loadingIds, setLoadingIds] = useState(new Set());
   const [error, setError] = useState('');
 
@@ -118,7 +120,7 @@ function NotificationsMenu({ isOpen, onClose, recommendations, token, onGroupCre
               />
             </svg>
             <p className="text-global-inactive font-p1-font-family text-p1-font-size">
-              Aucune notification
+              {t('settings.noNotifications')}
             </p>
           </div>
         ) : (

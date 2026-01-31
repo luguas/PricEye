@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { getProperties, getTeamBookings } from '../services/api.js';
+import { getProperties, getTeamBookings, deleteBooking } from '../services/api.js';
 import Pastille from '../components/Pastille.jsx';
+import ConfirmModal from '../components/ConfirmModal.jsx';
 import RechercheRSa from '../components/RechercheRSa.jsx';
 import BookingsCalendar from '../components/BookingsCalendar.jsx';
 import { useLanguage } from '../contexts/LanguageContext.jsx';
@@ -120,6 +121,7 @@ function BookingsPage({ token, userProfile }) {
   const [selectedDateBookings, setSelectedDateBookings] = useState([]); // Réservations pour la date sélectionnée dans le calendrier
   const [selectedDate, setSelectedDate] = useState(null); // Date sélectionnée dans le calendrier
   const [showBookingDetails, setShowBookingDetails] = useState(false); // Afficher le modal de détails
+  const [confirmModal, setConfirmModal] = useState({ isOpen: false, message: '', onConfirm: null });
 
   // Créer un map pour un accès rapide aux noms des propriétés
   const propertyMap = useMemo(() => {
@@ -332,6 +334,28 @@ function BookingsPage({ token, userProfile }) {
     setShowBookingDetails(true);
   };
 
+  // Suppression d'une réservation
+  const handleDeleteBooking = (booking) => {
+    setConfirmModal({
+      isOpen: true,
+      message: t('bookings.deleteBookingConfirm', {
+        start: formatDate(booking.startDate),
+        end: formatDate(booking.endDate)
+      }),
+      onConfirm: async () => {
+        try {
+          await deleteBooking(booking.propertyId, booking.id, token);
+          setError('');
+          setShowBookingDetails(false);
+          fetchData();
+        } catch (err) {
+          setError(t('bookings.errors.deleteError', { message: err.message }));
+          throw err;
+        }
+      }
+    });
+  };
+
   return (
     <div className="relative min-h-screen">
       {/* Fond qui couvre tout l'écran avec le même dégradé */}
@@ -513,6 +537,9 @@ function BookingsPage({ token, userProfile }) {
           <div className="text-global-inactive text-left font-h3-font-family text-h3-font-size font-h3-font-weight relative w-[100px]">
             {t('bookings.status')}
           </div>
+          <div className="text-global-inactive text-left font-h3-font-family text-h3-font-size font-h3-font-weight relative w-[80px]">
+            {t('bookings.deleteBooking')}
+          </div>
         </div>
 
         {/* Contenu */}
@@ -568,6 +595,16 @@ function BookingsPage({ token, userProfile }) {
                 </div>
                 <div className="shrink-0 w-[100px] h-[26px] relative flex items-center">
                   {getStatusBadge(booking.status)}
+                </div>
+                <div className="shrink-0 w-[80px] relative flex items-center">
+                  <button
+                    type="button"
+                    onClick={() => handleDeleteBooking(booking)}
+                    className="text-red-400 hover:text-red-300 text-sm px-2 py-1 rounded hover:bg-red-900/20 transition-colors"
+                    title={t('bookings.deleteBooking')}
+                  >
+                    {t('bookings.deleteBooking')}
+                  </button>
                 </div>
               </div>
             );
@@ -645,6 +682,18 @@ function BookingsPage({ token, userProfile }) {
                         <div className="mt-1">{getStatusBadge(booking.status)}</div>
                       </div>
                     </div>
+                    <div className="mt-3 pt-3 border-t border-global-stroke-box flex justify-end">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShowBookingDetails(false);
+                          handleDeleteBooking(booking);
+                        }}
+                        className="text-red-400 hover:text-red-300 text-sm px-3 py-1.5 rounded border border-red-500/50 hover:bg-red-900/20 transition-colors"
+                      >
+                        {t('bookings.deleteBooking')}
+                      </button>
+                    </div>
                   </div>
                 );
               })}
@@ -652,6 +701,17 @@ function BookingsPage({ token, userProfile }) {
           </div>
         </div>
       )}
+
+      {/* Modale de confirmation de suppression */}
+      <ConfirmModal
+        isOpen={confirmModal.isOpen}
+        onClose={() => setConfirmModal({ isOpen: false, message: '', onConfirm: null })}
+        onConfirm={confirmModal.onConfirm || (() => {})}
+        title={t('bookings.deleteBooking')}
+        message={confirmModal.message}
+        confirmText={t('bookings.deleteConfirm')}
+        cancelText={t('common.cancel')}
+      />
       </div>
     </div>
   );

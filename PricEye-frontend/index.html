@@ -24,9 +24,43 @@
     <!-- Montserrat comme alternative à Avenir (similaire, moderne, géométrique) -->
     <!-- Roboto comme alternative à Average Sans (lisible, simple) -->
     <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700&family=Roboto:wght@400;500&display=swap" rel="stylesheet">
+    <style>
+      /* Écran de chargement – visible jusqu’au premier render React */
+      .priceye-loader {
+        position: fixed;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: #f3f4f6;
+        z-index: 9999;
+      }
+      .priceye-loader__spinner {
+        width: 48px;
+        height: 48px;
+        border: 4px solid rgba(21, 93, 252, 0.2);
+        border-top-color: #155dfc;
+        border-radius: 50%;
+        animation: priceye-spin 0.9s linear infinite;
+      }
+      @media (prefers-color-scheme: dark) {
+        .priceye-loader { background: #0f172b; }
+        .priceye-loader__spinner {
+          border-color: rgba(18, 161, 213, 0.2);
+          border-top-color: #12a1d5;
+        }
+      }
+      @keyframes priceye-spin {
+        to { transform: rotate(360deg); }
+      }
+    </style>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <div class="priceye-loader" aria-hidden="true">
+        <div class="priceye-loader__spinner" role="status" aria-label="Chargement"></div>
+      </div>
+    </div>
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>

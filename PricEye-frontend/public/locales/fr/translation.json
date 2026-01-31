@@ -117,6 +117,7 @@
     "light": "Clair",
     "dark": "Sombre",
     "notifications": "Notifications",
+    "noNotifications": "Aucune notification",
     "notifyOnBooking": "M'alerter par email pour chaque nouvelle réservation",
     "notifyOnApiError": "M'alerter si une connexion API est rompue",
     "automaticReports": "Rapports Automatiques",
@@ -467,8 +468,13 @@
       "more": "autres"
     },
     "errors": {
-      "loadError": "Erreur de chargement: {{message}}"
-    }
+      "loadError": "Erreur de chargement: {{message}}",
+      "deleteError": "Erreur lors de la suppression: {{message}}"
+    },
+    "deleteBooking": "Supprimer",
+    "deleteConfirm": "Supprimer la réservation",
+    "deleteBookingConfirm": "Supprimer la réservation du {{start}} au {{end}} ?",
+    "actions": "Actions"
   },
   "pricing": {
     "title": "Calendrier Pricing",
@@ -550,8 +556,12 @@
       "bookingDateError": "La période sélectionnée contient des jours déjà réservés ({{date}}). Veuillez choisir une autre période.",
       "bookingEndDateError": "La date de fin doit être après la date de début.",
       "bookingError": "Erreur lors de l'ajout de la réservation: {{message}}",
-      "bookingSuccess": "Réservation ajoutée avec succès !"
+      "bookingSuccess": "Réservation ajoutée avec succès !",
+      "bookingDeleted": "Réservation supprimée avec succès !"
     },
+    "deleteBooking": "Supprimer réservation",
+    "deleteBookingConfirm": "Supprimer la réservation du {{start}} au {{end}} ?",
+    "clickToDeleteBooking": "Cliquez pour supprimer cette réservation",
     "channels": {
       "direct": "Direct",
       "airbnb": "Airbnb",

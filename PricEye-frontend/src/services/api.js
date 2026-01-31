@@ -38,6 +38,10 @@ async function apiRequest(endpoint, options = {}) {
   };
   delete finalOptions.token;
 
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('api-request-start'));
+  }
+
   try {
     const response = await fetch(`${API_BASE_URL}${endpoint}`, finalOptions);
     const contentType = response.headers.get('content-type');
@@ -143,6 +147,10 @@ async function apiRequest(endpoint, options = {}) {
     // Sinon c'est une erreur réseau (fetch failed) ou de code
     console.error("Erreur Réseau/Système:", error);
     throw new Error(error.message || "Erreur de communication avec le serveur.");
+  } finally {
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('api-request-end'));
+    }
   }
 }
 

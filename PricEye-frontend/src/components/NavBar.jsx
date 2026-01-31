@@ -135,7 +135,7 @@ export const NavBar = ({
 
   return (
     <nav
-      className={`hidden md:flex flex-col gap-2.5 items-start justify-center ${navWidthClass} min-h-screen fixed left-0 top-0 transition-[width] duration-300 z-20 ${className}`}
+      className={`hidden md:flex flex-col gap-2.5 items-start justify-center ${navWidthClass} min-h-screen fixed left-0 top-0 transition-[width] duration-300 z-[9999] ${className}`}
       {...props}
     >
       <div className="bg-global-bg-box border-r border-global-stroke-box flex flex-col items-stretch justify-between w-full min-h-screen relative">

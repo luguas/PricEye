@@ -1,8 +1,9 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { getProperties, getGroups, addBooking, getBookingsForMonth, getAutoPricingStatus, enableAutoPricing, getPriceOverrides, updatePriceOverrides, applyPricingStrategy, applyGroupPricingStrategy, getPropertyAutoPricingStatus, enablePropertyAutoPricing, getGroupAutoPricingStatus, enableGroupAutoPricing } from '../services/api.js';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { getProperties, getGroups, addBooking, deleteBooking, getBookingsForMonth, getAutoPricingStatus, enableAutoPricing, getPriceOverrides, updatePriceOverrides, applyPricingStrategy, applyGroupPricingStrategy, getPropertyAutoPricingStatus, enablePropertyAutoPricing, getGroupAutoPricingStatus, enableGroupAutoPricing } from '../services/api.js';
 import { jwtDecode } from 'jwt-decode'; 
 import Bouton from '../components/Bouton.jsx';
 import AlertModal from '../components/AlertModal.jsx';
+import ConfirmModal from '../components/ConfirmModal.jsx';
 import { useLanguage } from '../contexts/LanguageContext.jsx';
 import { handleQuotaError, checkQuotaStatus } from '../utils/quotaErrorHandler.js';
 import { supabase } from '../config/supabase.js'; 
@@ -57,6 +58,10 @@ function PricingPage({ token, userProfile }) {
 
   // Modale
   const [alertModal, setAlertModal] = useState({ isOpen: false, message: '', title: 'Information' });
+
+  // Anti-double-soumission (booking)
+  const isSavingBookingRef = useRef(false);
+  const [deleteBookingModal, setDeleteBookingModal] = useState({ isOpen: false, booking: null });
 
   /** Retourne le groupe auquel appartient une propriété (si elle est dans un groupe). Les prix du groupe = propriété principale. */
   const getGroupForProperty = useCallback((propertyId) => {
@@ -542,6 +547,8 @@ function PricingPage({ token, userProfile }) {
   // --- SAUVEGARDES ---
   const handleSaveBooking = async (e) => {
       e.preventDefault();
+      if (isSavingBookingRef.current) return;
+      isSavingBookingRef.current = true;
       
       // Valider et mettre à jour les dates éditables avant la soumission
       const startDate = editableStartDate || selectionStart;
@@ -549,6 +556,7 @@ function PricingPage({ token, userProfile }) {
       
       if (!startDate || !endDate) {
           setError(t('pricing.errors.invalidDates') || 'Veuillez sélectionner une période valide');
+          isSavingBookingRef.current = false;
           return;
       }
       
@@ -556,6 +564,7 @@ function PricingPage({ token, userProfile }) {
       const price = Number(bookingPrice);
       if (!bookingPrice || isNaN(price) || price <= 0) {
           setError('Dates de début/fin et prix par nuit valides sont requis.');
+          isSavingBookingRef.current = false;
           return;
       }
       
@@ -587,7 +596,7 @@ function PricingPage({ token, userProfile }) {
           setAlertModal({ isOpen: true, message: t('pricing.errors.bookingSuccess'), title: t('pricing.modal.success') });
           clearSelection();
           fetchCalendarData();
-      } catch(e) { setError(e.message); } finally { setIsLoading(false); }
+      } catch(e) { setError(e.message); } finally { setIsLoading(false); isSavingBookingRef.current = false; }
   };
 
   const handleSavePriceOverride = async (e) => {
@@ -657,6 +666,31 @@ function PricingPage({ token, userProfile }) {
       } catch(e) { setError(e.message); } finally { setIsLoading(false); }
   };
 
+  // Propriété cible pour les réservations (groupe = main, sinon selectedId)
+  const getBookingsPropertyId = useCallback(() => {
+    if (selectedView === 'group') {
+      const g = allGroups.find(x => String(x.id) === String(selectedId));
+      return g?.main_property_id;
+    }
+    return selectedId;
+  }, [selectedView, selectedId, allGroups]);
+
+  const handleDeleteBookingConfirm = useCallback(async () => {
+    const b = deleteBookingModal.booking;
+    if (!b?.id) return;
+    const pid = getBookingsPropertyId();
+    if (!pid) return;
+    try {
+      await deleteBooking(pid, b.id, token);
+      setDeleteBookingModal({ isOpen: false, booking: null });
+      setAlertModal({ isOpen: true, message: t('pricing.errors.bookingDeleted'), title: t('pricing.modal.success') });
+      fetchCalendarData();
+    } catch (err) {
+      setError(err.message);
+      throw err;
+    }
+  }, [deleteBookingModal.booking, getBookingsPropertyId, token, t, fetchCalendarData]);
+
   // --- RENDU CALENDRIER ---
   const renderCalendar = () => {
     if (isLoading && !selectedId) return <div className="col-span-7 text-center text-gray-500 py-10">Chargement...</div>;
@@ -706,7 +740,7 @@ function PricingPage({ token, userProfile }) {
         } else if (bk) {
              bg = 'bg-calendrierbg-orange';
              border = 'border-calendrierstroke-orange';
-             cursor = 'cursor-not-allowed'; 
+             cursor = 'cursor-pointer hover:opacity-90'; 
         } else if (pr) {
              bg = 'bg-calendrierbg-vert'; // Style vert si prix défini
              border = 'border-calendrierstroke-vert';
@@ -717,6 +751,7 @@ function PricingPage({ token, userProfile }) {
                  className={`w-full h-full flex flex-col items-center justify-center ${bg} rounded-[10px] border ${border} ${cursor} transition-all duration-200 relative ${opacity}`}
                  onMouseDown={!isPast && !bk ? () => handleMouseDown(dateStr) : undefined}
                  onMouseEnter={!isPast && !bk ? () => handleMouseOver(dateStr) : undefined}
+                 onClick={!isPast && bk ? (e) => { e.preventDefault(); setDeleteBookingModal({ isOpen: true, booking: bk }); } : undefined}
             >
                 <span className={`${txt} font-h3-font-family font-h3-font-weight text-h3-font-size`}>{d}</span>
                 {pr && !bk && (
@@ -727,7 +762,7 @@ function PricingPage({ token, userProfile }) {
                     )}
                   </span>
                 )}
-                {bk && <span className="text-[10px] text-white">Réservé</span>}
+                {bk && <span className="text-[10px] text-white" title={t('pricing.clickToDeleteBooking')}>Réservé</span>}
                 {/* Indicateur visuel pour le jour sélectionné */}
                 {isClickedDate && !isSel && (
                     <div className="absolute top-1 right-1 w-2 h-2 rounded-full bg-blue-400 animate-pulse"></div>
@@ -772,7 +807,7 @@ function PricingPage({ token, userProfile }) {
             </select>
         </div>
         <div className="flex gap-2 pt-2">
-            <button type="submit" className="flex-1 bg-gradient-to-r from-[#155dfc] to-[#12a1d5] text-white py-2 rounded-[10px] font-bold text-sm hover:opacity-90">{t('pricing.saveBooking')}</button>
+            <button type="submit" disabled={isLoading} className="flex-1 bg-gradient-to-r from-[#155dfc] to-[#12a1d5] text-white py-2 rounded-[10px] font-bold text-sm hover:opacity-90 disabled:opacity-60 disabled:cursor-not-allowed">{t('pricing.saveBooking')}</button>
             <button type="button" onClick={clearSelection} className="px-3 py-2 border border-gray-600 text-gray-400 rounded-[10px] text-xs hover:text-white">{t('pricing.cancel')}</button>
         </div>
     </form>
@@ -956,6 +991,19 @@ function PricingPage({ token, userProfile }) {
       </div>
 
       <AlertModal isOpen={alertModal.isOpen} onClose={()=>setAlertModal({...alertModal, isOpen:false})} title={alertModal.title} message={alertModal.message} buttonText="OK" />
+
+      <ConfirmModal
+        isOpen={deleteBookingModal.isOpen}
+        onClose={() => setDeleteBookingModal({ isOpen: false, booking: null })}
+        onConfirm={handleDeleteBookingConfirm}
+        title={t('pricing.deleteBooking')}
+        message={deleteBookingModal.booking ? t('pricing.deleteBookingConfirm', {
+          start: deleteBookingModal.booking.startDate,
+          end: deleteBookingModal.booking.endDate
+        }) : ''}
+        confirmText={t('common.delete')}
+        cancelText={t('pricing.cancel')}
+      />
     </div>
   );
 }
