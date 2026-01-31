@@ -38,33 +38,37 @@ export const AuthProvider = ({ children }) => {
 
   // Centralisation de la déconnexion
   const logout = useCallback(async () => {
+    // Éviter double exécution : si onAuthStateChange(SIGNED_OUT) rappelle logout, ne pas refaire setState (crash)
+    if (typeof localStorage !== 'undefined' && localStorage.getItem('_isLoggingOut') === 'true') {
+      window.location.replace('https://priceye-ai.com/');
+      return;
+    }
+    localStorage.setItem('_isLoggingOut', 'true');
+
     try {
       await supabase.auth.signOut();
     } catch (error) {
       console.error('Erreur déconnexion Supabase:', error);
     }
-    
-    // Marquer qu'on est en train de se déconnecter pour éviter les conflits
-    localStorage.setItem('_isLoggingOut', 'true');
-    
+
     setToken(null);
     setUserProfile(null);
     localStorage.removeItem('authToken');
     setApiToken(null); // Nettoyer le token dans le service API
-    
-    // Nettoyage complet du storage (sauf préférences peut-être)
+
+    // Nettoyage complet du storage (sauf préférences)
     Object.keys(localStorage).forEach(key => {
       if (key.startsWith('sb-') || key === 'authToken') {
         localStorage.removeItem(key);
       }
     });
 
-    // Redirection forcée vers le site externe après déconnexion
-    // Utiliser une redirection immédiate sans setTimeout pour éviter les conflits
-    window.location.href = 'https://priceye-ai.com/';
+    // Redirection vers le site externe après déconnexion (replace pour éviter retour arrière cassé)
+    window.location.replace('https://priceye-ai.com/');
   }, []);
 
   const login = useCallback((newToken) => {
+    localStorage.removeItem('_isLoggingOut'); // Permettre une prochaine déconnexion propre
     localStorage.setItem('authToken', newToken);
     setToken(newToken);
     setApiToken(newToken); // Mise à jour immédiate du service API
@@ -77,6 +81,10 @@ export const AuthProvider = ({ children }) => {
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (event === 'SIGNED_OUT') {
+        // Ne pas rappeler logout() si c'est nous qui venons de faire signOut (évite crash / double setState)
+        if (typeof localStorage !== 'undefined' && localStorage.getItem('_isLoggingOut') === 'true') {
+          return;
+        }
         logout();
       } else if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
         if (session?.access_token) {
@@ -152,6 +160,8 @@ export const AuthProvider = ({ children }) => {
       applyTheme('auto');
       return;
     }
+    // Réinitialiser le flag au chargement avec token (évite écran opaque au prochain passage)
+    if (typeof localStorage !== 'undefined') localStorage.removeItem('_isLoggingOut');
 
     const fetchProfile = async () => {
       setIsLoadingProfile(true);

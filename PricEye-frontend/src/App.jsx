@@ -217,13 +217,9 @@ function AppRouter() {
         return;
       }
 
-      if (!token) {
-        // Si non connecté, rediriger vers le site externe au lieu de la page de login
-        // Mais ne pas rediriger si on est en train de se déconnecter (pour éviter les conflits)
-        const isLoggingOut = localStorage.getItem('_isLoggingOut');
-        if (!isLoggingOut && currentView !== 'checkout-success' && currentView !== 'checkout-cancel') {
-          window.location.href = 'https://priceye-ai.com/';
-        }
+      if (!token && currentView !== 'checkout-success' && currentView !== 'checkout-cancel') {
+        // Si non connecté, rediriger vers le site externe (évite écran opaque si _isLoggingOut resté à true)
+        window.location.href = 'https://priceye-ai.com/';
       } else if (token && (currentView === 'login' || currentView === 'register')) {
         // Si connecté et sur page auth, on va au dashboard
         setCurrentView('dashboard');
@@ -289,15 +285,13 @@ function AppRouter() {
   };
 
   // Gestion de la vue login/register si non authentifié
-  // Rediriger vers le site externe au lieu d'afficher la page de login
   if (!token && !isLoadingProfile) {
     if (currentView === 'checkout-success' || currentView === 'checkout-cancel') {
-      // Si on vient de Stripe mais pas de token, permettre l'affichage de la page
       return renderMainContent();
     }
-    // Rediriger vers le site externe au lieu d'afficher la page de login
-    // Ne pas afficher LoginPage ou RegisterPage - redirection immédiate
-    return null; // Retourner null pendant la redirection
+    // Toujours rediriger vers le site (évite écran opaque quand _isLoggingOut resté à true)
+    window.location.href = 'https://priceye-ai.com/';
+    return null;
   }
 
   return (
